@@ -50,8 +50,8 @@ class RouteSolver(
     suspend fun solve(origin: GeoPoint, destination: GeoPoint): SolveResult {
         val initial = runCatching {
             api.routes(origin, destination, alternatives = config.alternatives)
-        }.getOrElse { e -> return SolveResult.Failed("routing backend error: ${e.message}") }
-        if (initial.isEmpty()) return SolveResult.Failed("no route between origin and destination")
+        }.getOrElse { e -> return failed(backendFailureReason(e)) }
+        if (initial.isEmpty()) return failed("No route found between origin and destination.")
 
         val fastest = initial.minBy { it.durationSeconds }
         // Every candidate ever seen, with the distinct cameras it passes.
@@ -99,12 +99,40 @@ class RouteSolver(
         val (route, passed) = evaluated.values.minWith(
             compareBy({ it.second.size }, { it.first.durationSeconds })
         )
+        // Never a silent downgrade: the fallback is logged as well as surfaced
+        // in the UI. `exhausted` distinguishes "search ran out of avoidance
+        // room" from "hit the round cap".
+        logger.log(
+            System.Logger.Level.WARNING,
+            "No camera-free route; falling back to minimum exposure: " +
+                "${passed.size} camera(s), +${route.durationSeconds - fastest.durationSeconds}s, " +
+                "candidates=${evaluated.size}, exhausted=$exhausted",
+        )
         return SolveResult.MinimumExposure(
             route = route,
             passedCameras = passed,
             addedSecondsVsFastest = route.durationSeconds - fastest.durationSeconds,
             waypoints = WaypointExtractor.extract(route.polyline, fastest.polyline),
         )
+    }
+
+    private fun failed(reason: String): SolveResult.Failed {
+        logger.log(System.Logger.Level.WARNING, "Solve failed: $reason")
+        return SolveResult.Failed(reason)
+    }
+
+    /** Turn a backend exception into a user-facing reason, offline called out. */
+    private fun backendFailureReason(e: Throwable): String {
+        val offline = generateSequence(e) { it.cause }.any {
+            it is java.net.UnknownHostException ||
+                it is java.net.ConnectException ||
+                it is java.net.SocketTimeoutException
+        }
+        return if (offline) {
+            "You appear to be offline. Routing needs a connection."
+        } else {
+            "Routing service error: ${e.message ?: e::class.simpleName}"
+        }
     }
 
     /**
@@ -140,5 +168,9 @@ class RouteSolver(
             polyline[projection.segmentIndex + 1],
         )
         return bearingDifference(heading, facing) <= config.directionArcDegrees / 2.0
+    }
+
+    private companion object {
+        val logger: System.Logger = System.getLogger("app.shunt.solver.RouteSolver")
     }
 }

@@ -37,6 +37,8 @@ data class DrivePlan(
 data class PlanUiState(
     val query: String = "",
     val suggestions: List<Suggestion> = emptyList(),
+    /** Destination search couldn't reach HERE (offline / service error). */
+    val searchFailed: Boolean = false,
     val favorites: Favorites = Favorites(),
     val cameraDataFreshness: Freshness? = null,
     val phase: Phase = Phase.Browsing,

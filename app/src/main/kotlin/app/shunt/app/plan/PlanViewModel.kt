@@ -52,14 +52,20 @@ class PlanViewModel(
         _state.update { it.copy(query = query) }
         searchJob?.cancel()
         if (query.isBlank()) {
-            _state.update { it.copy(suggestions = emptyList()) }
+            _state.update { it.copy(suggestions = emptyList(), searchFailed = false) }
             return
         }
         searchJob = workScope.launch {
             delay(searchDebounceMillis)
             val at = location.currentOrigin() ?: DEFAULT_BIAS
-            val results = runCatching { search.suggest(query, at) }.getOrDefault(emptyList())
-            _state.update { it.copy(suggestions = results) }
+            val outcome = runCatching { search.suggest(query, at) }
+            _state.update { state ->
+                outcome.fold(
+                    onSuccess = { results -> state.copy(suggestions = results, searchFailed = false) },
+                    // Don't silently blank: tell the user search couldn't be reached.
+                    onFailure = { state.copy(suggestions = emptyList(), searchFailed = true) },
+                )
+            }
         }
     }
 

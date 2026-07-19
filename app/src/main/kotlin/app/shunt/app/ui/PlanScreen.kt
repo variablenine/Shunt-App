@@ -115,6 +115,13 @@ private fun SearchAndFavorites(state: PlanUiState, actions: PlanActions) {
                         HorizontalDivider()
                     }
                 }
+            } else if (state.searchFailed && state.query.isNotBlank()) {
+                Text(
+                    "Couldn't reach search — check your connection.",
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
 
             val favorites = state.favorites

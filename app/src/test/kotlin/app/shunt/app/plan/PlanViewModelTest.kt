@@ -77,6 +77,26 @@ class PlanViewModelTest {
     }
 
     @Test
+    fun `search failure surfaces instead of blanking silently`() = runTest {
+        val model = PlanViewModel(
+            search = { _, _ -> throw java.io.IOException("offline") },
+            planner = { _, _ -> clean },
+            location = { origin },
+            cameras = { Freshness.NETWORK },
+            favoritesStore = InMemoryFavorites(),
+            vehicle = FakeVehicleNavClient(),
+            scope = this,
+        )
+        model.onQueryChange("Lambeau")
+        advanceUntilIdle()
+        assertTrue(model.state.value.searchFailed)
+        assertTrue(model.state.value.suggestions.isEmpty())
+        // Clearing the query resets the error.
+        model.onQueryChange("")
+        assertTrue(!model.state.value.searchFailed)
+    }
+
+    @Test
     fun `blank query clears suggestions immediately`() = runTest {
         val model = vm(this, suggestions = listOf(Suggestion("X", dest, "place")))
         model.onQueryChange("X"); advanceUntilIdle()

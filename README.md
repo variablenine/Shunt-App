@@ -94,8 +94,10 @@ The solver runs from a laptop without a car or an emulator:
 
 No live network calls in unit tests. All parsers are tested against fixtures
 recorded from the live services (2026-07-19): DeFlock index + tile slice, and
-HERE Routing v8 + Geocoding v1 responses. HTTP behavior (caching, fallbacks,
-concurrency caps, request formatting) runs against MockWebServer.
+HERE Routing v8, Geocoding v1, and Autosuggest v1 responses. HTTP behavior
+(caching, fallbacks, concurrency caps, request formatting) runs against
+MockWebServer. The safety-critical drive logic and the whole planning flow —
+including offline and push-failure paths — run against `FakeVehicleNavClient`.
 
 Two live-API findings worth knowing (both encoded in the client): HERE's
 `avoid[areas]` separates areas with `|`, not `!` — `!` introduces per-area
@@ -111,9 +113,65 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
    `HERE_API_KEY`. Real keys are gitignored — never commit them.
 2. Build the JVM modules without any Android tooling:
    `./gradlew :core:build :solver:build :tesla:build`
-3. Full build including the app: `./gradlew build`
-4. Run the solver CLI: `./gradlew :solver:run --args="…"` (the `solve`
-   command lands in M1).
+3. Full build including the app: `./gradlew build` (needs the Android SDK).
+4. Run the solver CLI: `./gradlew :solver:installDist` then
+   `./solver/build/install/solver/bin/solver solve --from … --to …`.
+
+### Required API keys
+
+| Key | Used by | Where it comes from | Notes |
+|-----|---------|---------------------|-------|
+| `HERE_API_KEY` | Routing, geocoding, and destination autosuggest | HERE Access Manager → your app → **API Keys** → Create API key | One key covers all three HERE endpoints. Put it in `local.properties` (`HERE_API_KEY=…`) or the environment; it flows into the app via `BuildConfig`. A **refresh token** (a `reftkn:…` value) is *not* an API key and returns 401. |
+| Tessie token | The production vehicle client | The user's own Tessie account | **Part B only** — not used anywhere in this repo. |
+
+No key is committed, and a missing `HERE_API_KEY` doesn't fail the build: the
+app surfaces it in-app and the CLI prints a clear error.
+
+The **basemap** needs no key to run — MapLibre draws the route and camera
+markers on a plain background. For street tiles, set `map_style_url`
+(`app/src/main/res/values/strings.xml`) to a Protomaps style JSON (which has
+its own key) or a self-hosted PMTiles style.
+
+## Offline behavior
+
+Shunt is built to keep working when the signal drops on a rural drive:
+
+- **Camera data** degrades gracefully: fresh network → disk cache → stale
+  cache → a bundled full-dataset snapshot shipped in the APK. Every result
+  carries its `Freshness`, and the plan screen shows a banner when it's
+  serving the offline snapshot.
+- **Routing** needs a connection (HERE has no on-device equivalent). When
+  offline the solver returns a `Failed` with a plain "You appear to be
+  offline" message — surfaced on the result card, never a silent blank.
+  Destination **search** failing shows "Couldn't reach search" rather than an
+  empty list.
+- **The drive monitor** is the part that matters most offline, and it needs
+  no connectivity at all: waypoint-approach timing, camera-approach warnings
+  (from the cached camera set), escalating haptics, and local notifications
+  are all computed on-device. A mid-drive `advanceTo` that fails because the
+  car is unreachable raises a loud local alert instead of failing silently.
+
+## Battery & privacy
+
+- **No background work whatsoever.** There is no `WorkManager`, `JobScheduler`,
+  or `AlarmManager`, and no periodic sync. Camera data refreshes once on app
+  open. The only long-running component is the drive-monitor foreground
+  service, which is started from the Go tap, runs `START_NOT_STICKY`, and
+  stops itself on arrival or cancel — so nothing runs while you aren't driving.
+- **Location is while-in-use only.** The app requests `ACCESS_FINE_LOCATION`
+  and **never** `ACCESS_BACKGROUND_LOCATION`. GPS is sampled (~1 s, configurable)
+  only for the duration of a monitored drive.
+- **Network is frugal.** Camera tiles are fetched lazily for just the area a
+  route touches, capped at 5 concurrent, and disk-cached by version so they
+  aren't refetched; a single `OkHttpClient` pools connections.
+- **No analytics, no telemetry, no account.** The only outbound traffic is to
+  HERE, the DeFlock CDN, and (via the Part B client) the user's own vehicle
+  service. Everything runs on the phone.
+
+> **APK size note:** the debug APK is large (~100 MB) because it bundles the
+> MapLibre native libraries for every ABI plus the offline camera snapshot.
+> Release builds should ship an Android App Bundle (or per-ABI splits) so each
+> device downloads only its own native library.
 
 ## Licenses
 
@@ -123,7 +181,9 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ## Status
 
-Milestones M0–M4 complete:
+Milestones M0–M5 complete — Part A is done. The remaining work is Part B: the
+production `TessieVehicleNavClient`, written in its own session and dropped
+into the existing `VehicleNavClient` seam via the one-line DI swap.
 
 - **M0** — Gradle multi-module scaffolding, license separation, key hygiene.
 - **M1** (`:solver`) — camera source, route solver, waypoint extraction, and
@@ -135,8 +195,12 @@ Milestones M0–M4 complete:
   swap is one line.
 - **M3** (`:app`) — the planning UI (below).
 - **M4** (`:app`) — the drive monitor (below).
+- **M5** — hardening: offline behavior end to end, clearer error surfaces
+  (offline routing/search messages, logged fallbacks), a battery review, and
+  this README.
 
-Hardening (M5) is next.
+The suite is **95 tests** across the four modules, with no live network calls
+in any of them.
 
 ### M4 — drive monitor
 

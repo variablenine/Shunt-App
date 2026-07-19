@@ -128,7 +128,32 @@ class RouteSolverTest {
         val api = ScriptedApi(listOf(emptyList()))
         val result = solver(api, emptyList()).solve(origin, destination)
         val failed = assertIs<SolveResult.Failed>(result)
-        assertTrue(failed.reason.contains("no route"))
+        assertTrue(failed.reason.contains("No route", ignoreCase = true))
+    }
+
+    @Test
+    fun `network failure surfaces a clear offline message`() = runTest {
+        val offlineApi = object : RoutingApi {
+            override suspend fun routes(
+                origin: GeoPoint, destination: GeoPoint,
+                avoidAreas: List<BoundingBox>, alternatives: Int,
+            ): List<Route> = throw java.net.UnknownHostException("router.hereapi.com")
+        }
+        val failed = assertIs<SolveResult.Failed>(solver(offlineApi, emptyList()).solve(origin, destination))
+        assertTrue(failed.reason.contains("offline", ignoreCase = true), "got: ${failed.reason}")
+    }
+
+    @Test
+    fun `non-network backend error is reported as a service error`() = runTest {
+        val brokenApi = object : RoutingApi {
+            override suspend fun routes(
+                origin: GeoPoint, destination: GeoPoint,
+                avoidAreas: List<BoundingBox>, alternatives: Int,
+            ): List<Route> = throw java.io.IOException("HERE routing HTTP 500")
+        }
+        val failed = assertIs<SolveResult.Failed>(solver(brokenApi, emptyList()).solve(origin, destination))
+        assertTrue(failed.reason.contains("service error", ignoreCase = true), "got: ${failed.reason}")
+        assertTrue(!failed.reason.contains("offline", ignoreCase = true))
     }
 
     @Test
