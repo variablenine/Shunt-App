@@ -1,6 +1,21 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+}
+
+/**
+ * HERE API key comes from local.properties or the environment only — never
+ * committed (see .gitignore). Absent in CI/fresh checkouts: the app still
+ * builds, and surfaces the missing key at runtime rather than failing here.
+ */
+val hereApiKey: String = run {
+    val fromProps = rootProject.file("local.properties")
+        .takeIf { it.exists() }
+        ?.let { Properties().apply { load(it.inputStream()) }.getProperty("HERE_API_KEY") }
+    (fromProps ?: System.getenv("HERE_API_KEY")).orEmpty()
 }
 
 android {
@@ -13,6 +28,7 @@ android {
         targetSdk = libs.versions.target.sdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        buildConfigField("String", "HERE_API_KEY", "\"$hereApiKey\"")
     }
 
     buildTypes {
@@ -21,9 +37,18 @@ android {
         }
     }
 
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -37,4 +62,32 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":solver"))
     implementation(project(":tesla"))
+
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.okhttp)
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons.extended)
+    debugImplementation(libs.compose.ui.tooling)
+
+    implementation(libs.maplibre)
+
+    testImplementation(libs.junit.jupiter)
+    testImplementation(kotlin("test"))
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":tesla")))
+    testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
 }

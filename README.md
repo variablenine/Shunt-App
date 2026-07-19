@@ -123,7 +123,7 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ## Status
 
-Milestones M0–M2 complete:
+Milestones M0–M3 complete:
 
 - **M0** — Gradle multi-module scaffolding, license separation, key hygiene.
 - **M1** (`:solver`) — camera source, route solver, waypoint extraction, and
@@ -133,5 +133,38 @@ Milestones M0–M2 complete:
   fixtures) that the production client must also pass. DI is wired so `:app`
   resolves the client from a single place (`AppContainer`); the production
   swap is one line.
+- **M3** (`:app`) — the planning UI (below).
 
-The UI (M3) and drive monitor (M4) are next.
+The drive monitor (M4) is next.
+
+### M3 — planning UI
+
+Jetpack Compose. The flow is: enter destination → solver runs → result card
+→ Go. Destination search uses HERE autosuggest (same vendor and key as
+routing); Home and Work are one-tap favorites persisted across launches. The
+map is MapLibre (never the Google Maps SDK), drawing the chosen route and, on
+a minimum-exposure route, red markers for every unavoidable camera.
+
+The **result card is the most important screen**: it states which outcome
+occurred, the added time versus fastest, and the waypoint count — and for a
+minimum-exposure fallback it makes unmissable that no camera-free route
+exists, listing the count and coordinates of every camera the route passes.
+Go stays tappable there: the user accepts the exposure knowingly.
+
+Camera data is refreshed once on app open; **no background work is
+scheduled**. When only the offline snapshot is available, the screen says so.
+
+The presentation logic lives in `PlanViewModel`, decoupled from Compose,
+HTTP, and the car behind small ports so the whole flow — including the Go
+push and its retryable/permanent failure paths — is unit-tested against
+`FakeVehicleNavClient`.
+
+**Map basemap:** MapLibre renders the route and camera markers on a plain
+background out of the box. To show a street basemap, set `map_style_url`
+(`app/src/main/res/values/strings.xml`) to a Protomaps style JSON or a
+self-hosted PMTiles style.
+
+**Route origin:** the trip origin (and autosuggest bias) is the device's
+last-known location when `ACCESS_FINE_LOCATION` is already granted, otherwise
+the saved Home favorite. M3 requests no permissions; live location and the
+permission prompt arrive with the M4 drive monitor.
