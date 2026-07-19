@@ -2,11 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
+        android:name=".ShuntApplication"
         android:label="@string/app_name"
         android:allowBackup="false"
         android:supportsRtl="true">
         <!-- Activities, the drive-monitor foreground service, and permissions
-             arrive in M3/M4. M0 ships a compiling shell only. -->
+             arrive in M3/M4. The app is a compiling shell until then; the
+             VehicleNavClient DI seam (AppContainer) is wired now. -->
     </application>
 
 </manifest>

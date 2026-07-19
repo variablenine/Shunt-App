@@ -123,7 +123,15 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ## Status
 
-Milestone M1 (`:solver`) complete — camera source, route solver, waypoint
-extraction, and CLI built, unit-tested, and verified against the live DeFlock
-and HERE endpoints. The vehicle seam (M2), UI (M3), and drive monitor (M4)
-are next.
+Milestones M0–M2 complete:
+
+- **M0** — Gradle multi-module scaffolding, license separation, key hygiene.
+- **M1** (`:solver`) — camera source, route solver, waypoint extraction, and
+  CLI, unit-tested and verified against the live DeFlock and HERE endpoints.
+- **M2** (`:tesla`) — the `VehicleNavClient` interface, the scriptable
+  `FakeVehicleNavClient`, and an abstract contract suite (shipped as test
+  fixtures) that the production client must also pass. DI is wired so `:app`
+  resolves the client from a single place (`AppContainer`); the production
+  swap is one line.
+
+The UI (M3) and drive monitor (M4) are next.
