@@ -1,0 +1,1146 @@
+[
+ {
+  "id": 12397376990,
+  "lat": 44.456757,
+  "lon": -87.9915879,
+  "tags": {
+   "brand": "Flock Safety",
+   "camera:direction": "60",
+   "direction": "45",
+   "operator": "Flock Safety"
+  }
+ },
+ {
+  "id": 12397376991,
+  "lat": 44.5239915,
+  "lon": -88.0785349,
+  "tags": {
+   "brand": "Flock Safety",
+   "camera:direction": "45",
+   "direction": "45",
+   "operator": "Flock Safety"
+  }
+ },
+ {
+  "id": 12720807975,
+  "lat": 44.4474145,
+  "lon": -88.0628651,
+  "tags": {
+   "direction": "70",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12720855580,
+  "lat": 44.5412006,
+  "lon": -88.0792302,
+  "tags": {
+   "direction": "45",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12721528300,
+  "lat": 44.5577367,
+  "lon": -88.0612241,
+  "tags": {
+   "direction": "255",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12721821726,
+  "lat": 44.5932582,
+  "lon": -88.2109062,
+  "tags": {
+   "direction": "80",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12721841815,
+  "lat": 44.4476486,
+  "lon": -88.0628581,
+  "tags": {
+   "direction": "255",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12721863996,
+  "lat": 44.4520231,
+  "lon": -88.087602,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12728921167,
+  "lat": 44.4873146,
+  "lon": -87.9420554,
+  "tags": {
+   "direction": "285",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12728962341,
+  "lat": 44.5259803,
+  "lon": -87.991359,
+  "tags": {
+   "direction": "250",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12728962342,
+  "lat": 44.526103,
+  "lon": -87.9914873,
+  "tags": {
+   "direction": "205",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729041326,
+  "lat": 44.4712559,
+  "lon": -88.0309203,
+  "tags": {
+   "direction": "50",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729041327,
+  "lat": 44.4697536,
+  "lon": -88.0319634,
+  "tags": {
+   "direction": "225",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729058370,
+  "lat": 44.5145302,
+  "lon": -87.960939,
+  "tags": {
+   "direction": "210",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729058371,
+  "lat": 44.5145628,
+  "lon": -87.9602209,
+  "tags": {
+   "direction": "40",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729083548,
+  "lat": 44.4631811,
+  "lon": -88.0510294,
+  "tags": {
+   "direction": "195",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729173931,
+  "lat": 44.4903446,
+  "lon": -87.974524,
+  "tags": {
+   "direction": "235",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729173932,
+  "lat": 44.4894018,
+  "lon": -87.9735971,
+  "tags": {
+   "direction": "135",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729173933,
+  "lat": 44.4904825,
+  "lon": -87.9741568,
+  "tags": {
+   "direction": "305",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729199821,
+  "lat": 44.4720981,
+  "lon": -88.0005774,
+  "tags": {
+   "direction": "355",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729211123,
+  "lat": 44.4878958,
+  "lon": -87.978504,
+  "tags": {
+   "direction": "345",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729211124,
+  "lat": 44.4879303,
+  "lon": -87.9786779,
+  "tags": {
+   "direction": "170",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729230483,
+  "lat": 44.4547265,
+  "lon": -87.9937817,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729272920,
+  "lat": 44.4514612,
+  "lon": -88.087258,
+  "tags": {
+   "direction": "75",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729456981,
+  "lat": 44.8213044,
+  "lon": -87.4176845,
+  "tags": {
+   "direction": "245",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729456982,
+  "lat": 44.8210045,
+  "lon": -87.4169939,
+  "tags": {
+   "direction": "65",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729532978,
+  "lat": 44.5184649,
+  "lon": -88.0173438,
+  "tags": {
+   "direction": "80",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729532979,
+  "lat": 44.5180658,
+  "lon": -88.0128463,
+  "tags": {
+   "direction": "265",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729571498,
+  "lat": 44.5898878,
+  "lon": -88.2163493,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Motorola Solutions"
+  }
+ },
+ {
+  "id": 12729571499,
+  "lat": 44.5900227,
+  "lon": -88.2174512,
+  "tags": {
+   "direction": "150",
+   "manufacturer": "Motorola Solutions"
+  }
+ },
+ {
+  "id": 12729571500,
+  "lat": 44.5896783,
+  "lon": -88.2154163,
+  "tags": {
+   "direction": "220",
+   "manufacturer": "Motorola Solutions"
+  }
+ },
+ {
+  "id": 12729912520,
+  "lat": 44.4695843,
+  "lon": -87.9556455,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729912521,
+  "lat": 44.4705441,
+  "lon": -87.9631692,
+  "tags": {
+   "direction": "285",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12729912522,
+  "lat": 44.4698723,
+  "lon": -87.9631393,
+  "tags": {
+   "direction": "115",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12731813920,
+  "lat": 44.5317276,
+  "lon": -87.8837002,
+  "tags": {
+   "direction": "175",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12731815076,
+  "lat": 44.4390922,
+  "lon": -88.0590432,
+  "tags": {
+   "direction": "325",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12736879511,
+  "lat": 44.4961828,
+  "lon": -88.0428778,
+  "tags": {
+   "direction": "240",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12736879512,
+  "lat": 44.4971047,
+  "lon": -88.0415746,
+  "tags": {
+   "direction": "10",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12736995332,
+  "lat": 44.4306774,
+  "lon": -88.1084385,
+  "tags": {
+   "direction": "70",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12736995333,
+  "lat": 44.4320677,
+  "lon": -88.1070152,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12737960047,
+  "lat": 44.5562121,
+  "lon": -88.0586813,
+  "tags": {
+   "direction": "80",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12738000881,
+  "lat": 44.5475121,
+  "lon": -88.0478039,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12738000882,
+  "lat": 44.5482302,
+  "lon": -88.0479487,
+  "tags": {
+   "direction": "110",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12738217619,
+  "lat": 44.5328938,
+  "lon": -88.0279782,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12743294088,
+  "lat": 44.4328748,
+  "lon": -88.0159765,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12763185344,
+  "lat": 44.5332511,
+  "lon": -88.007202,
+  "tags": {
+   "direction": "275",
+   "manufacturer": "Leonardo"
+  }
+ },
+ {
+  "id": 12763185345,
+  "lat": 44.5334358,
+  "lon": -88.0086079,
+  "tags": {
+   "direction": "100",
+   "manufacturer": "Leonardo"
+  }
+ },
+ {
+  "id": 12764549754,
+  "lat": 44.4543346,
+  "lon": -88.077794,
+  "tags": {
+   "direction": "10",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12768590207,
+  "lat": 44.4981789,
+  "lon": -88.020196,
+  "tags": {
+   "direction": "10",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12773171455,
+  "lat": 44.6695287,
+  "lon": -88.0505212,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12786847282,
+  "lat": 44.4973874,
+  "lon": -87.990549,
+  "tags": {
+   "direction": "95",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12786847283,
+  "lat": 44.4976877,
+  "lon": -87.9908654,
+  "tags": {
+   "direction": "280",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12786946525,
+  "lat": 44.5135092,
+  "lon": -87.9936088,
+  "tags": {
+   "direction": "95",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12786946526,
+  "lat": 44.51378,
+  "lon": -87.9935306,
+  "tags": {
+   "direction": "10",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12786946527,
+  "lat": 44.5138473,
+  "lon": -87.9938688,
+  "tags": {
+   "direction": "280",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12786946528,
+  "lat": 44.5135596,
+  "lon": -87.9939387,
+  "tags": {
+   "direction": "190",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12787312485,
+  "lat": 44.4891899,
+  "lon": -87.9940389,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12801014860,
+  "lat": 44.5155852,
+  "lon": -88.0197836,
+  "tags": {
+   "direction": "100",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12801014861,
+  "lat": 44.5145223,
+  "lon": -88.0162378,
+  "tags": {
+   "direction": "280",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12801016394,
+  "lat": 44.5092572,
+  "lon": -88.0234469,
+  "tags": {
+   "direction": "100",
+   "manufacturer": "Leonardo"
+  }
+ },
+ {
+  "id": 12801047949,
+  "lat": 44.5137733,
+  "lon": -88.0357963,
+  "tags": {
+   "direction": "100",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12801102356,
+  "lat": 44.5046301,
+  "lon": -88.0102001,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12801136734,
+  "lat": 44.5078003,
+  "lon": -88.0175499,
+  "tags": {
+   "direction": "220",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12803315916,
+  "lat": 44.5338397,
+  "lon": -88.0709639,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12803315917,
+  "lat": 44.534293,
+  "lon": -88.0728634,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12806358080,
+  "lat": 44.5477105,
+  "lon": -88.0701661,
+  "tags": {
+   "direction": "290",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12834866301,
+  "lat": 44.5098092,
+  "lon": -88.0266331,
+  "tags": {
+   "direction": "355",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12863657136,
+  "lat": 44.5244267,
+  "lon": -88.0775445,
+  "tags": {
+   "direction": "240",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13021782246,
+  "lat": 44.5300877,
+  "lon": -87.9364951,
+  "tags": {
+   "direction": "190",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13025801109,
+  "lat": 44.5266253,
+  "lon": -87.9072513,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13082431289,
+  "lat": 44.5080916,
+  "lon": -88.1695104,
+  "tags": {
+   "direction": "215",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13206000824,
+  "lat": 44.5140851,
+  "lon": -87.960275,
+  "tags": {
+   "direction": "110",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13226640707,
+  "lat": 44.4672742,
+  "lon": -87.959871,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13226648860,
+  "lat": 44.4683625,
+  "lon": -87.9612005,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13238947901,
+  "lat": 44.4969968,
+  "lon": -88.1258794,
+  "tags": {
+   "direction": "290",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13304627711,
+  "lat": 44.5358779,
+  "lon": -88.0730014,
+  "tags": {
+   "direction": "180;310",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13304627712,
+  "lat": 44.5355106,
+  "lon": -88.0730612,
+  "tags": {
+   "direction": "320",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13310115701,
+  "lat": 44.4662456,
+  "lon": -87.9589243,
+  "tags": {
+   "direction": "314",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13386666325,
+  "lat": 45.1019056,
+  "lon": -87.6283074,
+  "tags": {
+   "direction": "210",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13386739778,
+  "lat": 44.9980751,
+  "lon": -87.8529704,
+  "tags": {
+   "direction": "10",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13386739779,
+  "lat": 45.0655845,
+  "lon": -87.6942642,
+  "tags": {
+   "direction": "230",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13483112801,
+  "lat": 44.5275468,
+  "lon": -87.9075489,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13512184301,
+  "lat": 45.0954404,
+  "lon": -87.5986235,
+  "tags": {
+   "direction": "145",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13512188301,
+  "lat": 45.1019063,
+  "lon": -87.6283168,
+  "tags": {
+   "direction": "173",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13512191201,
+  "lat": 45.1055316,
+  "lon": -87.6360397,
+  "tags": {
+   "direction": "174",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13512200601,
+  "lat": 45.1025037,
+  "lon": -87.6612346,
+  "tags": {
+   "direction": "139",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13539442801,
+  "lat": 44.5298167,
+  "lon": -87.9366583,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13539445001,
+  "lat": 44.5367621,
+  "lon": -87.915049,
+  "tags": {
+   "direction": "95",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13539445201,
+  "lat": 44.4308172,
+  "lon": -88.1115015,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13565730501,
+  "lat": 44.4980334,
+  "lon": -88.0205461,
+  "tags": {
+   "direction": "186",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13569932301,
+  "lat": 44.5338771,
+  "lon": -87.9288475,
+  "tags": {
+   "direction": "186",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13583343208,
+  "lat": 45.106637,
+  "lon": -87.8609728,
+  "tags": {
+   "direction": "111",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13583618601,
+  "lat": 45.0268141,
+  "lon": -88.044605,
+  "tags": {
+   "direction": "342",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13586135001,
+  "lat": 44.5753023,
+  "lon": -88.1737835,
+  "tags": {
+   "direction": "185",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13623984609,
+  "lat": 44.5450739,
+  "lon": -88.0851097,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13681909204,
+  "lat": 44.500497,
+  "lon": -88.194205,
+  "tags": {
+   "direction": "335",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13695645460,
+  "lat": 44.5326856,
+  "lon": -88.0277667,
+  "tags": {
+   "direction": "340",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13758919201,
+  "lat": 44.7159974,
+  "lon": -88.2454346,
+  "tags": {
+   "direction": "157",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13797888902,
+  "lat": 44.4740027,
+  "lon": -88.1073361,
+  "tags": {
+   "direction": "64",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13797894301,
+  "lat": 44.4739266,
+  "lon": -88.1051876,
+  "tags": {
+   "direction": "53",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13797894502,
+  "lat": 44.4716024,
+  "lon": -88.1057583,
+  "tags": {
+   "direction": "195",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13797894503,
+  "lat": 44.4724109,
+  "lon": -88.1098048,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13797895501,
+  "lat": 44.4712105,
+  "lon": -88.1109405,
+  "tags": {
+   "direction": "13",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13806579702,
+  "lat": 44.558701,
+  "lon": -88.1304343,
+  "tags": {
+   "direction": "145",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13812810701,
+  "lat": 44.5914412,
+  "lon": -88.052363,
+  "tags": {
+   "direction": "220",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13845058501,
+  "lat": 45.1066845,
+  "lon": -87.6353427,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13907003401,
+  "lat": 44.4442861,
+  "lon": -88.2249602,
+  "tags": {
+   "direction": "269",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13945709601,
+  "lat": 44.4308442,
+  "lon": -88.1050843,
+  "tags": {
+   "direction": "79",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13954978101,
+  "lat": 44.4987086,
+  "lon": -88.1664661,
+  "tags": {
+   "direction": "256",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13956513901,
+  "lat": 45.1115012,
+  "lon": -88.169465,
+  "tags": {
+   "direction": "258",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13960973502,
+  "lat": 44.4702167,
+  "lon": -88.0770952,
+  "tags": {
+   "direction": "16",
+   "manufacturer": "Axon"
+  }
+ },
+ {
+  "id": 13960977301,
+  "lat": 44.4707742,
+  "lon": -88.076703,
+  "tags": {
+   "direction": "189",
+   "manufacturer": "Axon"
+  }
+ },
+ {
+  "id": 13965760502,
+  "lat": 44.4956807,
+  "lon": -88.1061021,
+  "tags": {
+   "direction": "278",
+   "manufacturer": "Axon Enterprise"
+  }
+ },
+ {
+  "id": 13966778201,
+  "lat": 44.4871574,
+  "lon": -87.9477658,
+  "tags": {
+   "direction": "71",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13969675101,
+  "lat": 45.2329786,
+  "lon": -87.9972758,
+  "tags": {
+   "direction": "100",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13969675901,
+  "lat": 45.2329794,
+  "lon": -87.9972798,
+  "tags": {
+   "direction": "199",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13969676701,
+  "lat": 45.232433,
+  "lon": -88.0178313,
+  "tags": {
+   "direction": "325",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13971412701,
+  "lat": 44.8779923,
+  "lon": -87.8889941,
+  "tags": {
+   "direction": "239;306;18;0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13981954482,
+  "lat": 44.4941634,
+  "lon": -88.1035018,
+  "tags": {
+   "direction": "100",
+   "manufacturer": "Axon Enterprise"
+  }
+ },
+ {
+  "id": 13997448801,
+  "lat": 44.6820412,
+  "lon": -88.0500927,
+  "tags": {
+   "direction": "334",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13997824526,
+  "lat": 44.5081615,
+  "lon": -88.0764983,
+  "tags": {
+   "direction": "110",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 13997824527,
+  "lat": 44.5086422,
+  "lon": -88.0770226,
+  "tags": {
+   "direction": "290",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 14003560501,
+  "lat": 44.7181641,
+  "lon": -88.2455363,
+  "tags": {
+   "direction": "334",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 14005076189,
+  "lat": 44.4895716,
+  "lon": -88.0649107,
+  "tags": {
+   "direction": "35",
+   "manufacturer": "Axon Enterprise"
+  }
+ },
+ {
+  "id": 14005076190,
+  "lat": 44.4893576,
+  "lon": -88.0652796,
+  "tags": {
+   "direction": "200",
+   "manufacturer": "Axon Enterprise"
+  }
+ },
+ {
+  "id": 14023185201,
+  "lat": 44.4778999,
+  "lon": -87.9694779,
+  "tags": {
+   "direction": "218",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 14024520317,
+  "lat": 45.2167303,
+  "lon": -87.9963642,
+  "tags": {}
+ }
+]

@@ -45,6 +45,61 @@ interface and a fake only — the production vehicle client is developed
 separately and dropped in via a one-line DI change. No vehicle networking,
 authentication, or request-signing code lives here.
 
+### Solver internals and a known limitation
+
+The camera-free search is **greedy exclusion**: request a route, buffer every
+camera by a configurable radius (default 40 m), test the polyline for
+intersection, add the offenders as HERE `avoid[areas]` boxes (max 20 per
+request — only cameras on the current candidate line are excluded, nearest
+first; never the whole dataset), and re-request until clean or out of rounds.
+
+**Known limitation:** greedy exclusion can report infeasibility when a clean
+route actually exists, because excluding camera A may push the route onto
+camera B, and the search never backtracks. The minimum-exposure fallback
+mitigates this by scoring *every* candidate seen — the initial alternatives
+plus each exclusion round's routes — by distinct-camera count with ties
+broken by travel time, but it is still a heuristic. The exact alternative —
+delete camera-adjacent edges from a road graph and run shortest path — is
+future work.
+
+**Directionality** (`--strict-direction`, default **off**): some records
+carry a facing direction, and with the flag on a camera only blocks when the
+route's heading at the nearest point falls within a configurable arc of that
+facing. It is off by default because the tags are crowdsourced, often absent,
+and many units cover multiple directions. (Live-data note: the plain OSM
+`direction` tag appears on ~97% of records, `camera:direction` on ~2%; both
+are honored, preferring `camera:direction`.)
+
+### Camera data
+
+DeFlock CDN tiles (20°×20°, listed by `regions/index.json`) are fetched
+lazily for the area a route needs, at most 5 in flight, and cached on disk
+honoring the index's `expiration_utc` and cache-busting `?v=` version. If the
+network fails, the cache serves stale; if there is no cache at all, a bundled
+snapshot of the full dataset (~2.5 MB gzipped, refresh with
+`tools/update-snapshot.sh`) answers offline. Every result reports its
+freshness (`NETWORK` / `CACHE` / `STALE_CACHE` / `BUNDLED`).
+
+### CLI harness
+
+The solver runs from a laptop without a car or an emulator:
+
+```
+./gradlew :solver:installDist
+./solver/build/install/solver/bin/solver solve \
+    --from "45.8,-88.1" --to "some address" [--json] [--radius 40] [--strict-direction]
+```
+
+### Testing policy
+
+No live network calls in unit tests. DeFlock parsers are tested against
+fixtures recorded from the live CDN (2026-07-19); HTTP behavior (caching,
+fallbacks, concurrency caps) runs against MockWebServer. **Caveat:** the HERE
+Routing/Geocoding response parsers are currently written against HERE's
+documented v8/v1 shapes but have not yet been verified against the live API
+(blocked on a valid API key) — verify and record real fixtures before
+trusting them.
+
 ## Setup
 
 Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
@@ -65,6 +120,7 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ## Status
 
-Milestone M0 (repo scaffolding) — solver, vehicle seam, UI, and drive
-monitor land in M1–M4. Known-limitation documentation for the solver's
-greedy-exclusion search is added alongside M1.
+Milestone M1 (`:solver`) — camera source, route solver, waypoint extraction,
+and CLI are built and unit-tested. Outstanding M1 item: live verification of
+the HERE response parsers (blocked on a valid API key). The vehicle seam
+(M2), UI (M3), and drive monitor (M4) are next.
