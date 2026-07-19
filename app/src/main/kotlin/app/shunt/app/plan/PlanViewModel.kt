@@ -98,17 +98,21 @@ class PlanViewModel(
         }
     }
 
-    /** Go: push the route to the vehicle. (M4 will also start the drive monitor here.) */
+    /**
+     * Go: upload the route to the vehicle, then enter the driving phase. The
+     * activity starts the foreground drive-monitor service on this transition
+     * (it must be started from the foreground, so it can't be launched here).
+     */
     fun onGo() {
         val solved = _state.value.phase as? Phase.Solved ?: return
-        val chain = pushChainFor(solved.result, solved.destination)
+        val plan = drivePlanFor(solved.result, solved.destination)
         _state.update { it.copy(phase = Phase.Pushing(solved.destination, solved.result)) }
         workScope.launch {
-            val result = runCatching { vehicle.pushRoute(chain) }
+            val result = runCatching { vehicle.pushRoute(plan.chain) }
                 .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
             _state.update {
                 when (result) {
-                    is PushResult.Success -> it.copy(phase = Phase.Pushed(solved.destination))
+                    is PushResult.Success -> it.copy(phase = Phase.Driving(solved.destination, plan))
                     is PushResult.Failed -> it.copy(
                         phase = Phase.PushFailed(
                             solved.destination, solved.result, result.reason, result.retryable,
@@ -116,6 +120,20 @@ class PlanViewModel(
                     )
                 }
             }
+        }
+    }
+
+    /** Cancel the drive (user tapped cancel). The activity stops the service. */
+    fun onStopDrive() {
+        if (_state.value.phase is Phase.Driving) {
+            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList()) }
+        }
+    }
+
+    /** The monitor reported arrival; leave the driving phase. */
+    fun onArrived() {
+        if (_state.value.phase is Phase.Driving) {
+            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList()) }
         }
     }
 
@@ -142,17 +160,27 @@ class PlanViewModel(
     }
 
     /**
-     * The waypoint chain to push: the solver's intermediate pins followed by
-     * the destination itself. The pins are what hold the vehicle on the
-     * chosen (camera-aware) path; the destination is the final stop.
+     * The plan handed to the drive monitor. The chain is the solver's
+     * intermediate pins (which hold the vehicle on the chosen, camera-aware
+     * path) followed by the destination itself. Cameras are the unavoidable
+     * ones to warn about — empty for a clean route.
      */
-    private fun pushChainFor(result: SolveResult, destination: Destination): List<GeoPoint> {
-        val waypoints = when (result) {
-            is SolveResult.Clean -> result.waypoints
-            is SolveResult.MinimumExposure -> result.waypoints
-            is SolveResult.Failed -> emptyList()
+    private fun drivePlanFor(result: SolveResult, destination: Destination): DrivePlan {
+        val waypoints: List<GeoPoint>
+        val cameras: List<app.shunt.solver.camera.Camera>
+        val polyline: List<GeoPoint>
+        when (result) {
+            is SolveResult.Clean -> {
+                waypoints = result.waypoints; cameras = emptyList(); polyline = result.route.polyline
+            }
+            is SolveResult.MinimumExposure -> {
+                waypoints = result.waypoints; cameras = result.passedCameras; polyline = result.route.polyline
+            }
+            is SolveResult.Failed -> {
+                waypoints = emptyList(); cameras = emptyList(); polyline = emptyList()
+            }
         }
-        return waypoints + destination.location
+        return DrivePlan(destination, waypoints + destination.location, cameras, polyline)
     }
 
     companion object {

@@ -1,6 +1,7 @@
 package app.shunt.app.plan
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.Freshness
 import app.shunt.solver.here.Suggestion
 import app.shunt.solver.routing.SolveResult
@@ -16,6 +17,17 @@ data class Destination(val title: String, val location: GeoPoint) {
 data class Favorites(val home: Destination? = null, val work: Destination? = null)
 
 enum class FavoriteSlot { HOME, WORK }
+
+/** Everything the drive monitor needs to run a trip, handed over at Go. */
+data class DrivePlan(
+    val destination: Destination,
+    /** Waypoint chain: intermediate pins followed by the destination (last). */
+    val chain: List<GeoPoint>,
+    /** Unavoidable cameras to warn about (empty for a clean route). */
+    val cameras: List<Camera>,
+    /** The route line, for the map / notification context. */
+    val polyline: List<GeoPoint>,
+)
 
 /**
  * The single screen state. [phase] drives what's shown; [query]/[suggestions]
@@ -47,8 +59,12 @@ sealed interface Phase {
     /** Go tapped; pushing the route to the vehicle. */
     data class Pushing(val destination: Destination, val result: SolveResult) : Phase
 
-    /** Route accepted by the vehicle. (M4 attaches the drive monitor here.) */
-    data class Pushed(val destination: Destination) : Phase
+    /**
+     * Route accepted by the vehicle and the drive monitor is running: GPS is
+     * tracked, waypoints advance on approach, and cameras/failures alert
+     * locally until arrival or cancel.
+     */
+    data class Driving(val destination: Destination, val plan: DrivePlan) : Phase
 
     /** The push failed. [retryable] mirrors PushResult so the UI can offer retry. */
     data class PushFailed(

@@ -127,18 +127,41 @@ class PlanViewModelTest {
     }
 
     @Test
-    fun `Go pushes the waypoint chain plus destination and reaches Pushed`() = runTest {
+    fun `Go pushes the waypoint chain plus destination and enters Driving`() = runTest {
         val fake = FakeVehicleNavClient()
         val model = vm(this, suggestions = listOf(Suggestion("Dest", dest, "place")), result = clean, vehicle = fake)
         model.onQueryChange("Dest"); advanceUntilIdle()
         model.onSuggestionSelected(0); advanceUntilIdle()
         model.onGo(); advanceUntilIdle()
-        assertIs<Phase.Pushed>(model.state.value.phase)
+        val driving = assertIs<Phase.Driving>(model.state.value.phase)
         val call = fake.calls().single()
         assertIs<FakeVehicleNavClient.Call.PushRoute>(call)
         // clean.waypoints (1) + destination = 2 points, destination last.
         assertEquals(2, call.waypoints.size)
         assertEquals(dest, call.waypoints.last())
+        // The plan the monitor will run matches what was pushed.
+        assertEquals(call.waypoints, driving.plan.chain)
+    }
+
+    @Test
+    fun `cancelling a drive returns to browsing`() = runTest {
+        val model = vm(this, suggestions = listOf(Suggestion("Dest", dest, "place")), result = clean)
+        model.onQueryChange("Dest"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+        assertIs<Phase.Driving>(model.state.value.phase)
+        model.onStopDrive()
+        assertIs<Phase.Browsing>(model.state.value.phase)
+    }
+
+    @Test
+    fun `minimum-exposure plan carries the passed cameras to the monitor`() = runTest {
+        val store = InMemoryFavorites(Favorites(home = Destination("Home", dest)))
+        val model = vm(this, result = minExposure, favoritesStore = store)
+        model.onFavoriteSelected(FavoriteSlot.HOME); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+        val driving = assertIs<Phase.Driving>(model.state.value.phase)
+        assertEquals(2, driving.plan.cameras.size)
     }
 
     @Test
@@ -158,7 +181,7 @@ class PlanViewModelTest {
         assertEquals("vehicle asleep", failed.reason)
         // Second attempt (call #2) succeeds.
         model.onRetryPush(); advanceUntilIdle()
-        assertIs<Phase.Pushed>(model.state.value.phase)
+        assertIs<Phase.Driving>(model.state.value.phase)
     }
 
     @Test

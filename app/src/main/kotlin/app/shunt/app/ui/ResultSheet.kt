@@ -70,7 +70,7 @@ fun ResultSheet(
                 is Phase.Solving -> SolvingContent(phase.destination)
                 is Phase.Solved -> SolvedContent(phase, onGo, onDismiss, onSaveHome, onSaveWork)
                 is Phase.Pushing -> PushingContent(phase.destination)
-                is Phase.Pushed -> PushedContent(phase.destination, onDismiss)
+                is Phase.Driving -> DrivingContent(phase.destination, phase.plan.cameras.size, onDismiss)
                 is Phase.PushFailed -> PushFailedContent(phase, onRetryPush, onDismiss)
                 is Phase.Error -> ErrorContent(phase.message, onDismiss)
                 Phase.Browsing -> Unit
@@ -224,19 +224,29 @@ private fun PushingContent(destination: Destination) {
 }
 
 @Composable
-private fun PushedContent(destination: Destination, onDismiss: () -> Unit) {
+private fun DrivingContent(destination: Destination, cameraCount: Int, onCancel: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(12.dp))
-        Text("Sent to vehicle", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Driving to ${destination.title}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     }
     Spacer(Modifier.height(8.dp))
     Text(
-        "The route to ${destination.title} is on the car's navigation.",
+        if (cameraCount > 0) {
+            "Route sent. Monitoring — you'll be alerted on approach to each of the ${cameraCount(cameraCount)}."
+        } else {
+            "Route sent. Monitoring your drive; waypoints advance automatically."
+        },
         style = MaterialTheme.typography.bodyMedium,
     )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "Alerts are haptic and audible — no need to watch the screen.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     Spacer(Modifier.height(16.dp))
-    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+    OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel drive") }
 }
 
 @Composable

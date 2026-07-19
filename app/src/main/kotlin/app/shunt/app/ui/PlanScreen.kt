@@ -170,6 +170,10 @@ private fun Banner(message: String) {
 
 /** The route line + passed-camera points to draw for the current phase. */
 private fun routeOverlay(phase: Phase): Pair<List<GeoPoint>, List<GeoPoint>> {
+    // The driving phase carries a prebuilt plan (polyline + cameras).
+    if (phase is Phase.Driving) {
+        return phase.plan.polyline to phase.plan.cameras.map { it.location }
+    }
     val result: SolveResult? = when (phase) {
         is Phase.Solved -> phase.result
         is Phase.Pushing -> phase.result

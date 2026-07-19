@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import app.shunt.BuildConfig
+import app.shunt.app.drive.DriveStatus
 import app.shunt.app.plan.CameraGateway
+import app.shunt.app.plan.DrivePlan
 import app.shunt.app.plan.LocationProvider
 import app.shunt.app.plan.PlanViewModel
 import app.shunt.app.plan.RoutePlanner
@@ -17,6 +19,7 @@ import app.shunt.solver.routing.RouteSolver
 import app.shunt.tesla.FakeVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
 import java.io.File
+import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.OkHttpClient
 
 /**
@@ -52,6 +55,15 @@ class AppContainer(context: Context) {
     val favoritesStore = SharedPrefsFavoritesStore(appContext)
     private val locationProvider: LocationProvider =
         AndroidLocationProvider(appContext, favoritesStore)
+
+    /**
+     * Drive-session handoff between the plan UI and the foreground service
+     * (single process). The activity stashes the plan here on Go before
+     * starting the service; the service reports lifecycle back via
+     * [driveStatus], which the UI observes to leave the driving phase.
+     */
+    var activeDrivePlan: DrivePlan? = null
+    val driveStatus = MutableStateFlow<DriveStatus>(DriveStatus.Idle)
 
     /** True when no HERE key is configured — the UI warns instead of failing silently. */
     val hereKeyMissing: Boolean get() = hereApiKey.isBlank()

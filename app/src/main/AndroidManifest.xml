@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Drive monitor: while-in-use location only. Deliberately NO
+         ACCESS_BACKGROUND_LOCATION — the service runs only while driving. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <application
         android:name="app.shunt.app.ShuntApplication"
         android:label="@string/app_name"
@@ -18,8 +26,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- The drive-monitor foreground service and location permission
-             arrive in M4. -->
+        <service
+            android:name="app.shunt.app.drive.DriveMonitorService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
     </application>
 
 </manifest>

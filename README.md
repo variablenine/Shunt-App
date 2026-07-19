@@ -123,7 +123,7 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ## Status
 
-Milestones M0–M3 complete:
+Milestones M0–M4 complete:
 
 - **M0** — Gradle multi-module scaffolding, license separation, key hygiene.
 - **M1** (`:solver`) — camera source, route solver, waypoint extraction, and
@@ -134,8 +134,40 @@ Milestones M0–M3 complete:
   resolves the client from a single place (`AppContainer`); the production
   swap is one line.
 - **M3** (`:app`) — the planning UI (below).
+- **M4** (`:app`) — the drive monitor (below).
 
-The drive monitor (M4) is next.
+Hardening (M5) is next.
+
+### M4 — drive monitor
+
+Tapping Go starts a foreground service (`foregroundServiceType="location"`,
+`FOREGROUND_SERVICE_LOCATION` + `ACCESS_FINE_LOCATION`) from the visible
+activity — a while-in-use location service cannot be started from the
+background, so this start-from-foreground path is deliberate. Only
+`ACCESS_FINE_LOCATION` is requested; **never** `ACCESS_BACKGROUND_LOCATION`.
+The service starts on Go and stops on arrival or cancel — nothing runs when
+the user isn't driving, and no background work is scheduled.
+
+**Waypoint advancement is the safety-critical part.** The vehicle treats
+waypoints as stops, not pass-through points — it won't consider one visited
+until parked there, and under driver assistance will actually stop. So as the
+car approaches each waypoint the monitor calls `advanceTo` with the remaining
+chain to drop the one being passed, fired **early** (a configurable ~18 s time
+lead, with a distance floor for crawling traffic), not at the pin.
+
+**Every failure is loud, and works offline.** Camera-approach warnings, an
+`advanceTo` failure, and arrival all raise escalating haptics plus a local
+notification — none need connectivity, which is the whole point of the
+fallback. Camera warnings come from the cached camera set and degrade to
+"Camera in 1,200 ft on your right" with nothing upstream available. Alerts are
+meant to be felt and heard on a 2am rural drive, not read.
+
+The decision logic (`DriveMonitorEngine`) is pure and exhaustively unit-
+tested; the coordinator (`DriveMonitor`) is tested against
+`FakeVehicleNavClient` and a fake alerter over scripted GPS, **including the
+failure paths that can't be driven around** — an `advanceTo` failing while
+approaching an unavoidable camera. The Android foreground service is a thin
+shell over both.
 
 ### M3 — planning UI
 
