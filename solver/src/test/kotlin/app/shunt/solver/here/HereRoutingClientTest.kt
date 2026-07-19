@@ -20,7 +20,7 @@ class HereRoutingClientTest {
 
     private fun client() = HereRoutingClient(
         http = OkHttpClient(),
-        apiKey = "test-key",
+        apiKey = { "test-key" },
         baseUrl = server.url("/").toString().trimEnd('/'),
     )
 

@@ -36,12 +36,13 @@ fun main(args: Array<String>) {
     val strictDirection = "strict-direction" in opts
 
     val apiKey = loadHereApiKey() ?: fail("HERE_API_KEY not set (env, .env, or local.properties)")
+    val keyProvider = { apiKey }
 
     val http = OkHttpClient()
     val cacheDir = File(System.getProperty("user.home"), ".cache/shunt/deflock")
     val cameraSource = DeFlockCameraSource(http, cacheDir)
     val solver = RouteSolver(
-        api = HereRoutingClient(http, apiKey),
+        api = HereRoutingClient(http, keyProvider),
         cameras = { bbox -> cameraSource.camerasIn(bbox).cameras },
         config = SolverConfig(bufferRadiusMeters = radius, strictDirection = strictDirection),
     )
@@ -49,7 +50,7 @@ fun main(args: Array<String>) {
     val result = runBlocking {
         val origin = parsePoint(from) ?: fail("--from must be \"lat,lon\", got: $from")
         val destination = parsePoint(to)
-            ?: runCatching { HereGeocoder(http, apiKey).geocode(to) }
+            ?: runCatching { HereGeocoder(http, keyProvider).geocode(to) }
                 .getOrElse { e -> fail("geocoding failed: ${e.message}") }
             ?: fail("could not geocode destination: $to")
         solver.solve(origin, destination)

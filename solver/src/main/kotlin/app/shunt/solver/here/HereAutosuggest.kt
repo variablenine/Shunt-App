@@ -29,7 +29,7 @@ data class Suggestion(
  */
 class HereAutosuggest(
     private val http: OkHttpClient,
-    private val apiKey: String,
+    private val apiKey: () -> String,
     private val baseUrl: String = "https://autosuggest.search.hereapi.com",
 ) {
     suspend fun suggest(query: String, at: GeoPoint, limit: Int = 5): List<Suggestion> {
@@ -38,7 +38,7 @@ class HereAutosuggest(
             .addQueryParameter("q", query)
             .addQueryParameter("at", "${at.lat},${at.lon}")
             .addQueryParameter("limit", limit.toString())
-            .addQueryParameter("apiKey", apiKey)
+            .addQueryParameter("apiKey", apiKey())
             .build()
         val body = withContext(Dispatchers.IO) {
             http.newCall(Request.Builder().url(url).build()).execute().use { resp ->

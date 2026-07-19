@@ -37,6 +37,12 @@ android {
         buildConfigField("String", "HERE_API_KEY", "\"$hereApiKey\"")
         buildConfigField("String", "TESSIE_TOKEN", "\"$tessieToken\"")
         buildConfigField("String", "TESSIE_VIN", "\"$tessieVin\"")
+
+        // Universal by default; `-PslimAbi` restricts to arm64-v8a (modern
+        // phones) for a much smaller alpha APK. Not for CI/emulator builds.
+        if (project.hasProperty("slimAbi")) {
+            ndk { abiFilters += "arm64-v8a" }
+        }
     }
 
     buildTypes {

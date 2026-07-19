@@ -33,14 +33,19 @@ class AppContainer(context: Context) {
 
     private val appContext = context.applicationContext
     private val http = OkHttpClient()
-    private val hereApiKey = BuildConfig.HERE_API_KEY
+
+    /** On-device settings (the user-entered HERE key). */
+    val settings = SettingsStore(appContext)
+
+    /** Runtime HERE key: the in-app value if set, otherwise the build-time one. */
+    fun effectiveHereKey(): String = settings.hereApiKey.value.ifBlank { BuildConfig.HERE_API_KEY }
 
     private val cameraSource = DeFlockCameraSource(
         http = http,
         cacheDir = File(appContext.cacheDir, "deflock"),
     )
-    private val routingApi = HereRoutingClient(http, hereApiKey)
-    private val autosuggest = HereAutosuggest(http, hereApiKey)
+    private val routingApi = HereRoutingClient(http, { effectiveHereKey() })
+    private val autosuggest = HereAutosuggest(http, { effectiveHereKey() })
     private val routeSolver = RouteSolver(
         api = routingApi,
         cameras = { bbox -> cameraSource.camerasIn(bbox).cameras },
@@ -76,8 +81,8 @@ class AppContainer(context: Context) {
     var activeDrivePlan: DrivePlan? = null
     val driveStatus = MutableStateFlow<DriveStatus>(DriveStatus.Idle)
 
-    /** True when no HERE key is configured — the UI warns instead of failing silently. */
-    val hereKeyMissing: Boolean get() = hereApiKey.isBlank()
+    /** True when no HERE key is configured — the UI warns and offers to add one. */
+    fun hereKeyMissing(): Boolean = effectiveHereKey().isBlank()
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> autosuggest.suggest(query, at) },

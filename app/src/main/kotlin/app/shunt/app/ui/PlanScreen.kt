@@ -17,16 +17,24 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Work
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +58,7 @@ class PlanActions(
     val onDismiss: () -> Unit,
     val onSaveHome: (Destination) -> Unit,
     val onSaveWork: (Destination) -> Unit,
+    val onSaveHereKey: (String) -> Unit,
 )
 
 @Composable
@@ -57,16 +66,21 @@ fun PlanScreen(
     state: PlanUiState,
     actions: PlanActions,
     hereKeyMissing: Boolean,
+    hereApiKey: String,
     modifier: Modifier = Modifier,
 ) {
     val (polyline, cameras) = routeOverlay(state.phase)
+    var showSettings by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(routePolyline = polyline, passedCameras = cameras, modifier = Modifier.fillMaxSize())
 
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             if (hereKeyMissing) {
-                Banner("HERE_API_KEY not set — search and routing are disabled. Add it to local.properties.")
+                Banner(
+                    "HERE API key not set — search and routing are disabled. Tap to add your key.",
+                    onClick = { showSettings = true },
+                )
                 Spacer(Modifier.height(8.dp))
             }
             if (state.usingOfflineCameraData) {
@@ -74,8 +88,16 @@ fun PlanScreen(
                 Spacer(Modifier.height(8.dp))
             }
             if (state.phase is Phase.Browsing) {
-                SearchAndFavorites(state, actions)
+                SearchAndFavorites(state, actions, onOpenSettings = { showSettings = true })
             }
+        }
+
+        if (showSettings) {
+            HereKeyDialog(
+                current = hereApiKey,
+                onSave = { actions.onSaveHereKey(it); showSettings = false },
+                onDismiss = { showSettings = false },
+            )
         }
 
         if (state.phase !is Phase.Browsing) {
@@ -94,17 +116,22 @@ fun PlanScreen(
 }
 
 @Composable
-private fun SearchAndFavorites(state: PlanUiState, actions: PlanActions) {
+private fun SearchAndFavorites(state: PlanUiState, actions: PlanActions, onOpenSettings: () -> Unit) {
     Surface(tonalElevation = 2.dp, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = actions.onQueryChange,
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                placeholder = { Text("Where to?") },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = actions.onQueryChange,
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    placeholder = { Text("Where to?") },
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onOpenSettings) {
+                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                }
+            }
 
             if (state.suggestions.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {
@@ -163,8 +190,12 @@ private fun FavoriteChip(label: String, icon: androidx.compose.ui.graphics.vecto
 }
 
 @Composable
-private fun Banner(message: String) {
-    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+private fun Banner(message: String, onClick: (() -> Unit)? = null) {
+    val base = Modifier.fillMaxWidth()
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = if (onClick != null) base.clickable(onClick = onClick) else base,
+    ) {
         Text(
             message,
             modifier = Modifier.padding(12.dp),
@@ -173,6 +204,36 @@ private fun Banner(message: String) {
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
     }
+}
+
+@Composable
+private fun HereKeyDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("HERE API key") },
+        text = {
+            Column {
+                Text(
+                    "Powers destination search and routing. Get a key at " +
+                        "platform.here.com (Access Manager → your app → API Keys). " +
+                        "Stored only on this device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    placeholder = { Text("Paste your HERE API key") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(text) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** The route line + passed-camera points to draw for the current phase. */

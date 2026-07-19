@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts.RequestMultiple
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
                 val vm: PlanViewModel = viewModel(factory = container.planViewModelFactory())
                 val state by vm.state.collectAsStateWithLifecycle()
                 val driveStatus by container.driveStatus.collectAsStateWithLifecycle()
+                val storedHereKey by container.settings.hereApiKey.collectAsStateWithLifecycle()
 
                 // Refresh camera data on open; schedule no background work.
                 LaunchedEffect(Unit) { vm.onOpen() }
@@ -73,9 +75,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // storedHereKey is read so recomposition re-evaluates the flag.
+                val hereKeyMissing = remember(storedHereKey) { container.hereKeyMissing() }
+
                 PlanScreen(
                     state = state,
-                    hereKeyMissing = container.hereKeyMissing,
+                    hereKeyMissing = hereKeyMissing,
+                    hereApiKey = storedHereKey,
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,
                         onSuggestionSelected = vm::onSuggestionSelected,
@@ -85,6 +91,7 @@ class MainActivity : ComponentActivity() {
                         onDismiss = vm::onDismissResult,
                         onSaveHome = { vm.onSaveFavorite(FavoriteSlot.HOME, it) },
                         onSaveWork = { vm.onSaveFavorite(FavoriteSlot.WORK, it) },
+                        onSaveHereKey = container.settings::setHereApiKey,
                     ),
                 )
             }

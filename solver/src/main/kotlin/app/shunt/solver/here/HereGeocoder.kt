@@ -17,14 +17,14 @@ import okhttp3.Request
  */
 class HereGeocoder(
     private val http: OkHttpClient,
-    private val apiKey: String,
+    private val apiKey: () -> String,
     private val baseUrl: String = "https://geocode.search.hereapi.com",
 ) {
     suspend fun geocode(query: String): GeoPoint? {
         val url = "$baseUrl/v1/geocode".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("limit", "1")
-            .addQueryParameter("apiKey", apiKey)
+            .addQueryParameter("apiKey", apiKey())
             .build()
         val body = withContext(Dispatchers.IO) {
             http.newCall(Request.Builder().url(url).build()).execute().use { resp ->

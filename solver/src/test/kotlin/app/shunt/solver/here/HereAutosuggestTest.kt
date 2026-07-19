@@ -42,7 +42,7 @@ class HereAutosuggestTest {
 
     @Test
     fun `blank query short-circuits without a request`() = runTest {
-        val client = HereAutosuggest(OkHttpClient(), "k", server.url("/").toString().trimEnd('/'))
+        val client = HereAutosuggest(OkHttpClient(), { "k" }, server.url("/").toString().trimEnd('/'))
         assertEquals(emptyList(), client.suggest("   ", GeoPoint(44.5, -88.0)))
         assertEquals(0, server.requestCount)
     }
@@ -50,7 +50,7 @@ class HereAutosuggestTest {
     @Test
     fun `request carries query and bias point`() = runTest {
         server.enqueue(MockResponse().setBody("""{"items":[]}"""))
-        HereAutosuggest(OkHttpClient(), "test-key", server.url("/").toString().trimEnd('/'))
+        HereAutosuggest(OkHttpClient(), { "test-key" }, server.url("/").toString().trimEnd('/'))
             .suggest("Lambeau", GeoPoint(44.5, -88.0), limit = 7)
         val url = server.takeRequest().requestUrl!!
         assertEquals("Lambeau", url.queryParameter("q"))

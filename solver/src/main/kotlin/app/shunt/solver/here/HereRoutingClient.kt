@@ -23,7 +23,7 @@ import okhttp3.Request
  */
 class HereRoutingClient(
     private val http: OkHttpClient,
-    private val apiKey: String,
+    private val apiKey: () -> String,
     private val baseUrl: String = "https://router.hereapi.com",
 ) : RoutingApi {
 
@@ -53,7 +53,7 @@ class HereRoutingClient(
                     }
                     addQueryParameter("avoid[areas]", boxes)
                 }
-                addQueryParameter("apiKey", apiKey)
+                addQueryParameter("apiKey", apiKey())
             }
             .build()
 
