@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Shunt</string>
+    <!--
+      MapLibre basemap style. Point this at a Protomaps style JSON (e.g.
+      https://api.protomaps.com/styles/v2/light.json?key=YOUR_KEY) or a
+      self-hosted PMTiles style. Left blank the map still renders the route
+      and camera markers on a plain background — the basemap is optional.
+    -->
+    <string name="map_style_url"></string>
+</resources>
