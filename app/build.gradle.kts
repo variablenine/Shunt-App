@@ -27,7 +27,6 @@ val tessieVin = localSecret("TESSIE_VIN")
 android {
     namespace = "app.shunt"
     compileSdk = libs.versions.compile.sdk.get().toInt()
-    ndkVersion = "27.0.12077973" // for native-library stripping
 
     defaultConfig {
         applicationId = "app.shunt"
