@@ -27,6 +27,7 @@ val tessieVin = localSecret("TESSIE_VIN")
 android {
     namespace = "app.shunt"
     compileSdk = libs.versions.compile.sdk.get().toInt()
+    ndkVersion = "27.0.12077973" // for native-library stripping
 
     defaultConfig {
         applicationId = "app.shunt"
@@ -47,7 +48,16 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            // Alpha convenience: sign the release with the debug key so it
+            // installs without provisioning a keystore. Provision a real
+            // signing config before any production distribution.
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -90,7 +100,6 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
-    implementation(libs.compose.material.icons.extended)
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.maplibre)
