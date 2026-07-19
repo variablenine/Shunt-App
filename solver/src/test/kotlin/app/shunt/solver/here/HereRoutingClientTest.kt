@@ -24,10 +24,39 @@ class HereRoutingClientTest {
         baseUrl = server.url("/").toString().trimEnd('/'),
     )
 
+    private fun fixture(name: String): String =
+        javaClass.getResourceAsStream("/fixtures/here/$name")!!.readBytes().decodeToString()
+
     /**
-     * Response in HERE's documented v8 shape. NOTE: synthetic until a live
-     * fixture can be recorded (blocked on a valid API key); the polyline is
-     * the reference vector from the flexible-polyline spec.
+     * Response fixture recorded from the live v8 endpoint 2026-07-19
+     * (Green Bay → Marinette, alternatives=2).
+     */
+    @Test
+    fun `parses live routes fixture`() {
+        val routes = HereRoutingClient.parseRoutes(fixture("routes-v8.json"))
+        assertEquals(3, routes.size)
+        val fastest = routes.minBy { it.durationSeconds }
+        assertEquals(3285, fastest.durationSeconds)
+        assertEquals(87076, fastest.lengthMeters)
+        // Polyline decodes to a plausible corridor: dense, and within the
+        // Green Bay → Marinette bounding box.
+        assertTrue(fastest.polyline.size > 100)
+        assertTrue(fastest.polyline.all { it.lat in 44.4..45.2 && it.lon in -88.2..-87.5 })
+        // Endpooints near the requested origin/destination.
+        assertTrue(fastest.polyline.first().lat in 44.50..44.53)
+        assertTrue(fastest.polyline.last().lat in 45.08..45.10)
+    }
+
+    /** Geocode fixture recorded live 2026-07-19 ("Lambeau Field, Green Bay, WI"). */
+    @Test
+    fun `parses live geocode fixture`() {
+        val point = HereGeocoder.parse(fixture("geocode-v1.json"))
+        assertEquals(GeoPoint(44.50099, -88.0613), point)
+    }
+
+    /**
+     * Synthetic response in HERE's documented v8 shape; the polyline is the
+     * reference vector from the flexible-polyline spec.
      */
     private val documentedShapeBody = """
         {"routes": [{"id": "r1", "sections": [{
@@ -62,9 +91,9 @@ class HereRoutingClientTest {
         val url = request.requestUrl!!
         assertEquals("car", url.queryParameter("transportMode"))
         assertEquals("3", url.queryParameter("alternatives"))
-        // bbox:west,south,east,north — !-separated
+        // bbox:west,south,east,north — |-separated (verified live; `!` 400s)
         assertEquals(
-            "bbox:-88.01,45.01,-88.0,45.02!bbox:-87.95,45.03,-87.94,45.04",
+            "bbox:-88.01,45.01,-88.0,45.02|bbox:-87.95,45.03,-87.94,45.04",
             url.queryParameter("avoid[areas]"),
         )
     }

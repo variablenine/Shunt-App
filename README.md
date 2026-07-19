@@ -92,13 +92,16 @@ The solver runs from a laptop without a car or an emulator:
 
 ### Testing policy
 
-No live network calls in unit tests. DeFlock parsers are tested against
-fixtures recorded from the live CDN (2026-07-19); HTTP behavior (caching,
-fallbacks, concurrency caps) runs against MockWebServer. **Caveat:** the HERE
-Routing/Geocoding response parsers are currently written against HERE's
-documented v8/v1 shapes but have not yet been verified against the live API
-(blocked on a valid API key) — verify and record real fixtures before
-trusting them.
+No live network calls in unit tests. All parsers are tested against fixtures
+recorded from the live services (2026-07-19): DeFlock index + tile slice, and
+HERE Routing v8 + Geocoding v1 responses. HTTP behavior (caching, fallbacks,
+concurrency caps, request formatting) runs against MockWebServer.
+
+Two live-API findings worth knowing (both encoded in the client): HERE's
+`avoid[areas]` separates areas with `|`, not `!` — `!` introduces per-area
+*exceptions* and 400s when used as a separator; and the documented 20-box cap
+is not currently enforced server-side, but the client enforces it locally
+anyway.
 
 ## Setup
 
@@ -120,7 +123,7 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ## Status
 
-Milestone M1 (`:solver`) — camera source, route solver, waypoint extraction,
-and CLI are built and unit-tested. Outstanding M1 item: live verification of
-the HERE response parsers (blocked on a valid API key). The vehicle seam
-(M2), UI (M3), and drive monitor (M4) are next.
+Milestone M1 (`:solver`) complete — camera source, route solver, waypoint
+extraction, and CLI built, unit-tested, and verified against the live DeFlock
+and HERE endpoints. The vehicle seam (M2), UI (M3), and drive monitor (M4)
+are next.

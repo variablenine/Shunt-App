@@ -12,8 +12,8 @@ import okhttp3.Request
 
 /**
  * HERE Geocoding & Search v1 — used by the CLI to accept free-text
- * destinations. Same API key as routing. Response parsing not yet verified
- * live (see HereRoutingClient note).
+ * destinations. Same API key as routing. Response shape verified live
+ * 2026-07-19; fixture at src/test/resources/fixtures/here/geocode-v1.json.
  */
 class HereGeocoder(
     private val http: OkHttpClient,

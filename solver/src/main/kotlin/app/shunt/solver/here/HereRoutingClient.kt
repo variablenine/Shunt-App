@@ -18,10 +18,8 @@ import okhttp3.Request
  * told otherwise). `avoid[areas]` accepts up to 20 `!`-separated bounding
  * boxes; the cap is enforced here.
  *
- * NOTE: response parsing is written against HERE's documented v8 shape but
- * has NOT yet been verified against the live endpoint (no valid API key was
- * available when this was built). Verify + record a fixture before trusting
- * it — see the M1 notes in the README.
+ * Response shape verified against the live endpoint 2026-07-19; fixture at
+ * src/test/resources/fixtures/here/routes-v8.json.
  */
 class HereRoutingClient(
     private val http: OkHttpClient,
@@ -46,8 +44,11 @@ class HereRoutingClient(
             .apply {
                 if (alternatives > 0) addQueryParameter("alternatives", alternatives.toString())
                 if (avoidAreas.isNotEmpty()) {
-                    // bbox:west longitude,south latitude,east longitude,north latitude
-                    val boxes = avoidAreas.joinToString("!") {
+                    // bbox:west,south,east,north — areas separated by `|`.
+                    // Verified live 2026-07-19: `!` is NOT the separator (it
+                    // introduces per-area *exceptions* and 400s when used
+                    // between areas), despite docs suggesting otherwise.
+                    val boxes = avoidAreas.joinToString("|") {
                         "bbox:${it.minLon},${it.minLat},${it.maxLon},${it.maxLat}"
                     }
                     addQueryParameter("avoid[areas]", boxes)
