@@ -36,14 +36,40 @@ DeFlock CDN, and the vehicle service).
 |-----------|----------|---------|
 | `:core`   | Pure JVM | Shared value types (`GeoPoint`, …) with zero dependencies |
 | `:solver` | Pure JVM | Camera data source, HERE routing, the route solver, and a CLI harness |
-| `:tesla`  | Pure JVM | The vehicle seam: `VehicleNavClient` interface + fake implementation |
+| `:tesla`  | Pure JVM | The vehicle seam: `VehicleNavClient` interface, fake, and the production Tessie client |
 | `:app`    | Android  | Jetpack Compose UI, drive monitor foreground service |
 
 `:core`, `:solver`, and `:tesla` are Android-free so they can be unit-tested
-and driven from a CLI on a laptop without an emulator. `:tesla` contains an
-interface and a fake only — the production vehicle client is developed
-separately and dropped in via a one-line DI change. No vehicle networking,
-authentication, or request-signing code lives here.
+and driven from a CLI on a laptop without an emulator. Part A built `:tesla`
+as an interface plus a fake only; Part B added the production
+`TessieVehicleNavClient` behind the same interface, and the app resolves one
+or the other from a single DI seam (`AppContainer`) — the fake unless a Tessie
+token + VIN are configured. Everything downstream depends only on the
+interface.
+
+### Vehicle client (Tessie)
+
+`TessieVehicleNavClient` talks to [Tessie](https://tessie.com), a paid drop-in
+proxy for Tesla's Fleet API that performs Vehicle Command Protocol signing on
+the caller's behalf (a 2021 Model 3 requires it) — so there is **no signing
+logic in this repo**, only authenticated HTTP to the user's own vehicle with
+their own bearer token.
+
+- Waypoints push as a chain via `navigation_gps_request` (`{lat, lon, order}`,
+  order 1 = replace trip for the first point, 3 = append stop for the rest).
+  `pushRoute` sends the full chain; `advanceTo` re-sends the remaining chain.
+- The single-call `navigation_waypoints_request` fast path is **feature-
+  detected, not assumed**: Tesla's own proxy has no handler for it, so it's
+  tried once, the outcome cached, and on a "not supported" response the client
+  falls back to the per-point chain for good.
+- The Fleet API's 30-commands-per-minute-per-vehicle cap is enforced by a
+  sliding-window rate limiter.
+- Every failure maps to `PushResult.Failed` with an accurate `retryable` flag
+  (auth/bad-request permanent; timeouts/rate-limits/5xx/offline transient),
+  and the client never throws or returns a false success — the drive monitor's
+  alerting depends on that. It passes the same `VehicleNavClientContract` the
+  fake does. Not exercised against a live vehicle (that would command a real
+  car); verified against MockWebServer and the contract suite.
 
 ### Solver internals and a known limitation
 
@@ -181,9 +207,9 @@ Shunt is built to keep working when the signal drops on a rural drive:
 
 ## Status
 
-Milestones M0–M5 complete — Part A is done. The remaining work is Part B: the
-production `TessieVehicleNavClient`, written in its own session and dropped
-into the existing `VehicleNavClient` seam via the one-line DI swap.
+**Complete — Part A (M0–M5) and Part B.** The app plans camera-aware routes,
+pushes them to the vehicle, and monitors the drive, with the production Tessie
+client wired behind the vehicle seam.
 
 - **M0** — Gradle multi-module scaffolding, license separation, key hygiene.
 - **M1** (`:solver`) — camera source, route solver, waypoint extraction, and
@@ -198,8 +224,10 @@ into the existing `VehicleNavClient` seam via the one-line DI swap.
 - **M5** — hardening: offline behavior end to end, clearer error surfaces
   (offline routing/search messages, logged fallbacks), a battery review, and
   this README.
+- **Part B** — the production `TessieVehicleNavClient`, dropped into the
+  existing seam and satisfying the same contract tests as the fake.
 
-The suite is **95 tests** across the four modules, with no live network calls
+The suite is **114 tests** across the four modules, with no live network calls
 in any of them.
 
 ### M4 — drive monitor

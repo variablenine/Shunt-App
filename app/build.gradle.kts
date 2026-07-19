@@ -7,16 +7,22 @@ plugins {
 }
 
 /**
- * HERE API key comes from local.properties or the environment only — never
- * committed (see .gitignore). Absent in CI/fresh checkouts: the app still
- * builds, and surfaces the missing key at runtime rather than failing here.
+ * Secrets come from local.properties or the environment only — never
+ * committed (see .gitignore). Absent in CI/fresh checkouts they are blank: the
+ * app still builds and surfaces the gap at runtime rather than failing here.
+ * HERE powers routing/search; the Tessie token + VIN (Part B) let the app talk
+ * to the user's own vehicle — without them it runs against the fake client.
  */
-val hereApiKey: String = run {
+fun localSecret(name: String): String {
     val fromProps = rootProject.file("local.properties")
         .takeIf { it.exists() }
-        ?.let { Properties().apply { load(it.inputStream()) }.getProperty("HERE_API_KEY") }
-    (fromProps ?: System.getenv("HERE_API_KEY")).orEmpty()
+        ?.let { Properties().apply { load(it.inputStream()) }.getProperty(name) }
+    return (fromProps ?: System.getenv(name)).orEmpty()
 }
+
+val hereApiKey = localSecret("HERE_API_KEY")
+val tessieToken = localSecret("TESSIE_TOKEN")
+val tessieVin = localSecret("TESSIE_VIN")
 
 android {
     namespace = "app.shunt"
@@ -29,6 +35,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         buildConfigField("String", "HERE_API_KEY", "\"$hereApiKey\"")
+        buildConfigField("String", "TESSIE_TOKEN", "\"$tessieToken\"")
+        buildConfigField("String", "TESSIE_VIN", "\"$tessieVin\"")
     }
 
     buildTypes {

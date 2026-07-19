@@ -17,6 +17,7 @@ import app.shunt.solver.here.HereAutosuggest
 import app.shunt.solver.here.HereRoutingClient
 import app.shunt.solver.routing.RouteSolver
 import app.shunt.tesla.FakeVehicleNavClient
+import app.shunt.tesla.TessieVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,11 +46,21 @@ class AppContainer(context: Context) {
         cameras = { bbox -> cameraSource.camerasIn(bbox).cameras },
     )
 
+    /**
+     * The single vehicle-client seam. The production [TessieVehicleNavClient]
+     * is used when a Tessie token + VIN are configured; otherwise the app
+     * runs against the fake, so keyless builds and CI still work. Flipping to
+     * the real client is the one construction below — everything downstream
+     * depends only on [VehicleNavClient].
+     */
     val vehicleNavClient: VehicleNavClient by lazy {
-        // --- one-line vehicle-client swap ---
-        FakeVehicleNavClient()
-        // e.g. TessieVehicleNavClient(http, tokenProvider, vin)  // Part B
-        // -------------------------------------
+        val token = BuildConfig.TESSIE_TOKEN
+        val vin = BuildConfig.TESSIE_VIN
+        if (token.isNotBlank() && vin.isNotBlank()) {
+            TessieVehicleNavClient(http = http, bearerToken = token, vin = vin)
+        } else {
+            FakeVehicleNavClient()
+        }
     }
 
     val favoritesStore = SharedPrefsFavoritesStore(appContext)
