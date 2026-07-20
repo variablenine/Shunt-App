@@ -109,6 +109,29 @@ class BrouterTileSource(
     suspend fun pinHome(homeLat: Double, homeLon: Double): Boolean =
         download(TileId.containing(homeLat, homeLon))
 
+    /**
+     * Mark the tiles covering [bbox] as used now (bumps their file mtime), so
+     * tiles you actually route through survive eviction. Call after a
+     * successful route.
+     */
+    fun markUsed(bbox: BoundingBox, now: Long = System.currentTimeMillis()) {
+        requiredTiles(bbox).forEach { tile ->
+            File(segmentDir, tile.fileName).takeIf { it.exists() }?.setLastModified(now)
+        }
+    }
+
+    /**
+     * Delete cached tiles not used since [cutoffMillis] (mtime older than the
+     * cutoff). Returns how many were removed. Keeps storage from growing without
+     * bound while leaving the areas you actually drive intact.
+     */
+    fun pruneUnusedSince(cutoffMillis: Long): Int {
+        val files = segmentDir.listFiles { f -> f.name.endsWith(".rd5") } ?: return 0
+        var removed = 0
+        for (f in files) if (f.lastModified() < cutoffMillis && f.delete()) removed++
+        return removed
+    }
+
     companion object {
         const val DEFAULT_BASE_URL = "https://brouter.de/brouter/segments4/"
     }

@@ -1,6 +1,7 @@
 package app.shunt.solver.brouter
 
 import app.shunt.solver.geo.BoundingBox
+import java.io.File
 import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -53,6 +54,31 @@ class BrouterTileSourceTest {
         server.enqueue(MockResponse().setResponseCode(404))
         assertFalse(src.download(TileId(-100, 35)))
         assertFalse(src.isPresent(TileId(-100, 35)))
+    }
+
+    @Test
+    fun `pruneUnusedSince removes stale tiles but keeps fresh ones`() = runTest {
+        val src = source()
+        repeat(2) { server.enqueue(MockResponse().setBody("rd5")) }
+        assertTrue(src.download(TileId(-100, 35)))
+        assertTrue(src.download(TileId(-105, 35)))
+        val cutoff = System.currentTimeMillis() - 1_000
+        File(src.segmentDir, TileId(-100, 35).fileName).setLastModified(cutoff - 5_000) // stale
+        File(src.segmentDir, TileId(-105, 35).fileName).setLastModified(cutoff + 500)   // fresh
+        assertEquals(1, src.pruneUnusedSince(cutoff))
+        assertFalse(src.isPresent(TileId(-100, 35)))
+        assertTrue(src.isPresent(TileId(-105, 35)))
+    }
+
+    @Test
+    fun `markUsed protects a tile from pruning`() = runTest {
+        val src = source()
+        server.enqueue(MockResponse().setBody("rd5"))
+        assertTrue(src.download(TileId(-100, 35)))
+        File(src.segmentDir, TileId(-100, 35).fileName).setLastModified(1_000L) // ancient
+        src.markUsed(BoundingBox(38.98, -98.10, 39.02, -98.00))
+        assertEquals(0, src.pruneUnusedSince(System.currentTimeMillis() - 1_000))
+        assertTrue(src.isPresent(TileId(-100, 35)))
     }
 
     private fun source(): BrouterTileSource {

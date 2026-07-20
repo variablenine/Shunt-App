@@ -160,11 +160,11 @@ class PlanViewModelTest {
     }
 
     @Test
-    fun `a missing tile prompts a download, then routes after it succeeds`() = runTest {
+    fun `a missing tile is downloaded automatically, then routes without a prompt`() = runTest {
         var calls = 0
         val planner = RoutePlanner { _, _ ->
             calls++
-            if (calls == 1) PlanOutcome.NeedsDownload(listOf(TileId(-90, 45))) else routes(fastest)
+            if (calls == 1) PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) else routes(fastest)
         }
         var downloaded = false
         val model = vm(
@@ -175,26 +175,38 @@ class PlanViewModelTest {
         )
         model.onQueryChange("X"); advanceUntilIdle()
         model.onSuggestionSelected(0); advanceUntilIdle()
-        assertIs<Phase.NeedTile>(model.state.value.phase)
-        model.onDownloadTile(); advanceUntilIdle()
-        assertTrue(downloaded)
+        assertTrue(downloaded, "download should start on its own")
         assertIs<Phase.Solved>(model.state.value.phase)
     }
 
     @Test
-    fun `a failed tile download surfaces on the prompt for retry`() = runTest {
+    fun `a failed auto-download surfaces a retry state`() = runTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-90, 45))) },
+            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> false },
         )
         model.onQueryChange("X"); advanceUntilIdle()
         model.onSuggestionSelected(0); advanceUntilIdle()
-        model.onDownloadTile(); advanceUntilIdle()
         val need = assertIs<Phase.NeedTile>(model.state.value.phase)
         assertTrue(need.failed)
         assertTrue(!need.downloading)
+    }
+
+    @Test
+    fun `a download that never resolves the tile errors instead of looping`() = runTest {
+        // Planner always says NeedsDownload; downloader claims success. The guard
+        // must stop after one download attempt rather than recurse forever.
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            tileDownloader = { _, _, _ -> true },
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        assertIs<Phase.Error>(model.state.value.phase)
     }
 
     @Test

@@ -58,7 +58,10 @@ class AppContainer(context: Context) {
     /** BRouter's offline tiles + profile live under the app's private storage. */
     private val brouterDir = File(appContext.filesDir, "brouter")
     private val brouterProfileDir = File(brouterDir, "profiles").apply {
-        runCatching { BrouterAssets.install(this) }
+        // Load bundled assets via AssetManager — getResourceAsStream is
+        // unreliable on Android, which left BRouter without a profile (routes
+        // silently came back empty as "no route found").
+        runCatching { BrouterAssets.install(this) { name -> appContext.assets.open("brouter/$name") } }
     }
     private val tileSource = BrouterTileSource(http, File(brouterDir, "segments"))
     private val brouterRouter = BrouterRouter(
@@ -115,9 +118,29 @@ class AppContainer(context: Context) {
         cameraSource.camerasIn(bbox).cameras.map { it.toMapCamera() }
     }
 
+    init {
+        // Evict routing tiles unused for over six months so cached maps don't
+        // grow without bound; the areas you still drive get touched on each use.
+        Thread {
+            runCatching {
+                val cutoff = System.currentTimeMillis() - TILE_TTL_DAYS * 24L * 60 * 60 * 1000
+                tileSource.pruneUnusedSince(cutoff)
+            }
+        }.start()
+    }
+
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> autosuggest.suggest(query, at) },
-        planner = RoutePlanner { origin, destination -> brouterPlanner.plan(origin, destination) },
+        planner = RoutePlanner { origin, destination ->
+            brouterPlanner.plan(origin, destination).also { outcome ->
+                // Keep the tiles we actually route through fresh against eviction.
+                if (outcome is app.shunt.solver.brouter.PlanOutcome.Routes) {
+                    val bbox = BoundingBox.of(listOf(origin, destination))
+                        .expand(BrouterPlanner.ROUTE_BBOX_MARGIN_METERS)
+                    tileSource.markUsed(bbox)
+                }
+            }
+        },
         tileDownloader = TileDownloader { origin, destination, onProgress ->
             downloadTripTiles(origin, destination, onProgress)
         },
@@ -158,6 +181,9 @@ class AppContainer(context: Context) {
     private companion object {
         /** Warm camera cache within this radius of the origin on app open. */
         const val CAMERA_WARM_RADIUS_METERS = 5_000.0
+
+        /** Routing tiles unused for this long are pruned (~6 months). */
+        const val TILE_TTL_DAYS = 183L
     }
 }
 
