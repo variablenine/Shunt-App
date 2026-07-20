@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/shunt-banner.png" alt="Shunt — route around the cameras" width="720">
+</p>
+
 # Shunt
 
 Shunt is an open-source privacy-advocacy tool: an Android navigation app for
