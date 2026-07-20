@@ -12,7 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts.RequestMultiple
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -23,6 +25,7 @@ import app.shunt.app.drive.DriveStatus
 import app.shunt.app.plan.FavoriteSlot
 import app.shunt.app.plan.Phase
 import app.shunt.app.plan.PlanViewModel
+import app.shunt.app.ui.CrashScreen
 import app.shunt.app.ui.PlanActions
 import app.shunt.app.ui.PlanScreen
 import app.shunt.app.ui.theme.ShuntTheme
@@ -32,8 +35,23 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = (application as ShuntApplication).container
 
+        val diagnostics = getSharedPreferences(ShuntApplication.DIAGNOSTICS_PREFS, Context.MODE_PRIVATE)
+
         setContent {
             ShuntTheme {
+                // If the previous run crashed, show the stack trace first so it
+                // can be reported, rather than silently starting up again.
+                var lastCrash by remember {
+                    mutableStateOf(diagnostics.getString(ShuntApplication.KEY_LAST_CRASH, null))
+                }
+                if (lastCrash != null) {
+                    CrashScreen(details = lastCrash!!) {
+                        diagnostics.edit().remove(ShuntApplication.KEY_LAST_CRASH).apply()
+                        lastCrash = null
+                    }
+                    return@ShuntTheme
+                }
+
                 val context = LocalContext.current
                 val vm: PlanViewModel = viewModel(factory = container.planViewModelFactory())
                 val state by vm.state.collectAsStateWithLifecycle()
