@@ -157,10 +157,22 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 No key is committed, and a missing `HERE_API_KEY` doesn't fail the build: the
 app surfaces it in-app and the CLI prints a clear error.
 
-The **basemap** needs no key to run — MapLibre draws the route and camera
-markers on a plain background. For street tiles, set `map_style_url`
-(`app/src/main/res/values/strings.xml`) to a Protomaps style JSON (which has
-its own key) or a self-hosted PMTiles style.
+The **basemap** needs no key: the app ships with a dark
+[OpenFreeMap](https://openfreemap.org) street style. Override `map_style_url`
+(`app/src/main/res/values/strings.xml`) with any MapLibre style JSON (e.g. a
+Protomaps or self-hosted PMTiles style) to change it; a blank value draws a
+plain dark background.
+
+### Releases
+
+`.github/workflows/release.yml` builds the APK and attaches it to a published
+GitHub Release (it also runs on demand from the Actions tab). Releases are
+signed with a stable certificate decoded from the `ALPHA_KEYSTORE_BASE64` repo
+secret, so each build carries the **same signature** and updates install in
+place. Without the secret the build falls back to a debug key, so fresh
+checkouts and CI still work — but consecutive debug-signed builds won't update
+over each other. The APK contains no API keys; you enter your HERE key in the
+app.
 
 ## Offline behavior
 
@@ -200,8 +212,10 @@ Shunt is built to keep working when the signal drops on a rural drive:
 
 > **APK size note:** the debug APK is large (~100 MB) because it bundles the
 > MapLibre native libraries for every ABI plus the offline camera snapshot.
-> Release builds should ship an Android App Bundle (or per-ABI splits) so each
-> device downloads only its own native library.
+> Release builds enable R8 minification and resource shrinking, and
+> `-PslimAbi` restricts to arm64-v8a for a much smaller alpha APK. Shipping an
+> Android App Bundle (or per-ABI splits) would go further, letting each device
+> download only its own native library.
 
 ## Licenses
 
@@ -230,9 +244,15 @@ client wired behind the vehicle seam.
   this README.
 - **Part B** — the production `TessieVehicleNavClient`, dropped into the
   existing seam and satisfying the same contract tests as the fake.
+- **Alpha polish** — a live dark basemap, a DeFlock-style camera display
+  (facing cones + tap-for-info), a pulsing current-location dot, startup
+  permission prompts, an on-screen crash reporter, a launcher icon, and CI
+  (emulator smoke test + a stable-signed release build that updates in place).
 
-The suite is **114 tests** across the four modules, with no live network calls
-in any of them.
+The suite is **115 tests** across the four modules — no live network calls in
+any of them — plus two on-device smoke tests that launch the app on an
+emulator in CI (the check JVM tests can't do) to catch launch crashes and UI
+regressions.
 
 ### M4 — drive monitor
 
@@ -270,8 +290,13 @@ shell over both.
 Jetpack Compose. The flow is: enter destination → solver runs → result card
 → Go. Destination search uses HERE autosuggest (same vendor and key as
 routing); Home and Work are one-tap favorites persisted across launches. The
-map is MapLibre (never the Google Maps SDK), drawing the chosen route and, on
-a minimum-exposure route, red markers for every unavoidable camera.
+map is MapLibre (never the Google Maps SDK). It draws the chosen route, a
+pulsing blue dot at the current location, and — DeFlock-style — every known
+ALPR in view as a dot with a cone showing which way it faces; tapping a camera
+opens its make, operator, and facing. On a minimum-exposure route the
+unavoidable cameras the route passes are highlighted in alarm red on top.
+Viewport cameras load from the same cached DeFlock source the router uses,
+fetched per-pan (debounced, and skipped when zoomed too far out).
 
 The **result card is the most important screen**: it states which outcome
 occurred, the added time versus fastest, and the waypoint count — and for a
@@ -287,12 +312,15 @@ HTTP, and the car behind small ports so the whole flow — including the Go
 push and its retryable/permanent failure paths — is unit-tested against
 `FakeVehicleNavClient`.
 
-**Map basemap:** MapLibre renders the route and camera markers on a plain
-background out of the box. To show a street basemap, set `map_style_url`
-(`app/src/main/res/values/strings.xml`) to a Protomaps style JSON or a
-self-hosted PMTiles style.
+**Map basemap:** ships with a dark street basemap from
+[OpenFreeMap](https://openfreemap.org), which needs no key, configured via
+`map_style_url` (`app/src/main/res/values/strings.xml`). Point it at any
+MapLibre style JSON — a Protomaps style or a self-hosted PMTiles style — to
+change it; a blank value falls back to a plain dark background.
 
 **Route origin:** the trip origin (and autosuggest bias) is the device's
-last-known location when `ACCESS_FINE_LOCATION` is already granted, otherwise
-the saved Home favorite. M3 requests no permissions; live location and the
-permission prompt arrive with the M4 drive monitor.
+last-known location when `ACCESS_FINE_LOCATION` is granted, otherwise the
+saved Home favorite. The app asks for location (and notifications on
+Android 13+) on open — so the current-location dot and drive alerts work from
+the first launch — prompting only for what isn't already granted and falling
+back to Home if declined.
