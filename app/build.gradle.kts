@@ -34,6 +34,7 @@ android {
         targetSdk = libs.versions.target.sdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "HERE_API_KEY", "\"$hereApiKey\"")
         buildConfigField("String", "TESSIE_TOKEN", "\"$tessieToken\"")
         buildConfigField("String", "TESSIE_VIN", "\"$tessieVin\"")
@@ -108,6 +109,14 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":tesla")))
     testRuntimeOnly(libs.junit.platform.launcher)
+
+    // Instrumented (on-device/emulator) smoke tests — the check that actually
+    // exercises app launch and the Compose UI, which JVM unit tests cannot.
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
 
 tasks.withType<Test> {
