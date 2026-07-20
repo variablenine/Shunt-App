@@ -95,43 +95,43 @@ private fun SolvingContent(destination: Destination) {
 }
 
 @Composable
-private fun NeedTileContent(phase: Phase.NeedTile, onDownload: () -> Unit, onDismiss: () -> Unit) {
-    Text("Download offline map?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-    Spacer(Modifier.height(8.dp))
-    Text(
-        "Shunt routes entirely on your device. The map for this area isn't " +
-            "downloaded yet — grab it once and routing here works offline forever.",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(16.dp))
-    if (phase.downloading) {
-        LinearProgressIndicator(
-            progress = { phase.progress.coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth(),
-        )
+private fun NeedTileContent(phase: Phase.NeedTile, onRetry: () -> Unit, onDismiss: () -> Unit) {
+    if (phase.failed) {
+        Text("Couldn't get the offline map", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Downloading map… ${(phase.progress * 100).toInt()}%",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            "Shunt routes on your device and needs this area's map once. The " +
+                "download failed — check your connection and try again.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
         )
-    } else {
-        if (phase.failed) {
-            Text(
-                "Download failed — check your connection and try again.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-            )
-            Spacer(Modifier.height(12.dp))
-        }
+        Spacer(Modifier.height(16.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onDownload, modifier = Modifier.weight(1f)) {
-                Text(if (phase.failed) "Retry download" else "Download map")
-            }
+            Button(onClick = onRetry, modifier = Modifier.weight(1f)) { Text("Retry") }
             OutlinedButton(onClick = onDismiss) { Text("Back") }
         }
+        return
     }
+    // Auto-download in progress — no prompt, just get the map and route.
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+        Spacer(Modifier.width(14.dp))
+        Text(
+            "Getting the offline map for this area…",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+    Spacer(Modifier.height(14.dp))
+    LinearProgressIndicator(
+        progress = { phase.progress.coerceIn(0f, 1f) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "${(phase.progress * 100).toInt()}% · one-time, then routing here works offline",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

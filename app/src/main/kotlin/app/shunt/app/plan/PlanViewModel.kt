@@ -90,8 +90,13 @@ class PlanViewModel(
         workScope.launch { runPlan(destination) }
     }
 
-    /** Route for [destination] and land on the chooser, a tile prompt, or an error. */
-    private suspend fun runPlan(destination: Destination) {
+    /**
+     * Route for [destination] and land on the chooser or an error. A missing
+     * offline tile is downloaded automatically and then re-planned — no prompt.
+     * [canDownload] guards against looping if a download reports success but the
+     * tile still isn't usable.
+     */
+    private suspend fun runPlan(destination: Destination, canDownload: Boolean = true) {
         val origin = location.currentOrigin()
         if (origin == null) {
             _state.update { it.copy(phase = Phase.Error("No starting location. Enable location or set Home.")) }
@@ -99,11 +104,37 @@ class PlanViewModel(
         }
         val outcome = runCatching { planner.plan(origin, destination.location) }
             .getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
-        _state.update {
-            when (outcome) {
-                is PlanOutcome.Routes -> it.copy(phase = Phase.Solved(destination, outcome.options))
-                is PlanOutcome.NeedsDownload -> it.copy(phase = Phase.NeedTile(destination))
-                is PlanOutcome.Failed -> it.copy(phase = Phase.Error(outcome.reason))
+        when (outcome) {
+            is PlanOutcome.Routes ->
+                _state.update { it.copy(phase = Phase.Solved(destination, outcome.options)) }
+            is PlanOutcome.NeedsDownload ->
+                if (canDownload) {
+                    downloadThenPlan(destination, origin)
+                } else {
+                    _state.update {
+                        it.copy(phase = Phase.Error("Couldn't prepare the offline map for this area."))
+                    }
+                }
+            is PlanOutcome.Failed ->
+                _state.update { it.copy(phase = Phase.Error(outcome.reason)) }
+        }
+    }
+
+    /** Auto-download this trip's offline tile (showing progress), then re-plan. */
+    private suspend fun downloadThenPlan(destination: Destination, origin: GeoPoint) {
+        _state.update { it.copy(phase = Phase.NeedTile(destination, downloading = true, progress = 0f)) }
+        val ok = runCatching {
+            tileDownloader.download(origin, destination.location) { p ->
+                _state.update { s ->
+                    (s.phase as? Phase.NeedTile)?.let { s.copy(phase = it.copy(progress = p)) } ?: s
+                }
+            }
+        }.getOrDefault(false)
+        if (ok) {
+            runPlan(destination, canDownload = false)
+        } else {
+            _state.update { s ->
+                (s.phase as? Phase.NeedTile)?.let { s.copy(phase = it.copy(downloading = false, failed = true)) } ?: s
             }
         }
     }
@@ -116,31 +147,17 @@ class PlanViewModel(
         }
     }
 
-    /** Download this trip's offline map tile, then route (from the NeedTile prompt). */
+    /** Retry the offline-map download after a failure (the only NeedTile button). */
     fun onDownloadTile() {
         val need = _state.value.phase as? Phase.NeedTile ?: return
         if (need.downloading) return
-        _state.update { it.copy(phase = need.copy(downloading = true, failed = false, progress = 0f)) }
         workScope.launch {
             val origin = location.currentOrigin()
             if (origin == null) {
                 _state.update { it.copy(phase = Phase.Error("No starting location. Enable location or set Home.")) }
                 return@launch
             }
-            val ok = runCatching {
-                tileDownloader.download(origin, need.destination.location) { p ->
-                    _state.update { s ->
-                        (s.phase as? Phase.NeedTile)?.let { s.copy(phase = it.copy(progress = p)) } ?: s
-                    }
-                }
-            }.getOrDefault(false)
-            if (ok) {
-                runPlan(need.destination)
-            } else {
-                _state.update { s ->
-                    (s.phase as? Phase.NeedTile)?.let { s.copy(phase = it.copy(downloading = false, failed = true)) } ?: s
-                }
-            }
+            downloadThenPlan(need.destination, origin)
         }
     }
 

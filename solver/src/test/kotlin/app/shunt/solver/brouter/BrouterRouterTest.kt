@@ -48,7 +48,9 @@ class BrouterRouterTest {
     fun `install writes the bundled profile and dictionary`() {
         val dir = Files.createTempDirectory("brouter-assets").toFile()
         try {
-            BrouterAssets.install(dir)
+            BrouterAssets.install(dir) { name ->
+                requireNotNull(javaClass.getResourceAsStream("/brouter-data/$name")) { "missing resource $name" }
+            }
             assertTrue(File(dir, "car-vario.brf").length() > 0, "profile not installed")
             assertTrue(File(dir, "lookups.dat").length() > 0, "lookups.dat not installed")
         } finally {
