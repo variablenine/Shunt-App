@@ -3,7 +3,8 @@ package app.shunt.app.plan
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.shunt.core.GeoPoint
-import app.shunt.solver.routing.SolveResult
+import app.shunt.solver.brouter.PlanOutcome
+import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.tesla.PushResult
 import app.shunt.tesla.VehicleNavClient
 import kotlinx.coroutines.CoroutineScope
@@ -16,14 +17,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Orchestrates the planning flow: enter destination → solver runs → result
- * card → Go. Pure of Android UI; every dependency is a small port so the
- * whole flow is unit-testable with fakes. [scope] is injectable so tests can
- * drive it with virtual time; production uses viewModelScope.
+ * Orchestrates the planning flow: enter destination → route on-device → choose
+ * among options → Go. Pure of Android UI; every dependency is a small port so
+ * the whole flow is unit-testable with fakes. [scope] is injectable so tests
+ * can drive it with virtual time; production uses viewModelScope.
  */
 class PlanViewModel(
     private val search: SuggestionSearch,
     private val planner: RoutePlanner,
+    private val tileDownloader: TileDownloader,
     private val location: LocationProvider,
     private val cameras: CameraGateway,
     private val favoritesStore: FavoritesStore,
@@ -85,34 +87,73 @@ class PlanViewModel(
     private fun planTo(destination: Destination) {
         searchJob?.cancel()
         _state.update { it.copy(phase = Phase.Solving(destination), suggestions = emptyList()) }
+        workScope.launch { runPlan(destination) }
+    }
+
+    /** Route for [destination] and land on the chooser, a tile prompt, or an error. */
+    private suspend fun runPlan(destination: Destination) {
+        val origin = location.currentOrigin()
+        if (origin == null) {
+            _state.update { it.copy(phase = Phase.Error("No starting location. Enable location or set Home.")) }
+            return
+        }
+        val outcome = runCatching { planner.plan(origin, destination.location) }
+            .getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
+        _state.update {
+            when (outcome) {
+                is PlanOutcome.Routes -> it.copy(phase = Phase.Solved(destination, outcome.options))
+                is PlanOutcome.NeedsDownload -> it.copy(phase = Phase.NeedTile(destination))
+                is PlanOutcome.Failed -> it.copy(phase = Phase.Error(outcome.reason))
+            }
+        }
+    }
+
+    /** Pick a different route option from the chooser. */
+    fun onSelectRoute(index: Int) {
+        val solved = _state.value.phase as? Phase.Solved ?: return
+        if (index in solved.options.indices) {
+            _state.update { it.copy(phase = solved.copy(selected = index)) }
+        }
+    }
+
+    /** Download this trip's offline map tile, then route (from the NeedTile prompt). */
+    fun onDownloadTile() {
+        val need = _state.value.phase as? Phase.NeedTile ?: return
+        if (need.downloading) return
+        _state.update { it.copy(phase = need.copy(downloading = true, failed = false, progress = 0f)) }
         workScope.launch {
             val origin = location.currentOrigin()
             if (origin == null) {
-                _state.update {
-                    it.copy(phase = Phase.Error("No starting location. Enable location or set Home."))
-                }
+                _state.update { it.copy(phase = Phase.Error("No starting location. Enable location or set Home.")) }
                 return@launch
             }
-            val result = runCatching { planner.solve(origin, destination.location) }
-                .getOrElse { e -> SolveResult.Failed("routing failed: ${e.message}") }
-            _state.update {
-                when (result) {
-                    is SolveResult.Failed -> it.copy(phase = Phase.Error(result.reason))
-                    else -> it.copy(phase = Phase.Solved(destination, result))
+            val ok = runCatching {
+                tileDownloader.download(origin, need.destination.location) { p ->
+                    _state.update { s ->
+                        (s.phase as? Phase.NeedTile)?.let { s.copy(phase = it.copy(progress = p)) } ?: s
+                    }
+                }
+            }.getOrDefault(false)
+            if (ok) {
+                runPlan(need.destination)
+            } else {
+                _state.update { s ->
+                    (s.phase as? Phase.NeedTile)?.let { s.copy(phase = it.copy(downloading = false, failed = true)) } ?: s
                 }
             }
         }
     }
 
     /**
-     * Go: upload the route to the vehicle, then enter the driving phase. The
-     * activity starts the foreground drive-monitor service on this transition
-     * (it must be started from the foreground, so it can't be launched here).
+     * Go: upload the chosen route to the vehicle, then enter the driving phase.
+     * The activity starts the foreground drive-monitor service on this
+     * transition (it must be started from the foreground, so not here).
      */
     fun onGo() {
         val solved = _state.value.phase as? Phase.Solved ?: return
-        val plan = drivePlanFor(solved.result, solved.destination)
-        _state.update { it.copy(phase = Phase.Pushing(solved.destination, solved.result)) }
+        val option = solved.chosen
+        val plan = drivePlanFor(option, solved.destination)
+        _state.update { it.copy(phase = Phase.Pushing(solved.destination, option)) }
         workScope.launch {
             val result = runCatching { vehicle.pushRoute(plan.chain) }
                 .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
@@ -120,9 +161,7 @@ class PlanViewModel(
                 when (result) {
                     is PushResult.Success -> it.copy(phase = Phase.Driving(solved.destination, plan))
                     is PushResult.Failed -> it.copy(
-                        phase = Phase.PushFailed(
-                            solved.destination, solved.result, result.reason, result.retryable,
-                        ),
+                        phase = Phase.PushFailed(solved.destination, option, result.reason, result.retryable),
                     )
                 }
             }
@@ -146,7 +185,7 @@ class PlanViewModel(
     /** Retry a failed push from the PushFailed state. */
     fun onRetryPush() {
         val failed = _state.value.phase as? Phase.PushFailed ?: return
-        _state.update { it.copy(phase = Phase.Solved(failed.destination, failed.result)) }
+        _state.update { it.copy(phase = Phase.Solved(failed.destination, listOf(failed.option), 0)) }
         onGo()
     }
 
@@ -160,34 +199,24 @@ class PlanViewModel(
         _state.update { it.copy(favorites = updated) }
     }
 
-    /** Back to browsing (dismiss the result card / clear an error). */
+    /** Back to browsing (dismiss the chooser / clear an error). */
     fun onDismissResult() {
         _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList()) }
     }
 
     /**
-     * The plan handed to the drive monitor. The chain is the solver's
-     * intermediate pins (which hold the vehicle on the chosen, camera-aware
-     * path) followed by the destination itself. Cameras are the unavoidable
-     * ones to warn about — empty for a clean route.
+     * The plan handed to the drive monitor. The chain is the chosen route's
+     * intermediate pins (which hold the vehicle on the camera-aware path)
+     * followed by the destination itself. Cameras are the ones this route
+     * passes, to warn about — empty for a camera-free route.
      */
-    private fun drivePlanFor(result: SolveResult, destination: Destination): DrivePlan {
-        val waypoints: List<GeoPoint>
-        val cameras: List<app.shunt.solver.camera.Camera>
-        val polyline: List<GeoPoint>
-        when (result) {
-            is SolveResult.Clean -> {
-                waypoints = result.waypoints; cameras = emptyList(); polyline = result.route.polyline
-            }
-            is SolveResult.MinimumExposure -> {
-                waypoints = result.waypoints; cameras = result.passedCameras; polyline = result.route.polyline
-            }
-            is SolveResult.Failed -> {
-                waypoints = emptyList(); cameras = emptyList(); polyline = emptyList()
-            }
-        }
-        return DrivePlan(destination, waypoints + destination.location, cameras, polyline)
-    }
+    private fun drivePlanFor(option: PlannedRoute, destination: Destination): DrivePlan =
+        DrivePlan(
+            destination = destination,
+            chain = option.waypoints + destination.location,
+            cameras = option.passedCameras,
+            polyline = option.polyline,
+        )
 
     companion object {
         /** Fallback autosuggest bias when no location is known (NE Wisconsin). */

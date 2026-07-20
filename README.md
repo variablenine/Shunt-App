@@ -17,31 +17,34 @@ to drive on is entirely legal; Shunt just makes the tradeoff visible.
 
 Camera-free is strongly preferred and worth almost any amount of extra time,
 but ALPRs are deliberately sited at chokepoints, so for some trips no
-camera-free route exists. The policy:
+camera-free route exists. Rather than force one answer, Shunt **routes on-device
+and offers a few options** — from *Fastest* (may pass cameras) through
+*Balanced* to *Fewest cameras* — each labelled with its time, distance, and the
+cameras it passes, so the driver chooses their own trade-off.
 
-1. If a camera-free route exists, return the **fastest camera-free route**.
-2. If none exists, **say so explicitly**, then return the route passing the
-   **fewest distinct cameras**, ties broken by travel time.
-
-The fallback is never silent: the result card states that no camera-free
-route was found and how many cameras the chosen route passes, the map marks
-each unavoidable camera, and the drive monitor warns on approach to each one.
-This is modeled in the type system (`Clean` / `MinimumExposure` / `Failed`)
-so it cannot be fumbled — `MinimumExposure` is an expected, navigable
-outcome, not an error.
+Under the hood each camera is a weighted "nogo" of realistic radius, so the
+router keeps genuine distance from cameras and minimises **exposure distance**
+(metres driven within camera range) in a single shortest-path pass — no greedy
+backtracking, no route ever "technically" avoiding a camera while turning right
+in front of it. Nothing is silent: every option states the cameras it passes,
+the map marks each one, and the drive monitor warns on approach while driving.
+See [docs/brouter-spike.md](docs/brouter-spike.md) for the engine's evaluation.
 
 ## Architecture
 
-Everything ships in a single APK and runs on the phone. There is no server
-component. The only outbound traffic is to third-party HTTP APIs (HERE, the
-DeFlock CDN, and the vehicle service).
+Everything ships in a single APK and runs on the phone, **including routing
+itself**. There is no server component. Outbound traffic is only to third-party
+HTTP APIs — HERE for destination search, the DeFlock CDN for camera data, the
+BRouter CDN for offline map tiles (fetched once per region), and the vehicle
+service. Once a region's tile is cached, routing needs no network at all.
 
-| Module    | Platform | Purpose |
-|-----------|----------|---------|
-| `:core`   | Pure JVM | Shared value types (`GeoPoint`, …) with zero dependencies |
-| `:solver` | Pure JVM | Camera data source, HERE routing, the route solver, and a CLI harness |
-| `:tesla`  | Pure JVM | The vehicle seam: `VehicleNavClient` interface, fake, and the production Tessie client |
-| `:app`    | Android  | Jetpack Compose UI, drive monitor foreground service |
+| Module     | Platform | Purpose |
+|------------|----------|---------|
+| `:core`    | Pure JVM | Shared value types (`GeoPoint`, …) with zero dependencies |
+| `:brouter` | Pure JVM | Vendored [BRouter](https://github.com/abrensch/brouter) routing engine (MIT), untouched |
+| `:solver`  | Pure JVM | Camera data source, the native BRouter router/planner, HERE search, and a CLI harness |
+| `:tesla`   | Pure JVM | The vehicle seam: `VehicleNavClient` interface, fake, and the production Tessie client |
+| `:app`     | Android  | Jetpack Compose UI, drive monitor foreground service |
 
 `:core`, `:solver`, and `:tesla` are Android-free so they can be unit-tested
 and driven from a CLI on a laptop without an emulator. Part A built `:tesla`
@@ -75,30 +78,34 @@ their own bearer token.
   fake does. Not exercised against a live vehicle (that would command a real
   car); verified against MockWebServer and the contract suite.
 
-### Solver internals and a known limitation
+### Native routing (BRouter)
 
-The camera-free search is **greedy exclusion**: request a route, buffer every
-camera by a configurable radius (default 40 m), test the polyline for
-intersection, add the offenders as HERE `avoid[areas]` boxes (max 20 per
-request — only cameras on the current candidate line are excluded, nearest
-first; never the whole dataset), and re-request until clean or out of rounds.
+The app routes entirely on-device with the vendored BRouter engine (`:brouter`,
+MIT). Each ALPR becomes a weighted "nogo" circle of realistic radius (default
+75 m — ALPRs read plates well beyond a 40 m box), and BRouter finds the
+minimum-**exposure** route in a single shortest-path pass over the whole road
+graph. A weight sweep produces the *Fastest → Balanced → Fewest cameras*
+options; a hard nogo backs the fewest-cameras choice where a clear path exists.
+Because it's one shortest-path pass, it **never reports infeasibility when a
+route exists** — the greedy backtracking failure below simply can't happen.
+Shunt's wrapper is `:solver`'s `BrouterRouter` / `BrouterPlanner`; waypoints for
+the vehicle are extracted where the chosen route diverges from the fastest.
 
-**Known limitation:** greedy exclusion can report infeasibility when a clean
-route actually exists, because excluding camera A may push the route onto
-camera B, and the search never backtracks. The minimum-exposure fallback
-mitigates this by scoring *every* candidate seen — the initial alternatives
-plus each exclusion round's routes — by distinct-camera count with ties
-broken by travel time, but it is still a heuristic. The exact alternative —
-delete camera-adjacent edges from a road graph and run shortest path — is
-future work.
+Offline **map tiles** — BRouter's 5°×5° `.rd5` cells, ~11 MB each — download
+lazily per region from the BRouter CDN, cache on disk, and can be pre-pinned for
+the home region. A trip whose tile isn't present yet prompts a one-time download
+rather than silently going online (`BrouterTileSource`). See
+[docs/brouter-spike.md](docs/brouter-spike.md) for the engine evaluation.
 
-**Directionality** (`--strict-direction`, default **off**): some records
-carry a facing direction, and with the flag on a camera only blocks when the
-route's heading at the nearest point falls within a configurable arc of that
-facing. It is off by default because the tags are crowdsourced, often absent,
-and many units cover multiple directions. (Live-data note: the plain OSM
-`direction` tag appears on ~97% of records, `camera:direction` on ~2%; both
-are honored, preferring `camera:direction`.)
+**Legacy HERE greedy solver (CLI only).** The original `RouteSolver` — greedy
+`avoid[areas]` exclusion against HERE Routing v8 — remains as the laptop CLI
+analysis harness (below), not in the app. Its known limitation is exactly what
+BRouter avoids: greedy exclusion can report infeasibility when a clean route
+exists, because excluding camera A pushes the route onto camera B and it never
+backtracks. It also supports a `--strict-direction` mode using the crowdsourced
+OSM facing tags (plain `direction` on ~97% of records, `camera:direction` on
+~2%; both honored). The app instead uses omnidirectional nogo circles — more
+conservative, which is the point: keep real distance from every camera.
 
 ### Camera data
 
@@ -151,7 +158,7 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 | Key | Used by | Where it comes from | Notes |
 |-----|---------|---------------------|-------|
-| `HERE_API_KEY` | Routing, geocoding, and destination autosuggest | HERE Access Manager → your app → **API Keys** → Create API key | One key covers all three HERE endpoints. Put it in `local.properties` (`HERE_API_KEY=…`) or the environment; it flows into the app via `BuildConfig`. A **refresh token** (a `reftkn:…` value) is *not* an API key and returns 401. |
+| `HERE_API_KEY` | Destination **search** (autosuggest + geocoding) only — routing is native/offline | HERE Access Manager → your app → **API Keys** → Create API key | Put it in `local.properties` (`HERE_API_KEY=…`) or the environment; it flows into the app via `BuildConfig`. A **refresh token** (a `reftkn:…` value) is *not* an API key and returns 401. |
 | Tessie token | The production vehicle client | The user's own Tessie account | **Part B only** — not used anywhere in this repo. |
 
 No key is committed, and a missing `HERE_API_KEY` doesn't fail the build: the
@@ -182,11 +189,11 @@ Shunt is built to keep working when the signal drops on a rural drive:
   cache → a bundled full-dataset snapshot shipped in the APK. Every result
   carries its `Freshness`, and the plan screen shows a banner when it's
   serving the offline snapshot.
-- **Routing** needs a connection (HERE has no on-device equivalent). When
-  offline the solver returns a `Failed` with a plain "You appear to be
-  offline" message — surfaced on the result card, never a silent blank.
-  Destination **search** failing shows "Couldn't reach search" rather than an
-  empty list.
+- **Routing** runs fully on-device once the region's tile is cached — no
+  connection needed to plan a camera-aware route. The one online moment is the
+  first-time tile download for a new region, which the app prompts for
+  explicitly. Destination **search** does need HERE; when it fails the app
+  shows "Couldn't reach search" rather than an empty list.
 - **The drive monitor** is the part that matters most offline, and it needs
   no connectivity at all: waypoint-approach timing, camera-approach warnings
   (from the cached camera set), escalating haptics, and local notifications
@@ -207,8 +214,9 @@ Shunt is built to keep working when the signal drops on a rural drive:
   route touches, capped at 5 concurrent, and disk-cached by version so they
   aren't refetched; a single `OkHttpClient` pools connections.
 - **No analytics, no telemetry, no account.** The only outbound traffic is to
-  HERE, the DeFlock CDN, and (via the Part B client) the user's own vehicle
-  service. Everything runs on the phone.
+  HERE (search), the DeFlock CDN (cameras), the BRouter CDN (one-time offline
+  tile downloads), and (via the Part B client) the user's own vehicle service.
+  Routing and monitoring run entirely on the phone.
 
 > **APK size note:** the debug APK is large (~100 MB) because it bundles the
 > MapLibre native libraries for every ABI plus the offline camera snapshot.
@@ -244,6 +252,11 @@ client wired behind the vehicle seam.
   this README.
 - **Part B** — the production `TessieVehicleNavClient`, dropped into the
   existing seam and satisfying the same contract tests as the fake.
+- **Native routing (BRouter)** — on-device, offline camera-aware routing that
+  replaces the HERE greedy path in the app: weighted-nogo minimum-exposure with
+  a realistic standoff, a *Fastest → Balanced → Fewest cameras* chooser, and
+  per-region offline tiles with a download prompt. Engine spike in
+  [docs/brouter-spike.md](docs/brouter-spike.md).
 - **Alpha polish** — a live dark basemap, a DeFlock-style camera display
   (facing cones + tap-for-info), a pulsing current-location dot, startup
   permission prompts, an on-screen crash reporter, a launcher icon, and CI

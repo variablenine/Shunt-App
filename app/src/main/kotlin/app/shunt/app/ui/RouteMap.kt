@@ -9,9 +9,10 @@ import android.graphics.PointF
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -219,7 +220,7 @@ fun RouteMap(
             CameraInfoCard(
                 camera = cam,
                 onClose = { selectedCamera = null },
-                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
             )
         }
     }
@@ -402,29 +403,30 @@ private fun fitRouteOnce(
 
 @Composable
 private fun CameraInfoCard(camera: MapCamera, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    Card(modifier = modifier.widthIn(max = 320.dp)) {
-        Column(modifier = Modifier.padding(16.dp).fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.Top) {
+    Card(modifier = modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 16.dp)) {
+            // Title on the left, close in the top-right corner.
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Text(
                     camera.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(end = 8.dp),
+                    modifier = Modifier.weight(1f).padding(top = 12.dp),
                 )
-                IconButton(onClick = onClose, modifier = Modifier.padding(0.dp)) {
+                IconButton(onClick = onClose) {
                     Icon(Icons.Filled.Close, contentDescription = "Close")
                 }
             }
             camera.subtitle?.let {
                 Text(it, style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(4.dp))
             }
-            camera.directionDegrees?.let {
-                Text(
-                    "Faces ${cardinal(it)} (${it.toInt()}°)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                camera.directionDegrees?.let { "Faces ${cardinal(it)} (${it.toInt()}°)" }
+                    ?: "Facing not recorded",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

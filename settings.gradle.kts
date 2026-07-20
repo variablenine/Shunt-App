@@ -17,6 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "shunt"
 
 include(":core")
+include(":brouter")
 include(":solver")
 include(":tesla")
 include(":app")
