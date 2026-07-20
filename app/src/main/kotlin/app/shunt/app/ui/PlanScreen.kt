@@ -49,9 +49,9 @@ import app.shunt.app.plan.Favorites
 import app.shunt.app.plan.Phase
 import app.shunt.app.plan.PlanUiState
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.here.Suggestion
-import app.shunt.solver.routing.SolveResult
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
 class PlanActions(
@@ -59,6 +59,8 @@ class PlanActions(
     val onSuggestionSelected: (Int) -> Unit,
     val onFavoriteSelected: (FavoriteSlot) -> Unit,
     val onGo: () -> Unit,
+    val onSelectRoute: (Int) -> Unit,
+    val onDownloadTile: () -> Unit,
     val onRetryPush: () -> Unit,
     val onDismiss: () -> Unit,
     val onSaveHome: (Destination) -> Unit,
@@ -118,6 +120,8 @@ fun PlanScreen(
                 ResultSheet(
                     phase = state.phase,
                     onGo = actions.onGo,
+                    onSelectRoute = actions.onSelectRoute,
+                    onDownloadTile = actions.onDownloadTile,
                     onRetryPush = actions.onRetryPush,
                     onDismiss = actions.onDismiss,
                     onSaveHome = {
@@ -262,20 +266,16 @@ private fun HereKeyDialog(current: String, onSave: (String) -> Unit, onDismiss: 
 
 /** The route line + passed-camera points to draw for the current phase. */
 private fun routeOverlay(phase: Phase): Pair<List<GeoPoint>, List<GeoPoint>> {
+    val option: PlannedRoute? = when (phase) {
+        is Phase.Solved -> phase.chosen
+        is Phase.Pushing -> phase.option
+        is Phase.PushFailed -> phase.option
+        else -> null
+    }
+    if (option != null) return option.polyline to option.passedCameras.map { it.location }
     // The driving phase carries a prebuilt plan (polyline + cameras).
     if (phase is Phase.Driving) {
         return phase.plan.polyline to phase.plan.cameras.map { it.location }
     }
-    val result: SolveResult? = when (phase) {
-        is Phase.Solved -> phase.result
-        is Phase.Pushing -> phase.result
-        is Phase.PushFailed -> phase.result
-        else -> null
-    }
-    return when (result) {
-        is SolveResult.Clean -> result.route.polyline to emptyList()
-        is SolveResult.MinimumExposure ->
-            result.route.polyline to result.passedCameras.map { it.location }
-        else -> emptyList<GeoPoint>() to emptyList()
-    }
+    return emptyList<GeoPoint>() to emptyList()
 }

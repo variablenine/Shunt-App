@@ -1,10 +1,10 @@
 package app.shunt.app.plan
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.Freshness
 import app.shunt.solver.here.Suggestion
-import app.shunt.solver.routing.SolveResult
 
 /** A place the user can route to: a search result or a saved favorite. */
 data class Destination(val title: String, val location: GeoPoint) {
@@ -47,19 +47,39 @@ data class PlanUiState(
     val usingOfflineCameraData: Boolean get() = cameraDataFreshness == Freshness.BUNDLED
 }
 
-/** Where the plan flow is: browse → solve → result → push. */
+/** Where the plan flow is: browse → solve → choose → push. */
 sealed interface Phase {
     /** Entering a destination. */
     data object Browsing : Phase
 
-    /** Solver running for [destination]. */
+    /** Routing running for [destination]. */
     data class Solving(val destination: Destination) : Phase
 
-    /** Solver returned; the result card is showing. */
-    data class Solved(val destination: Destination, val result: SolveResult) : Phase
+    /**
+     * The offline map tile for this trip isn't downloaded yet. We route fully
+     * on-device, so we prompt a download rather than silently going online.
+     */
+    data class NeedTile(
+        val destination: Destination,
+        val downloading: Boolean = false,
+        val progress: Float = 0f,
+        val failed: Boolean = false,
+    ) : Phase
 
-    /** Go tapped; pushing the route to the vehicle. */
-    data class Pushing(val destination: Destination, val result: SolveResult) : Phase
+    /**
+     * Routing returned options; the chooser is showing. [selected] indexes
+     * [options] (fastest first) — the route drawn and the one Go will push.
+     */
+    data class Solved(
+        val destination: Destination,
+        val options: List<PlannedRoute>,
+        val selected: Int = 0,
+    ) : Phase {
+        val chosen: PlannedRoute get() = options[selected.coerceIn(options.indices)]
+    }
+
+    /** Go tapped; pushing the chosen route to the vehicle. */
+    data class Pushing(val destination: Destination, val option: PlannedRoute) : Phase
 
     /**
      * Route accepted by the vehicle and the drive monitor is running: GPS is
@@ -71,7 +91,7 @@ sealed interface Phase {
     /** The push failed. [retryable] mirrors PushResult so the UI can offer retry. */
     data class PushFailed(
         val destination: Destination,
-        val result: SolveResult,
+        val option: PlannedRoute,
         val reason: String,
         val retryable: Boolean,
     ) : Phase

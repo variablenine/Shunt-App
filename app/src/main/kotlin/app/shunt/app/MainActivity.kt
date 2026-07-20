@@ -117,6 +117,8 @@ class MainActivity : ComponentActivity() {
                         onSuggestionSelected = vm::onSuggestionSelected,
                         onFavoriteSelected = vm::onFavoriteSelected,
                         onGo = vm::onGo,
+                        onSelectRoute = vm::onSelectRoute,
+                        onDownloadTile = vm::onDownloadTile,
                         onRetryPush = vm::onRetryPush,
                         onDismiss = vm::onDismissResult,
                         onSaveHome = { vm.onSaveFavorite(FavoriteSlot.HOME, it) },

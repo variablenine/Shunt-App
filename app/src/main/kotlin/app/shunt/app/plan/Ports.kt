@@ -1,9 +1,9 @@
 package app.shunt.app.plan
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.PlanOutcome
 import app.shunt.solver.camera.Freshness
 import app.shunt.solver.here.Suggestion
-import app.shunt.solver.routing.SolveResult
 
 /**
  * The small seams the plan layer depends on, so it can be driven by fakes in
@@ -16,9 +16,22 @@ fun interface SuggestionSearch {
     suspend fun suggest(query: String, at: GeoPoint): List<Suggestion>
 }
 
-/** The routing policy (RouteSolver). */
+/** Native, offline camera-aware routing (BRouter) — returns chooseable options. */
 fun interface RoutePlanner {
-    suspend fun solve(origin: GeoPoint, destination: GeoPoint): SolveResult
+    suspend fun plan(origin: GeoPoint, destination: GeoPoint): PlanOutcome
+}
+
+/**
+ * Downloads the offline routing tiles a trip needs (full-replace: a missing
+ * tile prompts a download rather than falling back). [onProgress] is 0f..1f;
+ * returns true when every needed tile is present.
+ */
+fun interface TileDownloader {
+    suspend fun download(
+        origin: GeoPoint,
+        destination: GeoPoint,
+        onProgress: (Float) -> Unit,
+    ): Boolean
 }
 
 /** Where the trip starts from, and the autosuggest bias point. */

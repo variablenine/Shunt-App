@@ -1,6 +1,8 @@
 package app.shunt.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +21,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -35,20 +38,22 @@ import androidx.compose.ui.unit.sp
 import app.shunt.app.plan.Destination
 import app.shunt.app.plan.Phase
 import app.shunt.app.ui.theme.safeColor
+import app.shunt.solver.brouter.PlannedRoute
+import app.shunt.solver.brouter.RouteChoice
 import app.shunt.solver.camera.Camera
-import app.shunt.solver.routing.SolveResult
 
 /**
- * The result card — the most important screen in the app. It states which
- * outcome occurred, the added time versus fastest, and the waypoint count;
- * and for a minimum-exposure fallback it makes unmissable that no camera-free
- * route exists, with the count and locations of the cameras the route passes.
- * The user still taps Go — but they tap it knowing what they're accepting.
+ * The result card — the most important screen in the app. It offers the route
+ * options (fastest → fewest cameras) and, for the selected one, states the
+ * added time, distance, and — unmissably — the cameras it passes, so the user
+ * taps Go knowing exactly what they're accepting.
  */
 @Composable
 fun ResultSheet(
     phase: Phase,
     onGo: () -> Unit,
+    onSelectRoute: (Int) -> Unit,
+    onDownloadTile: () -> Unit,
     onRetryPush: () -> Unit,
     onDismiss: () -> Unit,
     onSaveHome: (Destination) -> Unit,
@@ -68,7 +73,8 @@ fun ResultSheet(
         ) {
             when (phase) {
                 is Phase.Solving -> SolvingContent(phase.destination)
-                is Phase.Solved -> SolvedContent(phase, onGo, onDismiss, onSaveHome, onSaveWork)
+                is Phase.NeedTile -> NeedTileContent(phase, onDownloadTile, onDismiss)
+                is Phase.Solved -> SolvedContent(phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork)
                 is Phase.Pushing -> PushingContent(phase.destination)
                 is Phase.Driving -> DrivingContent(phase.destination, phase.plan.cameras.size, onDismiss)
                 is Phase.PushFailed -> PushFailedContent(phase, onRetryPush, onDismiss)
@@ -84,7 +90,47 @@ private fun SolvingContent(destination: Destination) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
         Spacer(Modifier.width(14.dp))
-        Text("Finding the safest route to ${destination.title}…", style = MaterialTheme.typography.bodyLarge)
+        Text("Finding routes to ${destination.title}…", style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun NeedTileContent(phase: Phase.NeedTile, onDownload: () -> Unit, onDismiss: () -> Unit) {
+    Text("Download offline map?", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Shunt routes entirely on your device. The map for this area isn't " +
+            "downloaded yet — grab it once and routing here works offline forever.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(16.dp))
+    if (phase.downloading) {
+        LinearProgressIndicator(
+            progress = { phase.progress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Downloading map… ${(phase.progress * 100).toInt()}%",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    } else {
+        if (phase.failed) {
+            Text(
+                "Download failed — check your connection and try again.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onDownload, modifier = Modifier.weight(1f)) {
+                Text(if (phase.failed) "Retry download" else "Download map")
+            }
+            OutlinedButton(onClick = onDismiss) { Text("Back") }
+        }
     }
 }
 
@@ -92,100 +138,133 @@ private fun SolvingContent(destination: Destination) {
 private fun SolvedContent(
     phase: Phase.Solved,
     onGo: () -> Unit,
+    onSelectRoute: (Int) -> Unit,
     onDismiss: () -> Unit,
     onSaveHome: (Destination) -> Unit,
     onSaveWork: (Destination) -> Unit,
 ) {
-    when (val result = phase.result) {
-        is SolveResult.Clean -> CleanHeader(result)
-        is SolveResult.MinimumExposure -> MinimumExposureHeader(result)
-        is SolveResult.Failed -> ErrorContent(result.reason, onDismiss)
-    }
-
-    if (phase.result !is SolveResult.Failed) {
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "to ${phase.destination.title}",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(16.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onGo, modifier = Modifier.weight(1f)) { Text("Go") }
-            OutlinedButton(onClick = onDismiss) { Text("Back") }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextButton(onClick = { onSaveHome(phase.destination) }) { Text("Save as Home") }
-            TextButton(onClick = { onSaveWork(phase.destination) }) { Text("Save as Work") }
-        }
-    }
-}
-
-@Composable
-private fun CleanHeader(result: SolveResult.Clean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(28.dp))
-        Spacer(Modifier.width(12.dp))
-        Text("Camera-free route", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-    }
-    Spacer(Modifier.height(8.dp))
-    Text(formatAddedTime(result.addedSecondsVsFastest), style = MaterialTheme.typography.bodyLarge)
     Text(
-        "${formatDuration(result.route.durationSeconds)} · ${waypointSummary(result.waypoints.size)}",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        "to ${phase.destination.title}",
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
     )
+    Spacer(Modifier.height(12.dp))
+
+    // Choose a route. With only one option (no cameras nearby) this is a single
+    // card; otherwise it's the fastest → fewest-cameras spectrum.
+    phase.options.forEachIndexed { index, option ->
+        RouteOptionCard(option, selected = index == phase.selected) { onSelectRoute(index) }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    Spacer(Modifier.height(4.dp))
+    SelectedRouteDetail(phase.chosen)
+
+    Spacer(Modifier.height(16.dp))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Button(onClick = onGo, modifier = Modifier.weight(1f)) { Text("Go") }
+        OutlinedButton(onClick = onDismiss) { Text("Back") }
+    }
+    Spacer(Modifier.height(4.dp))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        TextButton(onClick = { onSaveHome(phase.destination) }) { Text("Save as Home") }
+        TextButton(onClick = { onSaveWork(phase.destination) }) { Text("Save as Work") }
+    }
 }
 
 @Composable
-private fun MinimumExposureHeader(result: SolveResult.MinimumExposure) {
-    // Unmissable warning banner: this is the whole point of the fallback.
+private fun RouteOptionCard(option: PlannedRoute, selected: Boolean, onClick: () -> Unit) {
+    val cameraFree = option.camerasPassed == 0
+    val border = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(if (selected) 2.dp else 1.dp, border, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(choiceLabel(option.choice), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "${formatDuration(option.estimatedSeconds)} · ${formatKm(option.distanceMeters)}" +
+                        addedTimeSuffix(option.addedSecondsVsFastest),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            CameraBadge(option.camerasPassed, cameraFree)
+        }
+    }
+}
+
+@Composable
+private fun CameraBadge(count: Int, cameraFree: Boolean) {
+    if (cameraFree) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("camera-free", style = MaterialTheme.typography.labelMedium, color = safeColor())
+        }
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                cameraCount(count),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectedRouteDetail(option: PlannedRoute) {
+    if (option.camerasPassed == 0) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "This route passes no cameras.",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        return
+    }
+    // Cameras on the selected route — the exposure the user is accepting.
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Warning,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(28.dp),
-                )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    "No camera-free route exists",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-            Spacer(Modifier.height(10.dp))
+        Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                "This route passes ${cameraCount(result.passedCameras.size)}.",
+                "Passes ${cameraCount(option.camerasPassed)}",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Text(
-                "It passes the fewest cameras of any route found.",
-                style = MaterialTheme.typography.bodyMedium,
+                "You'll be alerted on approach to each while driving.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
+            Spacer(Modifier.height(8.dp))
+            option.passedCameras.forEachIndexed { i, camera -> CameraRow(i + 1, camera) }
         }
     }
-    Spacer(Modifier.height(12.dp))
-    Text(
-        "${formatAddedTime(result.addedSecondsVsFastest)} · ${formatDuration(result.route.durationSeconds)} · ${waypointSummary(result.waypoints.size)}",
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(12.dp))
-    Text("Cameras on this route", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(4.dp))
-    result.passedCameras.forEachIndexed { i, camera -> CameraRow(i + 1, camera) }
 }
 
 @Composable
@@ -210,6 +289,7 @@ private fun CameraRow(number: Int, camera: Camera) {
                 if (manufacturer != null) append("  ·  $manufacturer")
             },
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
         )
     }
 }
@@ -281,5 +361,16 @@ private fun ErrorContent(message: String, onDismiss: () -> Unit) {
     Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("Back") }
 }
 
-private fun waypointSummary(count: Int): String =
-    if (count == 0) "direct" else "$count waypoint${if (count == 1) "" else "s"}"
+private fun choiceLabel(choice: RouteChoice): String = when (choice) {
+    RouteChoice.FASTEST -> "Fastest"
+    RouteChoice.BALANCED -> "Balanced"
+    RouteChoice.FEWEST_CAMERAS -> "Fewest cameras"
+}
+
+private fun formatKm(meters: Int): String = "%.1f km".format(meters / 1000.0)
+
+private fun addedTimeSuffix(addedSeconds: Int): String {
+    if (addedSeconds <= 0) return ""
+    val minutes = (addedSeconds / 60.0).let { if (it < 1) 1 else it.toInt() }
+    return "  ·  +$minutes min"
+}

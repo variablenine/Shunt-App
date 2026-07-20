@@ -11,18 +11,23 @@ import app.shunt.app.plan.LocationProvider
 import app.shunt.app.plan.PlanViewModel
 import app.shunt.app.plan.RoutePlanner
 import app.shunt.app.plan.SuggestionSearch
+import app.shunt.app.plan.TileDownloader
 import app.shunt.app.ui.MapCamera
+import app.shunt.solver.brouter.BrouterAssets
+import app.shunt.solver.brouter.BrouterPlanner
+import app.shunt.solver.brouter.BrouterRouter
+import app.shunt.solver.brouter.BrouterTileSource
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.here.HereAutosuggest
-import app.shunt.solver.here.HereRoutingClient
-import app.shunt.solver.routing.RouteSolver
 import app.shunt.tesla.FakeVehicleNavClient
 import app.shunt.tesla.TessieVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 
 /**
@@ -46,11 +51,26 @@ class AppContainer(context: Context) {
         http = http,
         cacheDir = File(appContext.cacheDir, "deflock"),
     )
-    private val routingApi = HereRoutingClient(http, { effectiveHereKey() })
+
+    // HERE now powers search only; routing is native/offline via BRouter.
     private val autosuggest = HereAutosuggest(http, { effectiveHereKey() })
-    private val routeSolver = RouteSolver(
-        api = routingApi,
-        cameras = { bbox -> cameraSource.camerasIn(bbox).cameras },
+
+    /** BRouter's offline tiles + profile live under the app's private storage. */
+    private val brouterDir = File(appContext.filesDir, "brouter")
+    private val brouterProfileDir = File(brouterDir, "profiles").apply {
+        runCatching { BrouterAssets.install(this) }
+    }
+    private val tileSource = BrouterTileSource(http, File(brouterDir, "segments"))
+    private val brouterRouter = BrouterRouter(
+        segmentDir = tileSource.segmentDir,
+        profileDir = brouterProfileDir,
+    )
+    private val brouterPlanner = BrouterPlanner(
+        route = { origin, destination, cams ->
+            withContext(Dispatchers.Default) { brouterRouter.route(origin, destination, cams) }
+        },
+        missingTiles = { bbox -> tileSource.missingTiles(bbox) },
+        camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
     )
 
     /**
@@ -97,7 +117,10 @@ class AppContainer(context: Context) {
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> autosuggest.suggest(query, at) },
-        planner = RoutePlanner { origin, destination -> routeSolver.solve(origin, destination) },
+        planner = RoutePlanner { origin, destination -> brouterPlanner.plan(origin, destination) },
+        tileDownloader = TileDownloader { origin, destination, onProgress ->
+            downloadTripTiles(origin, destination, onProgress)
+        },
         location = locationProvider,
         cameras = CameraGateway { around ->
             cameraSource.camerasIn(BoundingBox.around(around, CAMERA_WARM_RADIUS_METERS)).freshness
@@ -105,6 +128,27 @@ class AppContainer(context: Context) {
         favoritesStore = favoritesStore,
         vehicle = vehicleNavClient,
     )
+
+    /** Download every tile this trip needs, reporting overall 0f..1f progress. */
+    private suspend fun downloadTripTiles(
+        origin: app.shunt.core.GeoPoint,
+        destination: app.shunt.core.GeoPoint,
+        onProgress: (Float) -> Unit,
+    ): Boolean {
+        val bbox = BoundingBox.of(listOf(origin, destination))
+            .expand(BrouterPlanner.ROUTE_BBOX_MARGIN_METERS)
+        val missing = tileSource.missingTiles(bbox)
+        if (missing.isEmpty()) return true
+        missing.forEachIndexed { index, tile ->
+            val ok = tileSource.download(tile) { soFar, total ->
+                val fraction = if (total > 0) (soFar.toFloat() / total).coerceIn(0f, 1f) else 0f
+                onProgress((index + fraction) / missing.size)
+            }
+            if (!ok) return false
+            onProgress((index + 1f) / missing.size)
+        }
+        return true
+    }
 
     fun planViewModelFactory(): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
