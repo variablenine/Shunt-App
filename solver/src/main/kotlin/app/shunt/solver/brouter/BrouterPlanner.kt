@@ -50,6 +50,8 @@ class BrouterPlanner(
     private val camerasIn: suspend (BoundingBox) -> List<Camera>,
     private val standoffMeters: Double = BrouterRouter.DEFAULT_STANDOFF_METERS,
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
+    /** Optional on-disk/engine state summary, appended to a no-route failure. */
+    private val diagnostics: () -> String? = { null },
 ) {
     suspend fun plan(origin: GeoPoint, destination: GeoPoint): PlanOutcome {
         val bbox = BoundingBox.of(listOf(origin, destination)).expand(bboxMarginMeters)
@@ -61,7 +63,8 @@ class BrouterPlanner(
         val routes = runCatching { route(origin, destination, cameras.map { it.location }) }
             .getOrElse { e -> return PlanOutcome.Failed("Routing failed: ${e.message}") }
         if (routes.isEmpty()) {
-            return PlanOutcome.Failed("No route found — the offline map for this area may be incomplete.")
+            val detail = diagnostics()?.takeIf { it.isNotBlank() }?.let { "\n\n[$it]" } ?: ""
+            return PlanOutcome.Failed("No route found — the offline map for this area may be incomplete.$detail")
         }
 
         val fastest = routes.first()

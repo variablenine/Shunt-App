@@ -74,7 +74,18 @@ class AppContainer(context: Context) {
         },
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
         camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
+        diagnostics = { routingDiagnostic() },
     )
+
+    /** One-line on-disk + engine state, surfaced on a no-route failure (alpha aid). */
+    private fun routingDiagnostic(): String {
+        fun listing(dir: File): String =
+            dir.listFiles()?.takeIf { it.isNotEmpty() }
+                ?.joinToString(", ") { "${it.name}=${it.length() / 1024}KB" }
+                ?: "(empty)"
+        return "profiles: ${listing(brouterProfileDir)} | segments: ${listing(tileSource.segmentDir)}" +
+            (brouterRouter.lastFailureDiagnostic?.let { " | $it" } ?: "")
+    }
 
     /**
      * The single vehicle-client seam. The production [TessieVehicleNavClient]
