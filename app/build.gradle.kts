@@ -24,6 +24,14 @@ val hereApiKey = localSecret("HERE_API_KEY")
 val tessieToken = localSecret("TESSIE_TOKEN")
 val tessieVin = localSecret("TESSIE_VIN")
 
+// Stable release signing key. CI decodes the ALPHA_KEYSTORE_BASE64 repo secret
+// to a file and passes its path in ALPHA_KEYSTORE_FILE; every release then
+// signs with the SAME certificate, so updates install in place. The password
+// is a non-secret alpha convenience value — useless without the secret
+// keystore. Local builds without the env fall back to debug signing.
+val alphaKeystorePath = System.getenv("ALPHA_KEYSTORE_FILE").orEmpty()
+val alphaSigningAvailable = alphaKeystorePath.isNotBlank() && file(alphaKeystorePath).exists()
+
 android {
     namespace = "app.shunt"
     compileSdk = libs.versions.compile.sdk.get().toInt()
@@ -46,6 +54,17 @@ android {
         }
     }
 
+    signingConfigs {
+        if (alphaSigningAvailable) {
+            create("alpha") {
+                storeFile = file(alphaKeystorePath)
+                storePassword = "shuntalpha"
+                keyAlias = "shunt-alpha"
+                keyPassword = "shuntalpha"
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -54,10 +73,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Alpha convenience: sign the release with the debug key so it
-            // installs without provisioning a keystore. Provision a real
-            // signing config before any production distribution.
-            signingConfig = signingConfigs.getByName("debug")
+            // Stable alpha key when CI provides it (updates install in place);
+            // debug key otherwise so local builds still work.
+            signingConfig = signingConfigs.getByName(if (alphaSigningAvailable) "alpha" else "debug")
         }
     }
 
@@ -116,6 +134,7 @@ dependencies {
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
     debugImplementation(libs.compose.ui.test.manifest)
 }
 

@@ -47,7 +47,14 @@ jobs:
           disable-animations: true
           script: |
             chmod +x ./gradlew
+            adb logcat -c || true
+            set +e
             ./gradlew :app:connectedDebugAndroidTest
+            status=$?
+            # Capture logcat regardless, so a launch crash is diagnosable from
+            # the artifact (the test report only says "no compose hierarchy").
+            adb logcat -d > logcat.txt || true
+            exit $status
 
       - name: Upload test reports
         if: always()
@@ -57,4 +64,5 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            logcat.txt
           if-no-files-found: ignore

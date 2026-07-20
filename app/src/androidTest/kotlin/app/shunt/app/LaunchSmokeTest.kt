@@ -1,5 +1,6 @@
 package app.shunt.app
 
+import android.Manifest
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -7,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.rule.GrantPermissionRule
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,7 +21,16 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class LaunchSmokeTest {
 
-    @get:Rule
+    // Grant location + notifications first (order 0), so launching the activity
+    // doesn't raise the system permission dialog on top of it — which would
+    // pause MainActivity and hide its Compose hierarchy from the test.
+    @get:Rule(order = 0)
+    val permissions: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.POST_NOTIFICATIONS,
+    )
+
+    @get:Rule(order = 1)
     val compose = createAndroidComposeRule<MainActivity>()
 
     /**

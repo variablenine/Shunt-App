@@ -57,6 +57,19 @@ class GeoTest {
     }
 
     @Test
+    fun `destinationPoint lands the right distance and bearing away`() {
+        val origin = GeoPoint(45.0, -88.0)
+        // 45 m due east: bearing back to origin should read ~270, distance ~45 m.
+        val east = destinationPoint(origin, 90.0, 45.0)
+        assertTrue(abs(haversineMeters(origin, east) - 45.0) < 0.5, "distance ${haversineMeters(origin, east)}")
+        assertTrue(abs(bearingDegrees(origin, east) - 90.0) < 1.0, "bearing ${bearingDegrees(origin, east)}")
+        // Due north keeps longitude fixed and raises latitude.
+        val north = destinationPoint(origin, 0.0, 100.0)
+        assertTrue(north.lat > origin.lat)
+        assertTrue(abs(north.lon - origin.lon) < 1e-6)
+    }
+
+    @Test
     fun `bbox expand grows all edges`() {
         val box = BoundingBox(45.0, -88.0, 45.1, -87.9).expand(1000.0)
         assertTrue(box.minLat < 45.0 && box.maxLat > 45.1)

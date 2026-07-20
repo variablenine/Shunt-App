@@ -49,6 +49,7 @@ import app.shunt.app.plan.Favorites
 import app.shunt.app.plan.Phase
 import app.shunt.app.plan.PlanUiState
 import app.shunt.core.GeoPoint
+import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.here.Suggestion
 import app.shunt.solver.routing.SolveResult
 
@@ -72,6 +73,7 @@ fun PlanScreen(
     hereKeyMissing: Boolean,
     hereApiKey: String,
     modifier: Modifier = Modifier,
+    cameraViewportFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
 ) {
     val (polyline, cameras) = routeOverlay(state.phase)
     var showSettings by remember { mutableStateOf(false) }
@@ -79,7 +81,12 @@ fun PlanScreen(
     val scope = rememberCoroutineScope()
 
     Box(modifier = modifier.fillMaxSize()) {
-        RouteMap(routePolyline = polyline, passedCameras = cameras, modifier = Modifier.fillMaxSize())
+        RouteMap(
+            routePolyline = polyline,
+            passedCameras = cameras,
+            modifier = Modifier.fillMaxSize(),
+            cameraFetcher = cameraViewportFetcher,
+        )
 
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
             if (hereKeyMissing) {
