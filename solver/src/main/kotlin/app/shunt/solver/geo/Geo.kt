@@ -88,6 +88,29 @@ fun bearingDifference(a: Double, b: Double): Double {
 }
 
 /**
+ * The point [meters] away from [from] along [bearingDeg] (clockwise from
+ * north), using the spherical destination formula. Used to draw the small
+ * camera facing cones on the map, where the tens-of-meters scale makes the
+ * spherical-vs-ellipsoidal difference irrelevant.
+ */
+fun destinationPoint(from: GeoPoint, bearingDeg: Double, meters: Double): GeoPoint {
+    val r = 6_371_000.0
+    val angular = meters / r
+    val brng = Math.toRadians(bearingDeg)
+    val lat1 = Math.toRadians(from.lat)
+    val lon1 = Math.toRadians(from.lon)
+    val lat2 = kotlin.math.asin(
+        sin(lat1) * cos(angular) + cos(lat1) * sin(angular) * cos(brng),
+    )
+    val lon2 = lon1 + atan2(
+        sin(brng) * sin(angular) * cos(lat1),
+        cos(angular) - sin(lat1) * sin(lat2),
+    )
+    val lonDeg = ((Math.toDegrees(lon2) + 540.0) % 360.0) - 180.0
+    return GeoPoint(Math.toDegrees(lat2).coerceIn(-90.0, 90.0), lonDeg)
+}
+
+/**
  * Distance in meters from point [p] to segment [a]-[b], using a local
  * equirectangular projection. Accurate to well under a meter at the tens-of-
  * meters scale the camera buffers operate on.

@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     hereKeyMissing = hereKeyMissing,
                     hereApiKey = storedHereKey,
+                    cameraViewportFetcher = container.viewportCameras,
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,
                         onSuggestionSelected = vm::onSuggestionSelected,

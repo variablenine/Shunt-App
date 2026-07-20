@@ -11,6 +11,8 @@ import app.shunt.app.plan.LocationProvider
 import app.shunt.app.plan.PlanViewModel
 import app.shunt.app.plan.RoutePlanner
 import app.shunt.app.plan.SuggestionSearch
+import app.shunt.app.ui.MapCamera
+import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.here.HereAutosuggest
@@ -84,6 +86,15 @@ class AppContainer(context: Context) {
     /** True when no HERE key is configured — the UI warns and offers to add one. */
     fun hereKeyMissing(): Boolean = effectiveHereKey().isBlank()
 
+    /**
+     * Every known camera in a map viewport, for the DeFlock-style display.
+     * Reuses the same cached DeFlock source the router draws on, so panning the
+     * map is cheap once tiles are warm.
+     */
+    val viewportCameras: suspend (BoundingBox) -> List<MapCamera> = { bbox ->
+        cameraSource.camerasIn(bbox).cameras.map { it.toMapCamera() }
+    }
+
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> autosuggest.suggest(query, at) },
         planner = RoutePlanner { origin, destination -> routeSolver.solve(origin, destination) },
@@ -104,4 +115,23 @@ class AppContainer(context: Context) {
         /** Warm camera cache within this radius of the origin on app open. */
         const val CAMERA_WARM_RADIUS_METERS = 5_000.0
     }
+}
+
+/** A DeFlock/OSM camera reduced to what the map needs, with a friendly label. */
+private fun Camera.toMapCamera(): MapCamera {
+    val manufacturer = tags["manufacturer"] ?: tags["brand"]
+    val operator = tags["operator"]
+    val title = manufacturer ?: operator ?: "ALPR camera"
+    val subtitle = buildList {
+        if (manufacturer != null && operator != null) add("Operated by $operator")
+        (tags["surveillance:type"] ?: tags["camera:type"])?.let { add(it) }
+    }.joinToString(" · ").ifBlank { null }
+    return MapCamera(
+        id = id,
+        lat = location.lat,
+        lon = location.lon,
+        directionDegrees = directionDegrees,
+        title = title,
+        subtitle = subtitle,
+    )
 }
