@@ -23,11 +23,6 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# java.lang.System.Logger (used by :solver for fallback logging) exists on
-# Android API 26+; minSdk is 29, so it's always present at runtime.
--dontwarn java.lang.System$Logger
--dontwarn java.lang.System$Logger$Level
-
 # OkHttp / Okio ship their own consumer rules; MapLibre ships rules in its AAR.
 # Silence benign warnings from optional transitive references.
 -dontwarn org.conscrypt.**

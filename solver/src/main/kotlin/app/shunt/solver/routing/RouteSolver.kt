@@ -102,8 +102,7 @@ class RouteSolver(
         // Never a silent downgrade: the fallback is logged as well as surfaced
         // in the UI. `exhausted` distinguishes "search ran out of avoidance
         // room" from "hit the round cap".
-        logger.log(
-            System.Logger.Level.WARNING,
+        logger.warning(
             "No camera-free route; falling back to minimum exposure: " +
                 "${passed.size} camera(s), +${route.durationSeconds - fastest.durationSeconds}s, " +
                 "candidates=${evaluated.size}, exhausted=$exhausted",
@@ -117,7 +116,7 @@ class RouteSolver(
     }
 
     private fun failed(reason: String): SolveResult.Failed {
-        logger.log(System.Logger.Level.WARNING, "Solve failed: $reason")
+        logger.warning("Solve failed: $reason")
         return SolveResult.Failed(reason)
     }
 
@@ -171,6 +170,9 @@ class RouteSolver(
     }
 
     private companion object {
-        val logger: System.Logger = System.getLogger("app.shunt.solver.RouteSolver")
+        // java.util.logging (not java.lang.System.Logger, which is absent on
+        // Android and crashes at construction — the solver is built at launch).
+        val logger: java.util.logging.Logger =
+            java.util.logging.Logger.getLogger("app.shunt.solver.RouteSolver")
     }
 }
