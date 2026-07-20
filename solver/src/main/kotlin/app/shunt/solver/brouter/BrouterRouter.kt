@@ -45,7 +45,13 @@ class BrouterRouter(
     val standoffMeters: Double = DEFAULT_STANDOFF_METERS,
     private val profileName: String = "car-vario",
 ) {
+    /** Why the last [route] found nothing, for diagnostics — null after a success. */
+    @Volatile
+    var lastFailureDiagnostic: String? = null
+        private set
+
     fun route(origin: GeoPoint, destination: GeoPoint, cameras: List<GeoPoint>): List<BrouterRoute> {
+        lastFailureDiagnostic = null
         val fastest = runRoute(origin, destination, cameras, weight = 0.0)
             ?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
@@ -80,39 +86,49 @@ class BrouterRouter(
         destination: GeoPoint,
         cameras: List<GeoPoint>,
         weight: Double,
-    ): RawRoute? = runCatching {
-        val rc = RoutingContext()
-        // Absolute .brf path => BRouter's null-profileBaseDir branch: no global
-        // system property, and lookups.dat is read from the same directory.
-        rc.localFunction = File(profileDir, "$profileName.brf").absolutePath
-        val collector = RoutingParamCollector()
-        val waypoints = collector.getWayPointList(
-            "${origin.lon},${origin.lat}|${destination.lon},${destination.lat}",
-        )
-        if (weight > 0.0) {
-            val spec = cameras.joinToString("|") { c ->
-                "${c.lon},${c.lat},${standoffMeters.toInt()},${weight.toInt()}"
-            }
-            collector.readNogoList(spec)?.let { nogos ->
-                RoutingContext.prepareNogoPoints(nogos)
-                rc.nogopoints = nogos
-            }
-        }
-        val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
-        engine.quite = true // suppress BRouter's GPX-to-stdout dump
-        engine.doRun(0)
-        if (engine.errorMessage != null) return@runCatching null
-        val track = engine.foundTrack ?: return@runCatching null
-        val line = track.nodes.map { node ->
-            GeoPoint(
-                lat = (node.getILat() - 90_000_000) / 1_000_000.0,
-                lon = (node.getILon() - 180_000_000) / 1_000_000.0,
+    ): RawRoute? {
+        return try {
+            val rc = RoutingContext()
+            // Absolute .brf path => BRouter's null-profileBaseDir branch: no global
+            // system property, and lookups.dat is read from the same directory.
+            rc.localFunction = File(profileDir, "$profileName.brf").absolutePath
+            val collector = RoutingParamCollector()
+            val waypoints = collector.getWayPointList(
+                "${origin.lon},${origin.lat}|${destination.lon},${destination.lat}",
             )
+            if (weight > 0.0) {
+                val spec = cameras.joinToString("|") { c ->
+                    "${c.lon},${c.lat},${standoffMeters.toInt()},${weight.toInt()}"
+                }
+                collector.readNogoList(spec)?.let { nogos ->
+                    RoutingContext.prepareNogoPoints(nogos)
+                    rc.nogopoints = nogos
+                }
+            }
+            val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
+            engine.quite = true // suppress BRouter's GPX-to-stdout dump
+            engine.doRun(0)
+            if (engine.errorMessage != null) return note("brouter: ${engine.errorMessage}")
+            val track = engine.foundTrack ?: return note("brouter: no track returned")
+            val line = track.nodes.map { node ->
+                GeoPoint(
+                    lat = (node.getILat() - 90_000_000) / 1_000_000.0,
+                    lon = (node.getILon() - 180_000_000) / 1_000_000.0,
+                )
+            }
+            if (line.size < 2) return note("brouter: track < 2 points")
+            val seconds = track.getTotalSeconds().takeIf { it > 0 } ?: estimateSeconds(track.distance)
+            RawRoute(line, track.distance, seconds)
+        } catch (e: Throwable) {
+            note("exception: ${e.message ?: e.toString()}")
         }
-        if (line.size < 2) return@runCatching null
-        val seconds = track.getTotalSeconds().takeIf { it > 0 } ?: estimateSeconds(track.distance)
-        RawRoute(line, track.distance, seconds)
-    }.getOrNull()
+    }
+
+    /** Record the first (fastest-attempt) failure reason and return null. */
+    private fun note(reason: String): RawRoute? {
+        if (lastFailureDiagnostic == null) lastFailureDiagnostic = reason
+        return null
+    }
 
     private fun RawRoute.toResult(choice: RouteChoice, cameras: List<GeoPoint>): BrouterRoute =
         BrouterRoute(
