@@ -36,7 +36,23 @@ jobs:
       - name: Set up the Android SDK
         uses: android-actions/setup-android@v3
 
+      # Decode the stable signing key (repo secret) so releases update in place.
+      # If the secret isn't set, the build falls back to a debug key.
+      - name: Decode signing keystore (if configured)
+        id: keystore
+        env:
+          KS_B64: ${{ secrets.ALPHA_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/shunt-alpha.jks"
+            echo "path=$RUNNER_TEMP/shunt-alpha.jks" >> "$GITHUB_OUTPUT"
+          else
+            echo "No ALPHA_KEYSTORE_BASE64 secret set — release will be debug-signed."
+          fi
+
       - name: Build the release APK (keyless)
+        env:
+          ALPHA_KEYSTORE_FILE: ${{ steps.keystore.outputs.path }}
         run: |
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --no-daemon
