@@ -29,9 +29,9 @@ import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 
-/** Plain background style used when no Protomaps basemap URL is configured. */
+/** Plain dark background style used when no basemap URL is configured or it fails to load. */
 private const val BLANK_STYLE =
-    """{"version":8,"sources":{},"layers":[{"id":"bg","type":"background","paint":{"background-color":"#eef1f4"}}]}"""
+    """{"version":8,"sources":{},"layers":[{"id":"bg","type":"background","paint":{"background-color":"#161826"}}]}"""
 
 private const val ROUTE_SOURCE = "route"
 private const val ROUTE_LAYER = "route-line"

@@ -27,6 +27,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,7 +36,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +75,8 @@ fun PlanScreen(
 ) {
     val (polyline, cameras) = routeOverlay(state.phase)
     var showSettings by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(routePolyline = polyline, passedCameras = cameras, modifier = Modifier.fillMaxSize())
@@ -107,11 +113,22 @@ fun PlanScreen(
                     onGo = actions.onGo,
                     onRetryPush = actions.onRetryPush,
                     onDismiss = actions.onDismiss,
-                    onSaveHome = actions.onSaveHome,
-                    onSaveWork = actions.onSaveWork,
+                    onSaveHome = {
+                        actions.onSaveHome(it)
+                        scope.launch { snackbarHostState.showSnackbar("Saved as Home") }
+                    },
+                    onSaveWork = {
+                        actions.onSaveWork(it)
+                        scope.launch { snackbarHostState.showSnackbar("Saved as Work") }
+                    },
                 )
             }
         }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+        )
     }
 }
 
