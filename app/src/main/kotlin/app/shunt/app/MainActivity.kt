@@ -61,6 +61,17 @@ class MainActivity : ComponentActivity() {
                 // Refresh camera data on open; schedule no background work.
                 LaunchedEffect(Unit) { vm.onOpen() }
 
+                // Ask for location (and notifications on Android 13+) up front,
+                // so routing uses the real current location and drive alerts can
+                // fire — instead of silently falling back to the Home favorite.
+                // Only prompts for what isn't already granted.
+                val startupPermissionLauncher =
+                    rememberLauncherForActivityResult(RequestMultiplePermissions()) { /* re-read on use */ }
+                LaunchedEffect(Unit) {
+                    val missing = requiredDrivePermissions().filterNot { hasPermission(context, it) }
+                    if (missing.isNotEmpty()) startupPermissionLauncher.launch(missing.toTypedArray())
+                }
+
                 // Start the foreground drive-monitor when the plan enters the
                 // driving phase (from the Go tap, so we're in the foreground);
                 // request while-in-use location if it isn't granted yet.
