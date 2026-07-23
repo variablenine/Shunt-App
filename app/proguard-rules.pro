@@ -23,6 +23,12 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
+# BRouter loads its path model (btools.router.KinematicModel / StdModel) and
+# other engine classes by name via reflection (RoutingContext: Class.forName),
+# so R8 must not strip or rename the vendored engine — otherwise release builds
+# fail at route time with "Cannot create path-model: ClassNotFoundException".
+-keep class btools.** { *; }
+
 # OkHttp / Okio ship their own consumer rules; MapLibre ships rules in its AAR.
 # Silence benign warnings from optional transitive references.
 -dontwarn org.conscrypt.**
