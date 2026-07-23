@@ -40,6 +40,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.shunt.R
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.geo.destinationPoint
 import kotlinx.coroutines.delay
@@ -96,10 +97,6 @@ private const val CONE_LAYER = "camera-cones-fill"
 // The subset of cameras the chosen route passes near — drawn brighter, on top.
 private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
-
-// Facing-cone geometry.
-private const val CONE_METERS = 45.0
-private const val CONE_HALF_ANGLE = 28.0
 
 /** Above this viewport span (~44 km) we don't fetch cameras — too many, too zoomed out. */
 private const val MAX_VIEWPORT_SPAN_DEG = 0.4
@@ -336,9 +333,9 @@ private fun renderCameras(style: Style, cameras: List<MapCamera>) {
             }
         },
     )
-    val cones = FeatureCollection.fromFeatures(
-        cameras.mapNotNull { cam -> cam.directionDegrees?.let { coneFeature(cam, it) } },
-    )
+    // The watched area: a 180° field-of-view wedge where the facing is known,
+    // a full circle where it isn't — matching what routing actually avoids.
+    val cones = FeatureCollection.fromFeatures(cameras.map { visionFeature(it) })
 
     val coneSource = style.getSourceAs<GeoJsonSource>(CONE_SOURCE)
     if (coneSource != null) {
@@ -369,17 +366,31 @@ private fun renderCameras(style: Style, cameras: List<MapCamera>) {
     }
 }
 
-/** A sector polygon fanning out from the camera along [directionDeg]. */
-private fun coneFeature(cam: MapCamera, directionDeg: Double): Feature {
+/**
+ * The camera's watched area, matching what routing avoids: a 180° wedge around
+ * a known facing, or a full circle when the facing is unknown.
+ */
+private fun visionFeature(cam: MapCamera): Feature {
     val apex = GeoPoint(cam.lat, cam.lon)
-    val ring = mutableListOf(Point.fromLngLat(apex.lon, apex.lat))
-    val steps = 6
-    for (i in 0..steps) {
-        val bearing = directionDeg - CONE_HALF_ANGLE + (2 * CONE_HALF_ANGLE) * i / steps
-        val edge = destinationPoint(apex, bearing, CONE_METERS)
-        ring.add(Point.fromLngLat(edge.lon, edge.lat))
+    val ring = mutableListOf<Point>()
+    val direction = cam.directionDegrees
+    if (direction != null) {
+        ring += Point.fromLngLat(apex.lon, apex.lat) // wedge apex at the camera
+        val steps = 12
+        for (i in 0..steps) {
+            val bearing = direction - CameraVision.FOV_HALF_ANGLE +
+                (2 * CameraVision.FOV_HALF_ANGLE) * i / steps
+            val edge = destinationPoint(apex, bearing, CameraVision.DIRECTIONAL_RANGE_M)
+            ring += Point.fromLngLat(edge.lon, edge.lat)
+        }
+        ring += Point.fromLngLat(apex.lon, apex.lat) // close back to the apex
+    } else {
+        val steps = 24
+        for (i in 0..steps) {
+            val edge = destinationPoint(apex, 360.0 * i / steps, CameraVision.OMNI_RANGE_M)
+            ring += Point.fromLngLat(edge.lon, edge.lat)
+        }
     }
-    ring.add(Point.fromLngLat(apex.lon, apex.lat)) // close the ring
     return Feature.fromGeometry(Polygon.fromLngLats(listOf(ring)))
 }
 

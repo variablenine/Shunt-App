@@ -45,10 +45,9 @@ sealed interface PlanOutcome {
  * without a real tile on disk.
  */
 class BrouterPlanner(
-    private val route: suspend (origin: GeoPoint, destination: GeoPoint, cameras: List<GeoPoint>) -> List<BrouterRoute>,
+    private val route: suspend (origin: GeoPoint, destination: GeoPoint, cameras: List<CameraVision>) -> List<BrouterRoute>,
     private val missingTiles: (BoundingBox) -> List<TileId>,
     private val camerasIn: suspend (BoundingBox) -> List<Camera>,
-    private val standoffMeters: Double = BrouterRouter.DEFAULT_STANDOFF_METERS,
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
     /** Optional on-disk/engine state summary, appended to a no-route failure. */
     private val diagnostics: () -> String? = { null },
@@ -60,7 +59,8 @@ class BrouterPlanner(
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
 
         val cameras = runCatching { camerasIn(bbox) }.getOrDefault(emptyList())
-        val routes = runCatching { route(origin, destination, cameras.map { it.location }) }
+        val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
+        val routes = runCatching { route(origin, destination, visions) }
             .getOrElse { e -> return PlanOutcome.Failed("Routing failed: ${e.message}") }
         if (routes.isEmpty()) {
             val detail = diagnostics()?.takeIf { it.isNotBlank() }?.let { "\n\n[$it]" } ?: ""
@@ -73,8 +73,9 @@ class BrouterPlanner(
                 choice = r.choice,
                 polyline = r.polyline,
                 waypoints = WaypointExtractor.extract(r.polyline, fastest.polyline),
+                // A camera is "passed" if the route enters its field of view.
                 passedCameras = cameras.filter {
-                    BrouterRouter.minDistanceToLine(it.location, r.polyline) < standoffMeters
+                    CameraVision(it.location, it.directionDegrees).seesRoute(r.polyline)
                 },
                 distanceMeters = r.distanceMeters,
                 estimatedSeconds = r.estimatedSeconds,
