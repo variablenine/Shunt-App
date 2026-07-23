@@ -22,11 +22,13 @@ and offers a few options** — from *Fastest* (may pass cameras) through
 *Balanced* to *Fewest cameras* — each labelled with its time, distance, and the
 cameras it passes, so the driver chooses their own trade-off.
 
-Under the hood each camera is a weighted "nogo" of realistic radius, so the
-router keeps genuine distance from cameras and minimises **exposure distance**
-(metres driven within camera range) in a single shortest-path pass — no greedy
-backtracking, no route ever "technically" avoiding a camera while turning right
-in front of it. Nothing is silent: every option states the cameras it passes,
+Under the hood each camera is a weighted "nogo" shaped by its **field of view**:
+a camera with a known facing watches a 180° wedge in front of it (so routes may
+pass behind it), while an unknown-facing camera is treated as watching every
+direction, with more distance. BRouter minimises time spent within any camera's
+view in a single shortest-path pass — no greedy backtracking, no route
+"technically" avoiding a camera while driving through its cone. Nothing is
+silent: every option states the cameras it passes,
 the map marks each one, and the drive monitor warns on approach while driving.
 See [docs/brouter-spike.md](docs/brouter-spike.md) for the engine's evaluation.
 
@@ -81,8 +83,9 @@ their own bearer token.
 ### Native routing (BRouter)
 
 The app routes entirely on-device with the vendored BRouter engine (`:brouter`,
-MIT). Each ALPR becomes a weighted "nogo" circle of realistic radius (default
-75 m — ALPRs read plates well beyond a 40 m box), and BRouter finds the
+MIT). Each ALPR becomes a weighted "nogo" shaped by its field of view — a 180°
+sector polygon in the direction a camera faces (routes may pass behind it), or a
+larger full circle when the facing is unknown — and BRouter finds the
 minimum-**exposure** route in a single shortest-path pass over the whole road
 graph. A weight sweep produces the *Fastest → Balanced → Fewest cameras*
 options; a hard nogo backs the fewest-cameras choice where a clear path exists.
