@@ -1,0 +1,142 @@
+import java.util.Properties
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+}
+
+/**
+ * Secrets come from local.properties or the environment only — never
+ * committed (see .gitignore). Absent in CI/fresh checkouts they are blank: the
+ * app still builds and surfaces the gap at runtime rather than failing here.
+ * The Tessie token + VIN (Part B) let the app talk to the user's own vehicle —
+ * without them it runs against the fake client. Search (Photon) and routing
+ * (BRouter) are keyless, so no other secret is needed.
+ */
+fun localSecret(name: String): String {
+    val fromProps = rootProject.file("local.properties")
+        .takeIf { it.exists() }
+        ?.let { Properties().apply { load(it.inputStream()) }.getProperty(name) }
+    return (fromProps ?: System.getenv(name)).orEmpty()
+}
+
+val tessieToken = localSecret("TESSIE_TOKEN")
+val tessieVin = localSecret("TESSIE_VIN")
+
+// Stable release signing key. CI decodes the ALPHA_KEYSTORE_BASE64 repo secret
+// to a file and passes its path in ALPHA_KEYSTORE_FILE; every release then
+// signs with the SAME certificate, so updates install in place. The password
+// is a non-secret alpha convenience value — useless without the secret
+// keystore. Local builds without the env fall back to debug signing.
+val alphaKeystorePath = System.getenv("ALPHA_KEYSTORE_FILE").orEmpty()
+val alphaSigningAvailable = alphaKeystorePath.isNotBlank() && file(alphaKeystorePath).exists()
+
+android {
+    namespace = "app.shunt"
+    compileSdk = libs.versions.compile.sdk.get().toInt()
+
+    defaultConfig {
+        applicationId = "app.shunt"
+        minSdk = libs.versions.min.sdk.get().toInt()
+        targetSdk = libs.versions.target.sdk.get().toInt()
+        versionCode = 1
+        versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "TESSIE_TOKEN", "\"$tessieToken\"")
+        buildConfigField("String", "TESSIE_VIN", "\"$tessieVin\"")
+
+        // Universal by default; `-PslimAbi` restricts to arm64-v8a (modern
+        // phones) for a much smaller alpha APK. Not for CI/emulator builds.
+        if (project.hasProperty("slimAbi")) {
+            ndk { abiFilters += "arm64-v8a" }
+        }
+    }
+
+    signingConfigs {
+        if (alphaSigningAvailable) {
+            create("alpha") {
+                storeFile = file(alphaKeystorePath)
+                storePassword = "shuntalpha"
+                keyAlias = "shunt-alpha"
+                keyPassword = "shuntalpha"
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            // Stable alpha key when CI provides it (updates install in place);
+            // debug key otherwise so local builds still work.
+            signingConfig = signingConfigs.getByName(if (alphaSigningAvailable) "alpha" else "debug")
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+dependencies {
+    implementation(project(":core"))
+    implementation(project(":solver"))
+    implementation(project(":tesla"))
+
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.okhttp)
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.compose.material3)
+    debugImplementation(libs.compose.ui.tooling)
+
+    implementation(libs.maplibre)
+
+    testImplementation(libs.junit.jupiter)
+    testImplementation(kotlin("test"))
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":tesla")))
+    testRuntimeOnly(libs.junit.platform.launcher)
+
+    // Instrumented (on-device/emulator) smoke tests — the check that actually
+    // exercises app launch and the Compose UI, which JVM unit tests cannot.
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    debugImplementation(libs.compose.ui.test.manifest)
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
+}

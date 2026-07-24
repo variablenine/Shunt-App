@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Shunt</string>
+    <!--
+      MapLibre basemap style. Defaults to OpenFreeMap's dark style — free,
+      keyless, OpenStreetMap-based — so the map shows real streets out of the
+      box. Swap for another MapLibre style URL (Protomaps, self-hosted PMTiles,
+      etc.) if desired; blank falls back to a plain dark background with just
+      the route and camera markers.
+    -->
+    <string name="map_style_url">https://tiles.openfreemap.org/styles/dark</string>
+</resources>

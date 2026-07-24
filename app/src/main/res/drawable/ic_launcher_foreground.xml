@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive-icon foreground: the Shunt mark — a route that forks around the
+     eye/surveillance node and exits through an arrowhead. Two-tone "road
+     casing" treatment. Converted from shunt-icon-foreground.svg; the SVG's
+     translate(22,22) scale(0.64) (keeping the mark inside the 72dp safe zone)
+     is expressed as the group transform. The glow filter is not representable
+     in a VectorDrawable and is intentionally dropped for the launcher. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:translateX="22"
+        android:translateY="22"
+        android:scaleX="0.64"
+        android:scaleY="0.64">
+
+        <!-- Route casing (underlay) -->
+        <path android:pathData="M8,50 H28" android:strokeColor="#3F424D" android:strokeWidth="9" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M72,50 H90" android:strokeColor="#3F424D" android:strokeWidth="9" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M28,50 C28,36 40,28 50,28 C60,28 72,36 72,50" android:strokeColor="#3F424D" android:strokeWidth="9" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M28,50 C28,64 40,72 50,72 C60,72 72,64 72,50" android:strokeColor="#3F424D" android:strokeWidth="9" android:strokeLineCap="round" android:strokeLineJoin="round" />
+
+        <!-- Route accent (overlay) + arrowhead -->
+        <path android:pathData="M8,50 H28" android:strokeColor="#9184D9" android:strokeWidth="4.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M72,50 H86" android:strokeColor="#9184D9" android:strokeWidth="4.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M28,50 C28,36 40,28 50,28 C60,28 72,36 72,50" android:strokeColor="#9184D9" android:strokeWidth="4.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M28,50 C28,64 40,72 50,72 C60,72 72,64 72,50" android:strokeColor="#9184D9" android:strokeWidth="4.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M82,44 L90,50 L82,56" android:strokeColor="#9184D9" android:strokeWidth="4.4" android:strokeLineCap="round" android:strokeLineJoin="round" />
+
+        <!-- Eye: lens ring, pupil, catch-light -->
+        <path android:pathData="M42.5,50 a7.5,7.5 0 1,0 15,0 a7.5,7.5 0 1,0 -15,0" android:strokeColor="#A7A1DB" android:strokeWidth="3" />
+        <path android:pathData="M46.4,50 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0" android:fillColor="#A7A1DB" />
+        <path android:pathData="M50.9,47.6 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" android:fillColor="#E9E9ED" />
+    </group>
+</vector>

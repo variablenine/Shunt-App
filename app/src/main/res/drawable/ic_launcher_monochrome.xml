@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome layer for Android 13+ themed icons. One-color fallback of the
+     mark (stroke 5, ring r7, pupil r2.6, arrowhead retained). Converted from
+     shunt-mark-mono.svg; the launcher tints this, so the fill color is only a
+     silhouette. Placed inside the same safe-zone transform as the foreground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:translateX="22"
+        android:translateY="22"
+        android:scaleX="0.64"
+        android:scaleY="0.64">
+
+        <path android:pathData="M8,50 H28" android:strokeColor="#000000" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M72,50 H86" android:strokeColor="#000000" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M28,50 C28,36 40,28 50,28 C60,28 72,36 72,50" android:strokeColor="#000000" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M28,50 C28,64 40,72 50,72 C60,72 72,64 72,50" android:strokeColor="#000000" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M82,44 L90,50 L82,56" android:strokeColor="#000000" android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+        <path android:pathData="M43,50 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" android:strokeColor="#000000" android:strokeWidth="5" />
+        <path android:pathData="M47.4,50 a2.6,2.6 0 1,0 5.2,0 a2.6,2.6 0 1,0 -5.2,0" android:fillColor="#000000" />
+    </group>
+</vector>

@@ -1,0 +1,1160 @@
+[
+ {
+  "id": 81698415,
+  "lat": 32.9755264,
+  "lon": -96.7164954,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 81801623,
+  "lat": 32.7476323,
+  "lon": -96.9165969,
+  "tags": {
+   "direction": "105",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 81921327,
+  "lat": 32.629247,
+  "lon": -96.90328,
+  "tags": {
+   "direction": "45",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 1758456906,
+  "lat": 33.1013414,
+  "lon": -97.1086484,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 3253185026,
+  "lat": 32.6786336,
+  "lon": -97.0071852,
+  "tags": {
+   "direction": "265",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 4193264256,
+  "lat": 32.6476181,
+  "lon": -96.8684106,
+  "tags": {
+   "direction": "20",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 4470687130,
+  "lat": 32.6901771,
+  "lon": -96.8571502,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Flock Safety",
+   "operator": "Dallas Police Department"
+  }
+ },
+ {
+  "id": 5390120371,
+  "lat": 32.6071641,
+  "lon": -96.9251546,
+  "tags": {
+   "direction": "20",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 5398219546,
+  "lat": 32.6421545,
+  "lon": -96.891347,
+  "tags": {
+   "direction": "355",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 5622922058,
+  "lat": 33.0727618,
+  "lon": -96.6727138,
+  "tags": {
+   "direction": "235",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 9306655751,
+  "lat": 33.2524753,
+  "lon": -96.9702194,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 10178521212,
+  "lat": 32.7336637,
+  "lon": -97.114416,
+  "tags": {
+   "direction": "60"
+  }
+ },
+ {
+  "id": 10576710255,
+  "lat": 32.8219941,
+  "lon": -97.1230809,
+  "tags": {
+   "direction": "55",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 11019052027,
+  "lat": 33.2546258,
+  "lon": -97.1776961,
+  "tags": {
+   "direction": "150WY39-J963-T96Q-9KE6-9DR9"
+  }
+ },
+ {
+  "id": 11019052028,
+  "lat": 33.2546292,
+  "lon": -97.1776981,
+  "tags": {
+   "direction": "30"
+  }
+ },
+ {
+  "id": 11019052029,
+  "lat": 33.2559704,
+  "lon": -97.177381,
+  "tags": {
+   "direction": "210"
+  }
+ },
+ {
+  "id": 11019052030,
+  "lat": 33.2559721,
+  "lon": -97.177383,
+  "tags": {
+   "direction": "330"
+  }
+ },
+ {
+  "id": 11477356048,
+  "lat": 33.0213147,
+  "lon": -97.2765688,
+  "tags": {
+   "direction": "74"
+  }
+ },
+ {
+  "id": 11477356049,
+  "lat": 33.0230216,
+  "lon": -97.2755494,
+  "tags": {
+   "direction": "100"
+  }
+ },
+ {
+  "id": 11477356050,
+  "lat": 33.0242238,
+  "lon": -97.274488,
+  "tags": {
+   "direction": "100"
+  }
+ },
+ {
+  "id": 11477356051,
+  "lat": 33.0253191,
+  "lon": -97.2734151,
+  "tags": {
+   "direction": "100"
+  }
+ },
+ {
+  "id": 11805581110,
+  "lat": 33.2616925,
+  "lon": -96.7304751,
+  "tags": {
+   "direction": "138-183",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12374945608,
+  "lat": 33.0717271,
+  "lon": -97.0459397,
+  "tags": {
+   "direction": "340",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12374945609,
+  "lat": 33.0721906,
+  "lon": -97.0845893,
+  "tags": {
+   "direction": "355",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12378845170,
+  "lat": 32.9881217,
+  "lon": -97.1696904,
+  "tags": {
+   "direction": "5",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12395431233,
+  "lat": 32.8940455,
+  "lon": -96.6038203,
+  "tags": {
+   "direction": "271",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12405028772,
+  "lat": 32.9983739,
+  "lon": -97.2074179,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12405037433,
+  "lat": 32.9931371,
+  "lon": -97.1918382,
+  "tags": {
+   "direction": "355",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12405067232,
+  "lat": 33.0208835,
+  "lon": -97.2062751,
+  "tags": {
+   "direction": "165",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12405088811,
+  "lat": 33.0152124,
+  "lon": -97.2061576,
+  "tags": {
+   "direction": "50",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12405278068,
+  "lat": 32.989346,
+  "lon": -97.1792857,
+  "tags": {
+   "direction": "255",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12405278069,
+  "lat": 32.9854128,
+  "lon": -97.1695192,
+  "tags": {
+   "direction": "10",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12405278070,
+  "lat": 32.9864001,
+  "lon": -97.1674391,
+  "tags": {
+   "direction": "240",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12406096875,
+  "lat": 32.9081375,
+  "lon": -97.1371622,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Motorola Solutions",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12408562253,
+  "lat": 32.6479383,
+  "lon": -97.1871506,
+  "tags": {
+   "direction": "205",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12408562262,
+  "lat": 32.6465064,
+  "lon": -97.1873501,
+  "tags": {
+   "direction": "30",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12408565367,
+  "lat": 32.6489534,
+  "lon": -97.1878028,
+  "tags": {
+   "direction": "205",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12408589958,
+  "lat": 32.6471009,
+  "lon": -97.1886234,
+  "tags": {
+   "direction": "105",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12408617217,
+  "lat": 32.6479679,
+  "lon": -97.1892507,
+  "tags": {
+   "direction": "35",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12410175209,
+  "lat": 33.1244431,
+  "lon": -96.7326903,
+  "tags": {
+   "direction": "120",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12413423844,
+  "lat": 33.2272554,
+  "lon": -96.7960317,
+  "tags": {
+   "direction": "335",
+   "manufacturer": "Flock Safety",
+   "operator": "Flock Safety"
+  }
+ },
+ {
+  "id": 12414040605,
+  "lat": 33.2186765,
+  "lon": -96.6341277,
+  "tags": {
+   "direction": "60",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12414040606,
+  "lat": 33.2175552,
+  "lon": -96.6323608,
+  "tags": {
+   "direction": "260",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12414040607,
+  "lat": 33.2178625,
+  "lon": -96.6340765,
+  "tags": {
+   "direction": "70",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12426300315,
+  "lat": 32.9097663,
+  "lon": -97.1364282,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Motorola Solutions",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12427925801,
+  "lat": 32.8753931,
+  "lon": -97.1619217,
+  "tags": {
+   "direction": "15",
+   "manufacturer": "Motorola Solutions",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12427925802,
+  "lat": 32.8740376,
+  "lon": -97.1640174,
+  "tags": {
+   "direction": "190",
+   "manufacturer": "Motorola Solutions",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12428092681,
+  "lat": 32.8931159,
+  "lon": -97.1472087,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Motorola Solutions",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12428092682,
+  "lat": 32.8914706,
+  "lon": -97.1486797,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Motorola Solutions",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12428144887,
+  "lat": 32.9924128,
+  "lon": -97.1896719,
+  "tags": {
+   "direction": "265",
+   "manufacturer": "Flock Safety",
+   "operator": "Trophy Club PD"
+  }
+ },
+ {
+  "id": 12428176817,
+  "lat": 33.0815814,
+  "lon": -97.0420547,
+  "tags": {
+   "direction": "320",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12428176818,
+  "lat": 33.0937475,
+  "lon": -97.0424035,
+  "tags": {
+   "direction": "275",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12434560889,
+  "lat": 33.0901724,
+  "lon": -97.0306561,
+  "tags": {
+   "direction": "260",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12441560879,
+  "lat": 32.9037331,
+  "lon": -97.1855266,
+  "tags": {
+   "direction": "65",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12441560880,
+  "lat": 32.9038771,
+  "lon": -97.1823136,
+  "tags": {
+   "direction": "240",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12444979520,
+  "lat": 32.6778657,
+  "lon": -97.009401,
+  "tags": {
+   "direction": "5",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12445022837,
+  "lat": 32.6778538,
+  "lon": -97.0078592,
+  "tags": {
+   "direction": "355",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12445222480,
+  "lat": 32.7495832,
+  "lon": -96.9162445,
+  "tags": {
+   "direction": "80",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12456344431,
+  "lat": 32.9118938,
+  "lon": -97.1366336,
+  "tags": {
+   "direction": "240",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12456873038,
+  "lat": 32.8925121,
+  "lon": -97.184989,
+  "tags": {
+   "direction": "70",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12461598382,
+  "lat": 32.8407729,
+  "lon": -97.2396016,
+  "tags": {
+   "direction": "245",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12463727953,
+  "lat": 33.0540624,
+  "lon": -96.8652774,
+  "tags": {
+   "direction": "210",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12465686098,
+  "lat": 33.0593576,
+  "lon": -96.8627938,
+  "tags": {
+   "direction": "45",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12465699489,
+  "lat": 33.0819507,
+  "lon": -96.8519931,
+  "tags": {
+   "direction": "115",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12465709019,
+  "lat": 33.0779851,
+  "lon": -96.8574074,
+  "tags": {
+   "direction": "215",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12465713759,
+  "lat": 33.0723172,
+  "lon": -96.8578921,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12467899543,
+  "lat": 32.9037271,
+  "lon": -97.1939523,
+  "tags": {
+   "direction": "190",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12467899544,
+  "lat": 32.8620729,
+  "lon": -97.1884157,
+  "tags": {
+   "direction": "255",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12468010718,
+  "lat": 32.90363,
+  "lon": -97.1884141,
+  "tags": {
+   "direction": "170",
+   "manufacturer": "Flock Safety",
+   "operator": "Kroger"
+  }
+ },
+ {
+  "id": 12469907022,
+  "lat": 32.9956535,
+  "lon": -96.9929479,
+  "tags": {
+   "direction": "65",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12469921504,
+  "lat": 32.9231797,
+  "lon": -97.1865776,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12474102670,
+  "lat": 33.0774579,
+  "lon": -96.8660488,
+  "tags": {
+   "direction": "340",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12474121344,
+  "lat": 33.0773775,
+  "lon": -96.8570606,
+  "tags": {
+   "direction": "155",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12474133068,
+  "lat": 33.0734513,
+  "lon": -96.8699354,
+  "tags": {
+   "direction": "135",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12474137413,
+  "lat": 33.073407,
+  "lon": -96.8648937,
+  "tags": {
+   "direction": "85",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12474138401,
+  "lat": 33.0746661,
+  "lon": -96.8668581,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Flock Safety",
+   "operator": "The Colony PD"
+  }
+ },
+ {
+  "id": 12481925797,
+  "lat": 32.8412335,
+  "lon": -96.7700684,
+  "tags": {
+   "direction": "325",
+   "manufacturer": "Flock Safety",
+   "operator": "Dallas Police Department"
+  }
+ },
+ {
+  "id": 12481925798,
+  "lat": 32.8412279,
+  "lon": -96.7700624,
+  "tags": {
+   "direction": "140",
+   "manufacturer": "Flock Safety",
+   "operator": "Dallas Police Department"
+  }
+ },
+ {
+  "id": 12481927600,
+  "lat": 32.8364003,
+  "lon": -96.7612543,
+  "tags": {
+   "direction": "65",
+   "manufacturer": "Flock Safety",
+   "operator": "Dallas Police Department"
+  }
+ },
+ {
+  "id": 12487584777,
+  "lat": 32.8804753,
+  "lon": -97.1728105,
+  "tags": {
+   "direction": "60",
+   "manufacturer": "Flock Safety",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12491721881,
+  "lat": 32.8666794,
+  "lon": -97.1105241,
+  "tags": {
+   "direction": "255",
+   "manufacturer": "Flock Safety",
+   "operator": "Colleyville Police Department"
+  }
+ },
+ {
+  "id": 12491728202,
+  "lat": 32.8814991,
+  "lon": -97.1007519,
+  "tags": {
+   "direction": "250",
+   "manufacturer": "Flock Safety",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12491728203,
+  "lat": 32.8927205,
+  "lon": -97.1255601,
+  "tags": {
+   "direction": "255",
+   "manufacturer": "Flock Safety",
+   "operator": "Colleyville PD"
+  }
+ },
+ {
+  "id": 12492686423,
+  "lat": 33.1527233,
+  "lon": -96.8412151,
+  "tags": {
+   "direction": "300",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497444387,
+  "lat": 32.9930101,
+  "lon": -97.2283839,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497446459,
+  "lat": 33.1309351,
+  "lon": -97.2261844,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497446460,
+  "lat": 33.1185904,
+  "lon": -97.2461554,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497451967,
+  "lat": 33.1184601,
+  "lon": -97.226854,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497451970,
+  "lat": 33.0758802,
+  "lon": -97.1310942,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497452395,
+  "lat": 33.1528838,
+  "lon": -96.8396893,
+  "tags": {
+   "direction": "325",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497470561,
+  "lat": 33.1046164,
+  "lon": -97.1406969,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497470562,
+  "lat": 32.9924386,
+  "lon": -97.2240698,
+  "tags": {
+   "direction": "300",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497476111,
+  "lat": 33.1236175,
+  "lon": -97.2262514,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497476112,
+  "lat": 33.1310737,
+  "lon": -97.2357403,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497476185,
+  "lat": 33.0746315,
+  "lon": -97.083563,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497484754,
+  "lat": 32.9930621,
+  "lon": -97.233221,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497484829,
+  "lat": 32.9932273,
+  "lon": -97.2278966,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497489517,
+  "lat": 33.0304038,
+  "lon": -97.2541021,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497489529,
+  "lat": 33.0722362,
+  "lon": -97.0856889,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497494202,
+  "lat": 33.0732114,
+  "lon": -97.0836761,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12497494888,
+  "lat": 33.1008198,
+  "lon": -97.2354398,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety",
+   "operator": "Northlake PD"
+  }
+ },
+ {
+  "id": 12497500392,
+  "lat": 33.100724,
+  "lon": -97.229876,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety",
+   "operator": "Northlake PD"
+  }
+ },
+ {
+  "id": 12505552100,
+  "lat": 33.1230635,
+  "lon": -97.2263791,
+  "tags": {
+   "direction": "160",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516836932,
+  "lat": 33.1003316,
+  "lon": -97.2198993,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516837757,
+  "lat": 33.0738948,
+  "lon": -97.1279022,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516837857,
+  "lat": 33.0775822,
+  "lon": -97.1308732,
+  "tags": {
+   "direction": "230",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516842874,
+  "lat": 33.0766374,
+  "lon": -97.1311494,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516848548,
+  "lat": 33.0768713,
+  "lon": -97.1311923,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516860284,
+  "lat": 33.0702944,
+  "lon": -97.0868517,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516871845,
+  "lat": 33.0743192,
+  "lon": -97.126903,
+  "tags": {
+   "direction": "210",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12516874643,
+  "lat": 33.1107881,
+  "lon": -97.2263544,
+  "tags": {
+   "direction": "130",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517032582,
+  "lat": 33.1414779,
+  "lon": -97.2605514,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517032583,
+  "lat": 33.0852702,
+  "lon": -97.250026,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517032592,
+  "lat": 33.117696,
+  "lon": -97.253716,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517045152,
+  "lat": 33.0928608,
+  "lon": -97.23643,
+  "tags": {
+   "direction": "270",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517073549,
+  "lat": 33.1314397,
+  "lon": -97.2602531,
+  "tags": {
+   "direction": "330",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517075728,
+  "lat": 33.1017764,
+  "lon": -97.2673791,
+  "tags": {
+   "direction": "0",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517078544,
+  "lat": 33.0876078,
+  "lon": -97.2643892,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517079503,
+  "lat": 33.1368284,
+  "lon": -97.2663507,
+  "tags": {
+   "direction": "90",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12517080032,
+  "lat": 33.1184642,
+  "lon": -97.2473674,
+  "tags": {
+   "direction": "180",
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 81651741,
+  "lat": 32.815059,
+  "lon": -96.7860231,
+  "tags": {
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 82546784,
+  "lat": 32.877122,
+  "lon": -97.287827,
+  "tags": {}
+ },
+ {
+  "id": 12444949642,
+  "lat": 32.6793681,
+  "lon": -97.007055,
+  "tags": {
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12681136326,
+  "lat": 33.0709959,
+  "lon": -96.6735973,
+  "tags": {
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12681970222,
+  "lat": 33.1001119,
+  "lon": -96.6623587,
+  "tags": {
+   "manufacturer": "Flock Safety"
+  }
+ },
+ {
+  "id": 12737866665,
+  "lat": 32.6852041,
+  "lon": -96.9854459,
+  "tags": {}
+ },
+ {
+  "id": 13050213905,
+  "lat": 33.0058989,
+  "lon": -97.2173933,
+  "tags": {}
+ }
+]

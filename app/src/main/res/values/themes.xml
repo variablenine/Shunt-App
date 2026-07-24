@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Compose owns all in-app styling; this platform theme only governs the
+      window before Compose draws. NoActionBar removes the default OS title bar
+      (which otherwise showed "Shunt" over the map), and the dark ground avoids
+      a white flash on launch, matching the Nocturne palette.
+    -->
+    <style name="Theme.Shunt" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#161826</item>
+        <item name="android:statusBarColor">#0F1018</item>
+        <item name="android:navigationBarColor">#0F1018</item>
+    </style>
+</resources>
