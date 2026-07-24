@@ -14,6 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -58,7 +59,7 @@ class PlanViewModelTest {
         scope: kotlinx.coroutines.CoroutineScope,
         suggestions: List<Suggestion> = emptyList(),
         outcome: PlanOutcome = routes(fastest),
-        planner: RoutePlanner = RoutePlanner { _, _ -> outcome },
+        planner: RoutePlanner = RoutePlanner { _, _, _ -> outcome },
         tileDownloader: TileDownloader = TileDownloader { _, _, _ -> true },
         originValue: GeoPoint? = origin,
         freshness: Freshness = Freshness.NETWORK,
@@ -99,7 +100,7 @@ class PlanViewModelTest {
     fun `search failure surfaces instead of blanking silently`() = runTest {
         val model = PlanViewModel(
             search = { _, _ -> throw java.io.IOException("offline") },
-            planner = { _, _ -> routes(fastest) },
+            planner = { _, _, _ -> routes(fastest) },
             tileDownloader = { _, _, _ -> true },
             location = { origin },
             cameras = { Freshness.NETWORK },
@@ -149,6 +150,27 @@ class PlanViewModelTest {
     }
 
     @Test
+    fun `planning progress reaches the solving phase for the progress bar`() = runTest {
+        val planner = RoutePlanner { _, _, onProgress ->
+            onProgress(0.3f, "Planning routes")
+            onProgress(0.85f, "Checking the final route for cameras")
+            routes(fastest)
+        }
+        val seen = mutableListOf<Pair<Float, String>>()
+        val model = vm(this, suggestions = listOf(Suggestion("X", dest, "place")), planner = planner)
+        model.onQueryChange("X"); advanceUntilIdle()
+        // Capture the solving phase as it updates.
+        val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined).launch {
+            model.state.collect { s ->
+                (s.phase as? Phase.Solving)?.let { seen += it.progress to it.step }
+            }
+        }
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        job.cancel()
+        assertTrue(seen.any { it.first == 0.85f }, "progress updates were: $seen")
+    }
+
+    @Test
     fun `a route passing cameras is carried on the chosen option`() = runTest {
         val store = InMemoryFavorites(Favorites(home = Destination("Home", dest)))
         val model = vm(this, outcome = routes(withCameras), favoritesStore = store)
@@ -174,7 +196,7 @@ class PlanViewModelTest {
     @Test
     fun `a missing tile is downloaded automatically, then routes without a prompt`() = runTest {
         var calls = 0
-        val planner = RoutePlanner { _, _ ->
+        val planner = RoutePlanner { _, _, _ ->
             calls++
             if (calls == 1) PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) else routes(fastest)
         }
@@ -196,7 +218,7 @@ class PlanViewModelTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            planner = { _, _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> false },
         )
         model.onQueryChange("X"); advanceUntilIdle()
@@ -213,7 +235,7 @@ class PlanViewModelTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            planner = { _, _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> true },
         )
         model.onQueryChange("X"); advanceUntilIdle()

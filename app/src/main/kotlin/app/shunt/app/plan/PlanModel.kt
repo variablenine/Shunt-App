@@ -54,8 +54,15 @@ sealed interface Phase {
     /** Entering a destination. */
     data object Browsing : Phase
 
-    /** Routing running for [destination]. */
-    data class Solving(val destination: Destination) : Phase
+    /**
+     * Routing running for [destination]. [progress] is 0f..1f and [step] names
+     * the current stage, so a long cross-state plan shows real movement.
+     */
+    data class Solving(
+        val destination: Destination,
+        val progress: Float = 0f,
+        val step: String = "Planning your route",
+    ) : Phase
 
     /**
      * The offline map tile for this trip isn't downloaded yet. We route fully

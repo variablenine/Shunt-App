@@ -20,7 +20,9 @@ import app.shunt.solver.brouter.BrouterTileSource
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
+import app.shunt.solver.search.PlaceSearch
 import app.shunt.tesla.FakeVehicleNavClient
 import app.shunt.tesla.TessieVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
@@ -47,8 +49,14 @@ class AppContainer(context: Context) {
     )
 
     // Keyless, OpenStreetMap-based destination search (no account, no card).
-    // Routing is native/offline via BRouter — the app depends on no HERE API.
+    // Photon drives the typeahead; Nominatim (fresher and more complete, but
+    // rate limited and not for autocomplete) rescues queries Photon can't find.
     private val photonSearch = PhotonSearch(http)
+    private val nominatimSearch = NominatimSearch(http)
+    private val placeSearch = PlaceSearch(
+        primary = { query, at -> photonSearch.suggest(query, at) },
+        fallback = { query, at -> nominatimSearch.suggest(query, at) },
+    )
 
     /** BRouter's offline tiles + profile live under the app's private storage. */
     private val brouterDir = File(appContext.filesDir, "brouter")
@@ -133,9 +141,9 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
-        search = SuggestionSearch { query, at -> photonSearch.suggest(query, at) },
-        planner = RoutePlanner { origin, destination ->
-            brouterPlanner.plan(origin, destination).also { outcome ->
+        search = SuggestionSearch { query, at -> placeSearch.suggest(query, at) },
+        planner = RoutePlanner { origin, destination, onProgress ->
+            brouterPlanner.plan(origin, destination, onProgress).also { outcome ->
                 // Keep the tiles we actually route through fresh against eviction.
                 if (outcome is app.shunt.solver.brouter.PlanOutcome.Routes) {
                     val bbox = BoundingBox.of(listOf(origin, destination))

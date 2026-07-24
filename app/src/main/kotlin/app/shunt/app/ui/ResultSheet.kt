@@ -1,5 +1,6 @@
 package app.shunt.app.ui
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -76,7 +78,7 @@ fun ResultSheet(
                 .padding(20.dp),
         ) {
             when (phase) {
-                is Phase.Solving -> SolvingContent(phase.destination)
+                is Phase.Solving -> SolvingContent(phase)
                 is Phase.NeedTile -> NeedTileContent(phase, onDownloadTile, onDismiss)
                 is Phase.Solved -> SolvedContent(phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork)
                 is Phase.Pushing -> PushingContent(phase.destination)
@@ -90,12 +92,28 @@ fun ResultSheet(
 }
 
 @Composable
-private fun SolvingContent(destination: Destination) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-        Spacer(Modifier.width(14.dp))
-        Text("Finding routes to ${destination.title}…", style = MaterialTheme.typography.bodyLarge)
-    }
+private fun SolvingContent(phase: Phase.Solving) {
+    Text(
+        "Finding routes to ${phase.destination.title}…",
+        style = MaterialTheme.typography.bodyLarge,
+    )
+    Spacer(Modifier.height(12.dp))
+    // A determinate bar: a cross-state plan runs several routing passes over a
+    // wide camera set, so an unexplained spinner reads as a hang.
+    val progress by animateFloatAsState(
+        targetValue = phase.progress.coerceIn(0f, 1f),
+        label = "plan-progress",
+    )
+    LinearProgressIndicator(
+        progress = { progress },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        phase.step,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

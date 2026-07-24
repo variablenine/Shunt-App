@@ -82,6 +82,65 @@ class BrouterPlannerTest {
     }
 
     @Test
+    fun `a camera revealed only by the final re-route is still counted`() = runTest {
+        // Regression: the refinement loop could exit on its pass cap immediately
+        // after re-routing, leaving the camera set narrower than the routes it
+        // labels. Counting against it printed "camera-free" over a route that
+        // drives straight through a camera's field of view.
+        //
+        // Each re-plan sends "fewest cameras" a little further north, so the loop
+        // always exits on its cap holding routes newer than the camera set. The
+        // only camera sits on that final leg — invisible to every earlier fetch.
+        val onFinalLeg = Camera(id = 7, location = GeoPoint(39.30, -98.0))
+        val fastLine = listOf(origin, destination)
+        var plans = 0
+
+        val planner = BrouterPlanner(
+            route = { _, _, _ ->
+                plans++
+                val wander = when (plans) {
+                    1 -> GeoPoint(39.10, -98.0)
+                    2 -> GeoPoint(39.20, -98.0)
+                    else -> onFinalLeg.location // the final re-route reaches the camera
+                }
+                listOf(
+                    BrouterRoute(RouteChoice.FASTEST, fastLine, 2_000, 180, 0, 0),
+                    BrouterRoute(
+                        RouteChoice.FEWEST_CAMERAS,
+                        listOf(origin, wander, destination), 90_000, 5_000, 0, 0,
+                    ),
+                )
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { bbox -> listOf(onFinalLeg).filter { bbox.contains(it.location) } },
+        )
+
+        val outcome = planner.plan(origin, destination)
+        assertIs<PlanOutcome.Routes>(outcome)
+        val fewest = outcome.options.first { it.choice == RouteChoice.FEWEST_CAMERAS }
+        assertEquals(
+            1, fewest.camerasPassed,
+            "the camera on the FINAL route must be counted — never labeled camera-free",
+        )
+    }
+
+    @Test
+    fun `a camera data failure refuses to label rather than claiming camera-free`() = runTest {
+        // Regression: a thrown camera lookup became an empty list, so every route
+        // was confidently labeled "camera-free" — the worst possible failure mode.
+        val planner = BrouterPlanner(
+            route = { _, _, _ ->
+                listOf(BrouterRoute(RouteChoice.FASTEST, listOf(origin, destination), 2_000, 180, 0, 0))
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { throw java.io.IOException("camera CDN unreachable") },
+        )
+        val outcome = planner.plan(origin, destination)
+        val failed = assertIs<PlanOutcome.Failed>(outcome, "must not present routes it cannot vet")
+        assertTrue("camera data" in failed.reason.lowercase(), "reason was: ${failed.reason}")
+    }
+
+    @Test
     fun `an empty route list is a failure, not an empty chooser`() = runTest {
         val planner = BrouterPlanner(
             route = { _, _, _ -> emptyList() },

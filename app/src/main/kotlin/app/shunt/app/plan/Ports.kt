@@ -16,9 +16,17 @@ fun interface SuggestionSearch {
     suspend fun suggest(query: String, at: GeoPoint): List<Suggestion>
 }
 
-/** Native, offline camera-aware routing (BRouter) — returns chooseable options. */
+/**
+ * Native, offline camera-aware routing (BRouter) — returns chooseable options.
+ * [onProgress] reports 0f..1f with a label so a long plan can show real
+ * movement rather than an unexplained wait.
+ */
 fun interface RoutePlanner {
-    suspend fun plan(origin: GeoPoint, destination: GeoPoint): PlanOutcome
+    suspend fun plan(
+        origin: GeoPoint,
+        destination: GeoPoint,
+        onProgress: (Float, String) -> Unit,
+    ): PlanOutcome
 }
 
 /**

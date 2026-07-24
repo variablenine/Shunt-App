@@ -52,14 +52,27 @@ class BrouterPlanner(
     /** Optional on-disk/engine state summary, appended to a no-route failure. */
     private val diagnostics: () -> String? = { null },
 ) {
-    suspend fun plan(origin: GeoPoint, destination: GeoPoint): PlanOutcome {
+    /**
+     * Plan a trip. [onProgress] reports coarse 0f..1f progress with a label, so
+     * a long cross-state plan (several routing passes over a wide camera set)
+     * can show real movement instead of an unexplained wait.
+     */
+    suspend fun plan(
+        origin: GeoPoint,
+        destination: GeoPoint,
+        onProgress: (Float, String) -> Unit = { _, _ -> },
+    ): PlanOutcome {
         val baseBbox = BoundingBox.of(listOf(origin, destination)).expand(bboxMarginMeters)
 
         val missing = missingTiles(baseBbox)
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
 
         var cameraBbox = baseBbox
-        var cameras = runCatching { camerasIn(cameraBbox) }.getOrDefault(emptyList())
+        onProgress(0.1f, "Finding cameras nearby")
+        // Camera data is safety-critical: a failure here must NEVER be treated as
+        // "no cameras," which would label every route camera-free.
+        var cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
+        onProgress(0.3f, "Planning routes")
         var routes = runRoutes(origin, destination, cameras)
             ?: return PlanOutcome.Failed("Routing failed.")
         if (routes.isEmpty()) return noRoute()
@@ -72,15 +85,27 @@ class BrouterPlanner(
         // area we've looked at (or we hit the cap).
         var passes = 0
         while (passes++ < MAX_REFINEMENT_PASSES) {
-            val routeBbox = BoundingBox.of(routes.flatMap { it.polyline }).expand(bboxMarginMeters)
+            val routeBbox = routeBbox(routes)
             if (cameraBbox.contains(routeBbox)) break
+            onProgress(0.3f + 0.25f * passes, "Checking cameras along the detour")
             cameraBbox = cameraBbox.union(routeBbox)
-            val widened = runCatching { camerasIn(cameraBbox) }.getOrDefault(cameras)
-            if (widened.size <= cameras.size) break // nothing new to avoid
+            val widened = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
             cameras = widened
             val replanned = runRoutes(origin, destination, cameras) ?: break
             if (replanned.isEmpty()) break
             routes = replanned
+        }
+
+        // The counting set must PROVABLY cover the routes being labeled. The
+        // loop above can exit (on the pass cap) having just re-routed, leaving
+        // `cameras` narrower than the final routes — counting against it would
+        // silently miss cameras and print "camera-free" over a route that drives
+        // straight through one. Verify coverage and top up before labeling; if
+        // we can't, refuse to label rather than under-report.
+        onProgress(0.85f, "Checking the final route for cameras")
+        val finalBbox = routeBbox(routes)
+        if (!cameraBbox.contains(finalBbox)) {
+            cameras = fetchCameras(cameraBbox.union(finalBbox)) ?: return cameraDataUnavailable()
         }
 
         val fastest = routes.first()
@@ -101,6 +126,19 @@ class BrouterPlanner(
         }
         return PlanOutcome.Routes(options)
     }
+
+    /** The area the given routes actually cover, padded by the standard margin. */
+    private fun routeBbox(routes: List<BrouterRoute>): BoundingBox =
+        BoundingBox.of(routes.flatMap { it.polyline }).expand(bboxMarginMeters)
+
+    /** Cameras in [bbox], or null if the lookup failed (never an empty stand-in). */
+    private suspend fun fetchCameras(bbox: BoundingBox): List<Camera>? =
+        runCatching { camerasIn(bbox) }.getOrNull()
+
+    private fun cameraDataUnavailable(): PlanOutcome = PlanOutcome.Failed(
+        "Couldn't load camera data for this area, so Shunt can't tell you which " +
+            "cameras a route passes. Check your connection and try again.",
+    )
 
     /** Route with the given cameras as field-of-view nogos; null if the engine threw. */
     private suspend fun runRoutes(

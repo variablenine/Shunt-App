@@ -107,8 +107,19 @@ class PlanViewModel(
             _state.update { it.copy(phase = Phase.Error("No starting location. Enable location or set Home.")) }
             return
         }
-        val outcome = runCatching { planner.plan(origin, destination.location) }
-            .getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
+        val outcome = runCatching {
+            planner.plan(origin, destination.location) { progress, step ->
+                // Only advance the bar while this plan is still the live phase.
+                _state.update { state ->
+                    val solving = state.phase as? Phase.Solving
+                    if (solving?.destination == destination) {
+                        state.copy(phase = solving.copy(progress = progress, step = step))
+                    } else {
+                        state
+                    }
+                }
+            }
+        }.getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
         when (outcome) {
             is PlanOutcome.Routes ->
                 _state.update { it.copy(phase = Phase.Solved(destination, outcome.options)) }
