@@ -56,7 +56,6 @@ class MainActivity : ComponentActivity() {
                 val vm: PlanViewModel = viewModel(factory = container.planViewModelFactory())
                 val state by vm.state.collectAsStateWithLifecycle()
                 val driveStatus by container.driveStatus.collectAsStateWithLifecycle()
-                val storedHereKey by container.settings.hereApiKey.collectAsStateWithLifecycle()
 
                 // Refresh camera data on open; schedule no background work.
                 LaunchedEffect(Unit) { vm.onOpen() }
@@ -104,13 +103,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // storedHereKey is read so recomposition re-evaluates the flag.
-                val hereKeyMissing = remember(storedHereKey) { container.hereKeyMissing() }
-
                 PlanScreen(
                     state = state,
-                    hereKeyMissing = hereKeyMissing,
-                    hereApiKey = storedHereKey,
                     cameraViewportFetcher = container.viewportCameras,
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,
@@ -123,7 +117,6 @@ class MainActivity : ComponentActivity() {
                         onDismiss = vm::onDismissResult,
                         onSaveHome = { vm.onSaveFavorite(FavoriteSlot.HOME, it) },
                         onSaveWork = { vm.onSaveFavorite(FavoriteSlot.WORK, it) },
-                        onSaveHereKey = container.settings::setHereApiKey,
                     ),
                 )
             }

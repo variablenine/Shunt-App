@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -59,11 +61,13 @@ fun ResultSheet(
     onSaveHome: (Destination) -> Unit,
     onSaveWork: (Destination) -> Unit,
 ) {
+    // Never let the sheet cover the whole screen — keep the route visible above it.
+    val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
     Surface(
         tonalElevation = 3.dp,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().heightIn(max = maxSheetHeight),
     ) {
         Column(
             modifier = Modifier
@@ -262,7 +266,15 @@ private fun SelectedRouteDetail(option: PlannedRoute) {
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Spacer(Modifier.height(8.dp))
-            option.passedCameras.forEachIndexed { i, camera -> CameraRow(i + 1, camera) }
+            // Cap the list so a camera-heavy route doesn't push everything (and
+            // the map) off-screen — it scrolls within this bounded box instead.
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 190.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                option.passedCameras.forEachIndexed { i, camera -> CameraRow(i + 1, camera) }
+            }
         }
     }
 }

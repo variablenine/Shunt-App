@@ -7,7 +7,7 @@ import app.shunt.solver.brouter.RouteChoice
 import app.shunt.solver.brouter.TileId
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.Freshness
-import app.shunt.solver.here.Suggestion
+import app.shunt.solver.search.Suggestion
 import app.shunt.tesla.FakeVehicleNavClient
 import app.shunt.tesla.PushResult
 import kotlin.test.assertEquals
