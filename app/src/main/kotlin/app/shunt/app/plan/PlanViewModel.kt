@@ -31,7 +31,7 @@ class PlanViewModel(
     private val favoritesStore: FavoritesStore,
     private val vehicle: VehicleNavClient,
     private val scope: CoroutineScope? = null,
-    private val searchDebounceMillis: Long = 250,
+    private val searchDebounceMillis: Long = 350,
 ) : ViewModel() {
 
     private val workScope: CoroutineScope get() = scope ?: viewModelScope
@@ -54,18 +54,23 @@ class PlanViewModel(
         _state.update { it.copy(query = query) }
         searchJob?.cancel()
         if (query.isBlank()) {
-            _state.update { it.copy(suggestions = emptyList(), searchFailed = false) }
+            _state.update { it.copy(suggestions = emptyList(), searching = false, searchFailed = false) }
             return
         }
+        // Mark searching immediately so the UI shows progress, not a stale blank,
+        // during the debounce + the geocoder round-trip (~1s on the public host).
+        _state.update { it.copy(searching = true, searchFailed = false) }
         searchJob = workScope.launch {
             delay(searchDebounceMillis)
             val at = location.currentOrigin() ?: DEFAULT_BIAS
             val outcome = runCatching { search.suggest(query, at) }
             _state.update { state ->
                 outcome.fold(
-                    onSuccess = { results -> state.copy(suggestions = results, searchFailed = false) },
+                    onSuccess = { results ->
+                        state.copy(suggestions = results, searching = false, searchFailed = false)
+                    },
                     // Don't silently blank: tell the user search couldn't be reached.
-                    onFailure = { state.copy(suggestions = emptyList(), searchFailed = true) },
+                    onFailure = { state.copy(suggestions = emptyList(), searching = false, searchFailed = true) },
                 )
             }
         }

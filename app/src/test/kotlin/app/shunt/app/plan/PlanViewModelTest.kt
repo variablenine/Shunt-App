@@ -125,6 +125,18 @@ class PlanViewModelTest {
     }
 
     @Test
+    fun `an empty result set is a settled no-match, not a failure or a spinner`() = runTest {
+        // The geocoder reached fine but the map data has no such place: the UI
+        // shows "no matching places", not "searching" and not "couldn't reach".
+        val model = vm(this, suggestions = emptyList())
+        model.onQueryChange("nowheresville"); advanceUntilIdle()
+        val s = model.state.value
+        assertTrue(s.suggestions.isEmpty())
+        assertTrue(!s.searching, "search settled")
+        assertTrue(!s.searchFailed, "reachable, just no matches")
+    }
+
+    @Test
     fun `selecting a suggestion routes to options`() = runTest {
         val model = vm(this, suggestions = listOf(Suggestion("Lambeau Field", dest, "place")))
         model.onQueryChange("Lambeau"); advanceUntilIdle()

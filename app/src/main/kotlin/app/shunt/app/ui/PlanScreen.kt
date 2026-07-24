@@ -139,13 +139,17 @@ private fun SearchAndFavorites(state: PlanUiState, actions: PlanActions) {
                         HorizontalDivider()
                     }
                 }
+            } else if (state.searching) {
+                SearchStatus("Searching…")
             } else if (state.searchFailed && state.query.isNotBlank()) {
-                Text(
+                SearchStatus(
                     "Couldn't reach search — check your connection.",
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
+            } else if (state.query.isNotBlank()) {
+                // Distinguish "no such place in the map data" from a silent blank,
+                // so an unmatched query reads as a result, not a broken search.
+                SearchStatus("No matching places found. Try a fuller name or a nearby town.")
             }
 
             val favorites = state.favorites
@@ -162,6 +166,16 @@ private fun SearchAndFavorites(state: PlanUiState, actions: PlanActions) {
             }
         }
     }
+}
+
+@Composable
+private fun SearchStatus(message: String, color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Text(
+        message,
+        modifier = Modifier.padding(vertical = 8.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = color,
+    )
 }
 
 @Composable
