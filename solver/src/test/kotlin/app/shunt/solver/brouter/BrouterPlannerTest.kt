@@ -57,6 +57,31 @@ class BrouterPlannerTest {
     }
 
     @Test
+    fun `a camera along a detour outside the base box is fetched and counted`() = runTest {
+        // A camera ~11 km north — outside bbox(origin, destination) + margin.
+        val farCamera = Camera(id = 7, location = GeoPoint(39.1, -98.0))
+        val fastLine = listOf(origin, destination)
+        val detour = listOf(origin, farCamera.location, destination) // "fewest" wanders north
+
+        val planner = BrouterPlanner(
+            route = { _, _, _ ->
+                listOf(
+                    BrouterRoute(RouteChoice.FASTEST, fastLine, 2_000, 180, 0, 0),
+                    BrouterRoute(RouteChoice.FEWEST_CAMERAS, detour, 24_000, 1_400, 0, 0),
+                )
+            },
+            missingTiles = { emptyList() },
+            // The camera is only "found" once the search box widens to the detour.
+            camerasIn = { bbox -> if (bbox.contains(farCamera.location)) listOf(farCamera) else emptyList() },
+        )
+        val outcome = planner.plan(origin, destination)
+        assertIs<PlanOutcome.Routes>(outcome)
+        val (fast, fewest) = outcome.options
+        assertEquals(0, fast.camerasPassed, "the straight route is nowhere near the far camera")
+        assertEquals(1, fewest.camerasPassed, "the detour drives through it — must be caught")
+    }
+
+    @Test
     fun `an empty route list is a failure, not an empty chooser`() = runTest {
         val planner = BrouterPlanner(
             route = { _, _, _ -> emptyList() },

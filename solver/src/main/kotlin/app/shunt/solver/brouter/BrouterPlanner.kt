@@ -53,18 +53,34 @@ class BrouterPlanner(
     private val diagnostics: () -> String? = { null },
 ) {
     suspend fun plan(origin: GeoPoint, destination: GeoPoint): PlanOutcome {
-        val bbox = BoundingBox.of(listOf(origin, destination)).expand(bboxMarginMeters)
+        val baseBbox = BoundingBox.of(listOf(origin, destination)).expand(bboxMarginMeters)
 
-        val missing = missingTiles(bbox)
+        val missing = missingTiles(baseBbox)
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
 
-        val cameras = runCatching { camerasIn(bbox) }.getOrDefault(emptyList())
-        val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
-        val routes = runCatching { route(origin, destination, visions) }
-            .getOrElse { e -> return PlanOutcome.Failed("Routing failed: ${e.message}") }
-        if (routes.isEmpty()) {
-            val detail = diagnostics()?.takeIf { it.isNotBlank() }?.let { "\n\n[$it]" } ?: ""
-            return PlanOutcome.Failed("No route found — the offline map for this area may be incomplete.$detail")
+        var cameraBbox = baseBbox
+        var cameras = runCatching { camerasIn(cameraBbox) }.getOrDefault(emptyList())
+        var routes = runRoutes(origin, destination, cameras)
+            ?: return PlanOutcome.Failed("Routing failed.")
+        if (routes.isEmpty()) return noRoute()
+
+        // The avoidance options can detour far outside the origin→destination
+        // box, into areas we never fetched cameras for — so a long "fewest
+        // cameras" route would drive through (and mislabel as camera-free) any
+        // camera along the detour. Widen the camera set to cover the actual
+        // routes and re-plan, iterating until the routes no longer escape the
+        // area we've looked at (or we hit the cap).
+        var passes = 0
+        while (passes++ < MAX_REFINEMENT_PASSES) {
+            val routeBbox = BoundingBox.of(routes.flatMap { it.polyline }).expand(bboxMarginMeters)
+            if (cameraBbox.contains(routeBbox)) break
+            cameraBbox = cameraBbox.union(routeBbox)
+            val widened = runCatching { camerasIn(cameraBbox) }.getOrDefault(cameras)
+            if (widened.size <= cameras.size) break // nothing new to avoid
+            cameras = widened
+            val replanned = runRoutes(origin, destination, cameras) ?: break
+            if (replanned.isEmpty()) break
+            routes = replanned
         }
 
         val fastest = routes.first()
@@ -86,8 +102,26 @@ class BrouterPlanner(
         return PlanOutcome.Routes(options)
     }
 
+    /** Route with the given cameras as field-of-view nogos; null if the engine threw. */
+    private suspend fun runRoutes(
+        origin: GeoPoint,
+        destination: GeoPoint,
+        cameras: List<Camera>,
+    ): List<BrouterRoute>? {
+        val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
+        return runCatching { route(origin, destination, visions) }.getOrNull()
+    }
+
+    private fun noRoute(): PlanOutcome {
+        val detail = diagnostics()?.takeIf { it.isNotBlank() }?.let { "\n\n[$it]" } ?: ""
+        return PlanOutcome.Failed("No route found — the offline map for this area may be incomplete.$detail")
+    }
+
     companion object {
         /** Pad the origin→destination box so an avoidance detour stays covered. */
         const val ROUTE_BBOX_MARGIN_METERS = 3_000.0
+
+        /** How many times to widen the camera area to cover a detouring route. */
+        private const val MAX_REFINEMENT_PASSES = 2
     }
 }

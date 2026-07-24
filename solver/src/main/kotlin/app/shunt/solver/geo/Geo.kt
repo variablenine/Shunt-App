@@ -32,6 +32,19 @@ data class BoundingBox(
         minLat <= other.maxLat && maxLat >= other.minLat &&
             minLon <= other.maxLon && maxLon >= other.minLon
 
+    /** True if this box fully encloses [other]. */
+    fun contains(other: BoundingBox): Boolean =
+        minLat <= other.minLat && maxLat >= other.maxLat &&
+            minLon <= other.minLon && maxLon >= other.maxLon
+
+    /** The smallest box enclosing both this and [other]. */
+    fun union(other: BoundingBox): BoundingBox = BoundingBox(
+        min(minLat, other.minLat),
+        min(minLon, other.minLon),
+        max(maxLat, other.maxLat),
+        max(maxLon, other.maxLon),
+    )
+
     /** Expand every edge outward by [meters]. */
     fun expand(meters: Double): BoundingBox {
         val dLat = meters / METERS_PER_DEGREE_LAT
