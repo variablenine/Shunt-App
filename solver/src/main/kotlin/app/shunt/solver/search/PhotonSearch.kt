@@ -1,6 +1,7 @@
 package app.shunt.solver.search
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.geo.haversineMeters
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,7 +23,7 @@ class PhotonSearch(
     private val http: OkHttpClient,
     private val baseUrl: String = "https://photon.komoot.io",
 ) {
-    suspend fun suggest(query: String, at: GeoPoint, limit: Int = 8): List<Suggestion> {
+    suspend fun suggest(query: String, at: GeoPoint, limit: Int = 10): List<Suggestion> {
         if (query.isBlank()) return emptyList()
         val url = "$baseUrl/api".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
@@ -38,11 +39,28 @@ class PhotonSearch(
                 text
             }
         }
-        return parse(body)
+        return rankByProximity(parse(body), at)
     }
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+
+        /**
+         * How near a result must be to count as "local" and get promoted above
+         * far-away namesakes (~75 mi — a day-trip radius). Photon ranks by OSM
+         * "importance," so a famous distant peak outranks a nearby supper club of
+         * the same name; a driving app wants the reachable one first.
+         */
+        const val LOCAL_RADIUS_METERS = 120_000.0
+
+        /**
+         * Promote results within [LOCAL_RADIUS_METERS] of [at] ahead of farther
+         * ones, preserving Photon's relevance order within each tier (the sort is
+         * stable). A result set that is entirely far — a genuine long-distance
+         * destination with no nearby match — is left in Photon's order.
+         */
+        fun rankByProximity(results: List<Suggestion>, at: GeoPoint): List<Suggestion> =
+            results.sortedBy { if (haversineMeters(at, it.location) <= LOCAL_RADIUS_METERS) 0 else 1 }
 
         fun parse(body: String): List<Suggestion> =
             json.decodeFromString<FeatureCollection>(body).features.mapNotNull { feature ->

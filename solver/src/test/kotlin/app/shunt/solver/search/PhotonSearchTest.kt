@@ -1,10 +1,37 @@
 package app.shunt.solver.search
 
+import app.shunt.core.GeoPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PhotonSearchTest {
+
+    private fun at(title: String, lat: Double, lon: Double) =
+        Suggestion(title, GeoPoint(lat, lon), "place")
+
+    @Test
+    fun `a nearby match is promoted above a far-away namesake`() {
+        val user = GeoPoint(45.82, -88.07) // Upper Michigan
+        // Photon relevance order puts the famous distant El Capitan first.
+        val photonOrder = listOf(
+            at("El Capitan, California", 37.73, -119.64), // ~1600 mi
+            at("El Capitan Supper Club", 45.90, -88.00), // ~6 mi, local
+        )
+        val ranked = PhotonSearch.rankByProximity(photonOrder, user)
+        assertEquals("El Capitan Supper Club", ranked.first().title)
+    }
+
+    @Test
+    fun `an all-distant result set keeps Photon's relevance order`() {
+        val user = GeoPoint(45.82, -88.07)
+        val photonOrder = listOf(
+            at("Portland, Oregon", 45.52, -122.68),
+            at("Portland, Maine", 43.66, -70.26),
+        )
+        // No local match to promote — order is untouched.
+        assertEquals(photonOrder, PhotonSearch.rankByProximity(photonOrder, user))
+    }
 
     private fun fixture(name: String): String =
         checkNotNull(javaClass.getResourceAsStream("/fixtures/photon/$name")) { "missing $name" }
