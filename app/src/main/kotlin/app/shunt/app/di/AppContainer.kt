@@ -20,7 +20,7 @@ import app.shunt.solver.brouter.BrouterTileSource
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
 import app.shunt.solver.geo.BoundingBox
-import app.shunt.solver.here.HereAutosuggest
+import app.shunt.solver.search.PhotonSearch
 import app.shunt.tesla.FakeVehicleNavClient
 import app.shunt.tesla.TessieVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
@@ -41,19 +41,14 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
     private val http = OkHttpClient()
 
-    /** On-device settings (the user-entered HERE key). */
-    val settings = SettingsStore(appContext)
-
-    /** Runtime HERE key: the in-app value if set, otherwise the build-time one. */
-    fun effectiveHereKey(): String = settings.hereApiKey.value.ifBlank { BuildConfig.HERE_API_KEY }
-
     private val cameraSource = DeFlockCameraSource(
         http = http,
         cacheDir = File(appContext.cacheDir, "deflock"),
     )
 
-    // HERE now powers search only; routing is native/offline via BRouter.
-    private val autosuggest = HereAutosuggest(http, { effectiveHereKey() })
+    // Keyless, OpenStreetMap-based destination search (no account, no card).
+    // Routing is native/offline via BRouter — the app depends on no HERE API.
+    private val photonSearch = PhotonSearch(http)
 
     /** BRouter's offline tiles + profile live under the app's private storage. */
     private val brouterDir = File(appContext.filesDir, "brouter")
@@ -117,9 +112,6 @@ class AppContainer(context: Context) {
     var activeDrivePlan: DrivePlan? = null
     val driveStatus = MutableStateFlow<DriveStatus>(DriveStatus.Idle)
 
-    /** True when no HERE key is configured — the UI warns and offers to add one. */
-    fun hereKeyMissing(): Boolean = effectiveHereKey().isBlank()
-
     /**
      * Every known camera in a map viewport, for the DeFlock-style display.
      * Reuses the same cached DeFlock source the router draws on, so panning the
@@ -141,7 +133,7 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
-        search = SuggestionSearch { query, at -> autosuggest.suggest(query, at) },
+        search = SuggestionSearch { query, at -> photonSearch.suggest(query, at) },
         planner = RoutePlanner { origin, destination ->
             brouterPlanner.plan(origin, destination).also { outcome ->
                 // Keep the tiles we actually route through fresh against eviction.

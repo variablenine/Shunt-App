@@ -10,8 +10,9 @@ plugins {
  * Secrets come from local.properties or the environment only — never
  * committed (see .gitignore). Absent in CI/fresh checkouts they are blank: the
  * app still builds and surfaces the gap at runtime rather than failing here.
- * HERE powers routing/search; the Tessie token + VIN (Part B) let the app talk
- * to the user's own vehicle — without them it runs against the fake client.
+ * The Tessie token + VIN (Part B) let the app talk to the user's own vehicle —
+ * without them it runs against the fake client. Search (Photon) and routing
+ * (BRouter) are keyless, so no other secret is needed.
  */
 fun localSecret(name: String): String {
     val fromProps = rootProject.file("local.properties")
@@ -20,7 +21,6 @@ fun localSecret(name: String): String {
     return (fromProps ?: System.getenv(name)).orEmpty()
 }
 
-val hereApiKey = localSecret("HERE_API_KEY")
 val tessieToken = localSecret("TESSIE_TOKEN")
 val tessieVin = localSecret("TESSIE_VIN")
 
@@ -43,7 +43,6 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "HERE_API_KEY", "\"$hereApiKey\"")
         buildConfigField("String", "TESSIE_TOKEN", "\"$tessieToken\"")
         buildConfigField("String", "TESSIE_VIN", "\"$tessieVin\"")
 

@@ -36,15 +36,16 @@ See [docs/brouter-spike.md](docs/brouter-spike.md) for the engine's evaluation.
 
 Everything ships in a single APK and runs on the phone, **including routing
 itself**. There is no server component. Outbound traffic is only to third-party
-HTTP APIs — HERE for destination search, the DeFlock CDN for camera data, the
-BRouter CDN for offline map tiles (fetched once per region), and the vehicle
-service. Once a region's tile is cached, routing needs no network at all.
+HTTP APIs — [Photon](https://photon.komoot.io) (a keyless, OpenStreetMap-based
+geocoder) for destination search, the DeFlock CDN for camera data, the BRouter
+CDN for offline map tiles (fetched once per region), and the vehicle service.
+Once a region's tile is cached, routing needs no network at all.
 
 | Module     | Platform | Purpose |
 |------------|----------|---------|
 | `:core`    | Pure JVM | Shared value types (`GeoPoint`, …) with zero dependencies |
 | `:brouter` | Pure JVM | Vendored [BRouter](https://github.com/abrensch/brouter) routing engine (MIT), untouched |
-| `:solver`  | Pure JVM | Camera data source, the native BRouter router/planner, HERE search, and a CLI harness |
+| `:solver`  | Pure JVM | Camera data source, the native BRouter router/planner, keyless Photon search, and a CLI harness |
 | `:tesla`   | Pure JVM | The vehicle seam: `VehicleNavClient` interface, fake, and the production Tessie client |
 | `:app`     | Android  | Jetpack Compose UI, drive monitor foreground service |
 
@@ -159,13 +160,17 @@ Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
 ### Required API keys
 
+**The app needs no API keys at all.** Destination search uses keyless Photon and
+routing is native/offline, so a plain checkout builds and runs a fully functional
+app with no account or card anywhere.
+
 | Key | Used by | Where it comes from | Notes |
 |-----|---------|---------------------|-------|
-| `HERE_API_KEY` | Destination **search** (autosuggest + geocoding) only — routing is native/offline | HERE Access Manager → your app → **API Keys** → Create API key | Put it in `local.properties` (`HERE_API_KEY=…`) or the environment; it flows into the app via `BuildConfig`. A **refresh token** (a `reftkn:…` value) is *not* an API key and returns 401. |
+| `HERE_API_KEY` | The **legacy solver CLI** only (`:solver` harness) — never the app | HERE Access Manager → your app → **API Keys** → Create API key | Optional. Only needed to run the old HERE-based CLI; put it in `local.properties` (`HERE_API_KEY=…`) or the environment. A **refresh token** (a `reftkn:…` value) is *not* an API key and returns 401. |
 | Tessie token | The production vehicle client | The user's own Tessie account | **Part B only** — not used anywhere in this repo. |
 
-No key is committed, and a missing `HERE_API_KEY` doesn't fail the build: the
-app surfaces it in-app and the CLI prints a clear error.
+No key is committed, and a missing `HERE_API_KEY` doesn't fail the build: only
+the legacy CLI needs it, and it prints a clear error when absent.
 
 The **basemap** needs no key: the app ships with a dark
 [OpenFreeMap](https://openfreemap.org) street style. Override `map_style_url`
@@ -181,8 +186,8 @@ signed with a stable certificate decoded from the `ALPHA_KEYSTORE_BASE64` repo
 secret, so each build carries the **same signature** and updates install in
 place. Without the secret the build falls back to a debug key, so fresh
 checkouts and CI still work — but consecutive debug-signed builds won't update
-over each other. The APK contains no API keys; you enter your HERE key in the
-app.
+over each other. The APK contains no API keys and needs none — search and
+routing are both keyless.
 
 ## Offline behavior
 
@@ -195,8 +200,8 @@ Shunt is built to keep working when the signal drops on a rural drive:
 - **Routing** runs fully on-device once the region's tile is cached — no
   connection needed to plan a camera-aware route. The one online moment is the
   first-time tile download for a new region, which the app prompts for
-  explicitly. Destination **search** does need HERE; when it fails the app
-  shows "Couldn't reach search" rather than an empty list.
+  explicitly. Destination **search** (keyless Photon) does need a connection;
+  when it fails the app shows "Couldn't reach search" rather than an empty list.
 - **The drive monitor** is the part that matters most offline, and it needs
   no connectivity at all: waypoint-approach timing, camera-approach warnings
   (from the cached camera set), escalating haptics, and local notifications
@@ -217,9 +222,9 @@ Shunt is built to keep working when the signal drops on a rural drive:
   route touches, capped at 5 concurrent, and disk-cached by version so they
   aren't refetched; a single `OkHttpClient` pools connections.
 - **No analytics, no telemetry, no account.** The only outbound traffic is to
-  HERE (search), the DeFlock CDN (cameras), the BRouter CDN (one-time offline
-  tile downloads), and (via the Part B client) the user's own vehicle service.
-  Routing and monitoring run entirely on the phone.
+  Photon (keyless search), the DeFlock CDN (cameras), the BRouter CDN (one-time
+  offline tile downloads), and (via the Part B client) the user's own vehicle
+  service. Routing and monitoring run entirely on the phone.
 
 > **APK size note:** the debug APK is large (~100 MB) because it bundles the
 > MapLibre native libraries for every ABI plus the offline camera snapshot.
@@ -304,8 +309,9 @@ shell over both.
 ### M3 — planning UI
 
 Jetpack Compose. The flow is: enter destination → solver runs → result card
-→ Go. Destination search uses HERE autosuggest (same vendor and key as
-routing); Home and Work are one-tap favorites persisted across launches. The
+→ Go. Destination search uses keyless [Photon](https://photon.komoot.io)
+(OpenStreetMap-based, no account or card); Home and Work are one-tap favorites
+persisted across launches. The
 map is MapLibre (never the Google Maps SDK). It draws the chosen route, a
 pulsing blue dot at the current location, and — DeFlock-style — every known
 ALPR in view as a dot with a cone showing which way it faces; tapping a camera
