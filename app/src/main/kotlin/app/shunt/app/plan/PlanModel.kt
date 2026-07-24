@@ -37,6 +37,8 @@ data class DrivePlan(
 data class PlanUiState(
     val query: String = "",
     val suggestions: List<Suggestion> = emptyList(),
+    /** A search request is in flight (debounce elapsed, awaiting results). */
+    val searching: Boolean = false,
     /** Destination search couldn't be reached (offline / service error). */
     val searchFailed: Boolean = false,
     val favorites: Favorites = Favorites(),

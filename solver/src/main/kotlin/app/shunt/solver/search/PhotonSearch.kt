@@ -22,13 +22,17 @@ class PhotonSearch(
     private val http: OkHttpClient,
     private val baseUrl: String = "https://photon.komoot.io",
 ) {
-    suspend fun suggest(query: String, at: GeoPoint, limit: Int = 6): List<Suggestion> {
+    suspend fun suggest(query: String, at: GeoPoint, limit: Int = 8): List<Suggestion> {
         if (query.isBlank()) return emptyList()
         val url = "$baseUrl/api".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("lat", at.lat.toString())
             .addQueryParameter("lon", at.lon.toString())
             .addQueryParameter("limit", limit.toString())
+            // English labels, and don't over-weight nearness so a distinct
+            // far-away place (e.g. "El Capitan") still surfaces from a rural bias.
+            .addQueryParameter("lang", "en")
+            .addQueryParameter("location_bias_scale", "0.1")
             .build()
         val body = withContext(Dispatchers.IO) {
             http.newCall(Request.Builder().url(url).header("User-Agent", "Shunt").build()).execute().use { resp ->
