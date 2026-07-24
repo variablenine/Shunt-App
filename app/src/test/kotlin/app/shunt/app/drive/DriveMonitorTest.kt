@@ -17,9 +17,9 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class DriveMonitorTest {
 
-    private val w1 = GeoPoint(45.0, -88.00)
-    private val w2 = GeoPoint(45.0, -87.98)
-    private val dest = GeoPoint(45.0, -87.96)
+    private val w1 = GeoPoint(33.0, -97.00)
+    private val w2 = GeoPoint(33.0, -96.98)
+    private val dest = GeoPoint(33.0, -96.96)
     private val chain = listOf(w1, w2, dest)
 
     private fun west(p: GeoPoint, meters: Double): GeoPoint {
@@ -84,7 +84,7 @@ class DriveMonitorTest {
 
     @Test
     fun `camera warnings fire from the cached set with no vehicle interaction`() = runTest {
-        val cam = Camera(9, GeoPoint(45.0, -87.985), mapOf("manufacturer" to "Flock Safety"))
+        val cam = Camera(9, GeoPoint(33.0, -96.985), mapOf("manufacturer" to "Flock Safety"))
         val fake = FakeVehicleNavClient()
         val alerter = RecordingAlerter()
         val monitor = DriveMonitor(fake, alerter)

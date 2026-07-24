@@ -12,9 +12,9 @@ import org.junit.jupiter.api.Test
 
 class FakeVehicleNavClientTest {
 
-    private val a = GeoPoint(44.5, -88.0)
-    private val b = GeoPoint(44.6, -88.1)
-    private val c = GeoPoint(44.7, -88.2)
+    private val a = GeoPoint(39.5, -98.0)
+    private val b = GeoPoint(39.6, -98.1)
+    private val c = GeoPoint(39.7, -98.2)
 
     @Test
     fun `records every call in order with arguments`() = runTest {
@@ -88,7 +88,7 @@ class FakeVehicleNavClientTest {
     fun `concurrent calls are all recorded`() = runTest {
         val fake = FakeVehicleNavClient(FakeVehicleNavClient.Behavior(latencyMillis = 10))
         (1..50).map { n ->
-            async { fake.advanceTo(listOf(GeoPoint(44.0 + n * 0.001, -88.0))) }
+            async { fake.advanceTo(listOf(GeoPoint(39.0 + n * 0.001, -98.0))) }
         }.awaitAll()
         assertEquals(50, fake.calls().size)
     }

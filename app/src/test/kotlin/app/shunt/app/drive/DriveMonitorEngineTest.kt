@@ -12,9 +12,9 @@ import org.junit.jupiter.api.Test
 class DriveMonitorEngineTest {
 
     // A straight eastbound chain near lat 45; ~0.01 deg lon ≈ 787 m apart.
-    private val w1 = GeoPoint(45.0, -88.00)
-    private val w2 = GeoPoint(45.0, -87.98)
-    private val dest = GeoPoint(45.0, -87.96)
+    private val w1 = GeoPoint(33.0, -97.00)
+    private val w2 = GeoPoint(33.0, -96.98)
+    private val dest = GeoPoint(33.0, -96.96)
     private val chain = listOf(w1, w2, dest)
 
     /** A point [meters] west of [p] (approaching from the west, heading east). */
@@ -89,7 +89,7 @@ class DriveMonitorEngineTest {
 
     @Test
     fun `camera warns at two escalating tiers, once each`() {
-        val cam = Camera(7, GeoPoint(45.0, -87.985))
+        val cam = Camera(7, GeoPoint(33.0, -96.985))
         val engine = DriveMonitorEngine(chain, listOf(cam))
 
         // 400 m warn tier.
@@ -115,10 +115,10 @@ class DriveMonitorEngineTest {
     fun `camera side reflects heading`() {
         // Camera north of an eastbound route is on the LEFT; south is RIGHT.
         // Kept within the 400 m warn range of the observation point.
-        val north = Camera(1, GeoPoint(45.002, -87.985))
-        val south = Camera(2, GeoPoint(44.998, -87.985))
+        val north = Camera(1, GeoPoint(33.002, -96.985))
+        val south = Camera(2, GeoPoint(32.998, -96.985))
         val engine = DriveMonitorEngine(chain, listOf(north, south))
-        val signals = engine.onLocation(update(GeoPoint(45.0, -87.987), bearing = 90.0))
+        val signals = engine.onLocation(update(GeoPoint(33.0, -96.987), bearing = 90.0))
             .filterIsInstance<DriveSignal.ApproachingCamera>().associateBy { it.camera.id }
         assertEquals(Side.LEFT, signals[1]?.side)
         assertEquals(Side.RIGHT, signals[2]?.side)
@@ -126,9 +126,9 @@ class DriveMonitorEngineTest {
 
     @Test
     fun `camera side is null without heading`() {
-        val cam = Camera(1, GeoPoint(45.002, -87.99))
+        val cam = Camera(1, GeoPoint(33.002, -96.99))
         val engine = DriveMonitorEngine(chain, listOf(cam))
-        val signal = engine.onLocation(update(GeoPoint(45.0, -87.99), bearing = null))
+        val signal = engine.onLocation(update(GeoPoint(33.0, -96.99), bearing = null))
             .filterIsInstance<DriveSignal.ApproachingCamera>().single()
         assertEquals(null, signal.side)
     }

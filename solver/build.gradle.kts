@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
-    application
 }
 
 java {
@@ -27,10 +26,6 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     testRuntimeOnly(libs.junit.platform.launcher)
-}
-
-application {
-    mainClass.set("app.shunt.solver.cli.MainKt")
 }
 
 tasks.withType<Test> {

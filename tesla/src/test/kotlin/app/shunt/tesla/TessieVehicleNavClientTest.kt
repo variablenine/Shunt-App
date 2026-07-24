@@ -20,9 +20,9 @@ class TessieVehicleNavClientTest {
     private val server = MockWebServer()
 
     private val chain = listOf(
-        GeoPoint(44.5133, -88.0133),
-        GeoPoint(44.7659, -88.0040),
-        GeoPoint(45.0906, -87.6431),
+        GeoPoint(39.5133, -98.0133),
+        GeoPoint(39.7659, -98.0040),
+        GeoPoint(40.0906, -97.6431),
     )
 
     @AfterTest
@@ -56,7 +56,7 @@ class TessieVehicleNavClientTest {
         assertEquals("Bearer test-token", first.getHeader("Authorization"))
         // Body is the |-separated lat,lon chain.
         val waypoints = Json.parseToJsonElement(first.body.readUtf8()).jsonObject["waypoints"]!!.jsonPrimitive.content
-        assertEquals("44.5133,-88.0133|44.7659,-88.004|45.0906,-87.6431", waypoints)
+        assertEquals("39.5133,-98.0133|39.7659,-98.004|40.0906,-97.6431", waypoints)
 
         // A second call must reuse the fast path (one request, no gps chain).
         assertEquals(PushResult.Success, client.advanceTo(chain.drop(1)))
@@ -97,11 +97,11 @@ class TessieVehicleNavClientTest {
             else MockResponse().setBody(ok)
         }
         val client = client()
-        client.pushRoute(listOf(GeoPoint(45.0, -88.0)))
+        client.pushRoute(listOf(GeoPoint(40.0, -98.0)))
         server.takeRequest() // probe
         val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
-        assertEquals(45.0, body["lat"]!!.jsonPrimitive.content.toDouble())
-        assertEquals(-88.0, body["lon"]!!.jsonPrimitive.content.toDouble())
+        assertEquals(40.0, body["lat"]!!.jsonPrimitive.content.toDouble())
+        assertEquals(-98.0, body["lon"]!!.jsonPrimitive.content.toDouble())
         assertEquals(1, body["order"]!!.jsonPrimitive.content.toInt())
     }
 

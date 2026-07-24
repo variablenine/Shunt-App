@@ -48,7 +48,7 @@ class PhotonSearch(
         /**
          * How near a result must be to count as "local" and get promoted above
          * far-away namesakes (~75 mi — a day-trip radius). Photon ranks by OSM
-         * "importance," so a famous distant peak outranks a nearby supper club of
+         * "importance," so a famous distant landmark outranks a nearby place of
          * the same name; a driving app wants the reachable one first.
          */
         const val LOCAL_RADIUS_METERS = 120_000.0
@@ -74,7 +74,7 @@ class PhotonSearch(
                 )
             }
 
-        /** "Lambeau Field, Green Bay, WI" or "1717 North Shawano Street, New London, WI". */
+        /** "Central Library, Springfield, IL" or "1717 South Main Street, Lindsborg, KS". */
         private fun title(p: Properties): String {
             val label = p.name?.takeIf { it.isNotBlank() }
                 ?: listOfNotNull(p.housenumber, p.street).joinToString(" ").ifBlank { null }

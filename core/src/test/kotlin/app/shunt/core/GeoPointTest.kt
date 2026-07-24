@@ -7,9 +7,9 @@ import kotlin.test.assertFailsWith
 class GeoPointTest {
     @Test
     fun `valid coordinates construct`() {
-        val p = GeoPoint(45.8, -88.1)
-        assertEquals(45.8, p.lat)
-        assertEquals(-88.1, p.lon)
+        val p = GeoPoint(39.5, -98.5)
+        assertEquals(39.5, p.lat)
+        assertEquals(-98.5, p.lon)
     }
 
     @Test

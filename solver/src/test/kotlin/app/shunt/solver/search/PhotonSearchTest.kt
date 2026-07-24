@@ -12,19 +12,19 @@ class PhotonSearchTest {
 
     @Test
     fun `a nearby match is promoted above a far-away namesake`() {
-        val user = GeoPoint(45.82, -88.07) // Upper Michigan
-        // Photon relevance order puts the famous distant El Capitan first.
+        val user = GeoPoint(39.0, -98.0)
+        // Photon relevance order puts the famous distant landmark first.
         val photonOrder = listOf(
-            at("El Capitan, California", 37.73, -119.64), // ~1600 mi
-            at("El Capitan Supper Club", 45.90, -88.00), // ~6 mi, local
+            at("Summit Peak", 44.0, -110.0), // far
+            at("Summit Diner", 39.2, -98.1), // ~24 km, local
         )
         val ranked = PhotonSearch.rankByProximity(photonOrder, user)
-        assertEquals("El Capitan Supper Club", ranked.first().title)
+        assertEquals("Summit Diner", ranked.first().title)
     }
 
     @Test
     fun `an all-distant result set keeps Photon's relevance order`() {
-        val user = GeoPoint(45.82, -88.07)
+        val user = GeoPoint(39.0, -98.0)
         val photonOrder = listOf(
             at("Portland, Oregon", 45.52, -122.68),
             at("Portland, Maine", 43.66, -70.26),
@@ -44,10 +44,10 @@ class PhotonSearchTest {
 
         val first = suggestions.first()
         assertTrue(first.title.startsWith("Walmart"), "title was '${first.title}'")
-        assertTrue("Wisconsin" in first.title || "WI" in first.title, "title should carry the place")
+        assertTrue("Kansas" in first.title || "KS" in first.title, "title should carry the place")
         // Coordinates decode from GeoJSON [lon, lat] order.
-        assertEquals(45.1631199, first.location.lat, 1e-6)
-        assertEquals(-89.1434382, first.location.lon, 1e-6)
+        assertEquals(38.8400000, first.location.lat, 1e-6)
+        assertEquals(-97.6100000, first.location.lon, 1e-6)
     }
 
     @Test
@@ -55,12 +55,12 @@ class PhotonSearchTest {
         // Photon returns plain addresses with no POI name — fall back to number + street.
         val body = """
             {"type":"FeatureCollection","features":[{"type":"Feature",
-             "properties":{"housenumber":"1717","street":"North Shawano Street",
-              "city":"New London","state":"WI","osm_value":"house"},
-             "geometry":{"type":"Point","coordinates":[-88.7439875,44.411585]}}]}
+             "properties":{"housenumber":"1717","street":"South Main Street",
+              "city":"Lindsborg","state":"KS","osm_value":"house"},
+             "geometry":{"type":"Point","coordinates":[-97.6741,38.5736]}}]}
         """.trimIndent()
         val first = PhotonSearch.parse(body).single()
-        assertEquals("1717 North Shawano Street, New London, WI", first.title)
+        assertEquals("1717 South Main Street, Lindsborg, KS", first.title)
     }
 
     @Test

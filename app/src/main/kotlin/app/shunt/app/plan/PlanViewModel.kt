@@ -241,7 +241,7 @@ class PlanViewModel(
         )
 
     companion object {
-        /** Fallback autosuggest bias when no location is known (NE Wisconsin). */
-        val DEFAULT_BIAS = GeoPoint(44.5133, -88.0133)
+        /** Fallback search bias when no location is known (US geographic center). */
+        val DEFAULT_BIAS = GeoPoint(39.8283, -98.5795)
     }
 }

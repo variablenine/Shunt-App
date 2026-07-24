@@ -28,9 +28,9 @@ abstract class VehicleNavClientContract {
     abstract fun permanentlyFailingClient(): VehicleNavClient
 
     protected val chain = listOf(
-        GeoPoint(44.5133, -88.0133),
-        GeoPoint(44.7659, -88.0040),
-        GeoPoint(45.0906, -87.6431),
+        GeoPoint(39.5133, -98.0133),
+        GeoPoint(39.7659, -98.0040),
+        GeoPoint(40.0906, -97.6431),
     )
 
     @Test

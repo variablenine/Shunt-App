@@ -27,7 +27,7 @@ class DeFlockModelsTest {
 
     @Test
     fun `parses live tile fixture`() {
-        val records = parseDeFlockTile(fixture("tile-40_-100-slice.json"))
+        val records = parseDeFlockTile(fixture("tile-20_-100-slice.json"))
         assertEquals(127, records.size)
         val cameras = records.map { it.toCamera() }
         assertTrue(cameras.all { it.id > 0 })
@@ -38,8 +38,8 @@ class DeFlockModelsTest {
     @Test
     fun `tile keys covering a bbox`() {
         // Straddles the -100/-80 column boundary
-        val keys = TileKey.covering(BoundingBox(44.0, -101.0, 46.0, -79.0), 20)
-        assertEquals(listOf(TileKey(40, -120), TileKey(40, -100), TileKey(40, -80)), keys)
+        val keys = TileKey.covering(BoundingBox(32.0, -101.0, 34.0, -79.0), 20)
+        assertEquals(listOf(TileKey(20, -120), TileKey(20, -100), TileKey(20, -80)), keys)
     }
 
     @Test
@@ -62,7 +62,7 @@ class DeFlockModelsTest {
 
     @Test
     fun `camera prefers camera-direction over direction`() {
-        val camera = Camera(1, app.shunt.core.GeoPoint(45.0, -88.0),
+        val camera = Camera(1, app.shunt.core.GeoPoint(33.0, -97.0),
             mapOf("direction" to "90", "camera:direction" to "180"))
         assertEquals(180.0, camera.directionDegrees)
     }

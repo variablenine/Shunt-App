@@ -45,7 +45,7 @@ Once a region's tile is cached, routing needs no network at all.
 |------------|----------|---------|
 | `:core`    | Pure JVM | Shared value types (`GeoPoint`, …) with zero dependencies |
 | `:brouter` | Pure JVM | Vendored [BRouter](https://github.com/abrensch/brouter) routing engine (MIT), untouched |
-| `:solver`  | Pure JVM | Camera data source, the native BRouter router/planner, keyless Photon search, and a CLI harness |
+| `:solver`  | Pure JVM | Camera data source, the native BRouter router/planner, and keyless Photon search |
 | `:tesla`   | Pure JVM | The vehicle seam: `VehicleNavClient` interface, fake, and the production Tessie client |
 | `:app`     | Android  | Jetpack Compose UI, drive monitor foreground service |
 
@@ -101,15 +101,12 @@ the home region. A trip whose tile isn't present yet prompts a one-time download
 rather than silently going online (`BrouterTileSource`). See
 [docs/brouter-spike.md](docs/brouter-spike.md) for the engine evaluation.
 
-**Legacy HERE greedy solver (CLI only).** The original `RouteSolver` — greedy
-`avoid[areas]` exclusion against HERE Routing v8 — remains as the laptop CLI
-analysis harness (below), not in the app. Its known limitation is exactly what
-BRouter avoids: greedy exclusion can report infeasibility when a clean route
-exists, because excluding camera A pushes the route onto camera B and it never
-backtracks. It also supports a `--strict-direction` mode using the crowdsourced
-OSM facing tags (plain `direction` on ~97% of records, `camera:direction` on
-~2%; both honored). The app instead uses omnidirectional nogo circles — more
-conservative, which is the point: keep real distance from every camera.
+The original HERE-based greedy solver (`avoid[areas]` exclusion against HERE
+Routing v8) has been **removed**. Its known limitation is exactly what BRouter
+avoids: greedy exclusion can report infeasibility when a clean route exists,
+because excluding camera A pushes the route onto camera B and it never
+backtracks. With search now keyless too, the project depends on no HERE API at
+all.
 
 ### Camera data
 
@@ -121,56 +118,38 @@ snapshot of the full dataset (~2.5 MB gzipped, refresh with
 `tools/update-snapshot.sh`) answers offline. Every result reports its
 freshness (`NETWORK` / `CACHE` / `STALE_CACHE` / `BUNDLED`).
 
-### CLI harness
-
-The solver runs from a laptop without a car or an emulator:
-
-```
-./gradlew :solver:installDist
-./solver/build/install/solver/bin/solver solve \
-    --from "45.8,-88.1" --to "some address" [--json] [--radius 40] [--strict-direction]
-```
-
 ### Testing policy
 
-No live network calls in unit tests. All parsers are tested against fixtures
-recorded from the live services (2026-07-19): DeFlock index + tile slice, and
-HERE Routing v8, Geocoding v1, and Autosuggest v1 responses. HTTP behavior
-(caching, fallbacks, concurrency caps, request formatting) runs against
-MockWebServer. The safety-critical drive logic and the whole planning flow —
-including offline and push-failure paths — run against `FakeVehicleNavClient`.
+No live network calls in unit tests. All parsers are tested against synthetic
+fixtures modeled on the live services (DeFlock index + tile slice, Photon
+GeoJSON). HTTP behavior (caching, fallbacks, concurrency caps, request
+formatting) runs against MockWebServer. The safety-critical drive logic and the
+whole planning flow — including offline and push-failure paths — run against
+`FakeVehicleNavClient`.
 
-Two live-API findings worth knowing (both encoded in the client): HERE's
-`avoid[areas]` separates areas with `|`, not `!` — `!` introduces per-area
-*exceptions* and 400s when used as a separator; and the documented 20-box cap
-is not currently enforced server-side, but the client enforces it locally
-anyway.
+Fixtures and tests use **neutral placeholder coordinates** (central US) — never
+real personal locations. Keep it that way when adding tests.
 
 ## Setup
 
 Requirements: JDK 17+, Android SDK (platform 35) for `:app`.
 
-1. Copy `.env.example` to `.env` (or use `local.properties`) and set
-   `HERE_API_KEY`. Real keys are gitignored — never commit them.
-2. Build the JVM modules without any Android tooling:
+1. Build the JVM modules without any Android tooling:
    `./gradlew :core:build :solver:build :tesla:build`
-3. Full build including the app: `./gradlew build` (needs the Android SDK).
-4. Run the solver CLI: `./gradlew :solver:installDist` then
-   `./solver/build/install/solver/bin/solver solve --from … --to …`.
+2. Full build including the app: `./gradlew build` (needs the Android SDK).
 
 ### Required API keys
 
-**The app needs no API keys at all.** Destination search uses keyless Photon and
-routing is native/offline, so a plain checkout builds and runs a fully functional
-app with no account or card anywhere.
+**None.** Destination search uses keyless Photon, routing is native/offline
+(BRouter), the basemap is keyless OpenFreeMap, and camera data comes from the
+DeFlock CDN — so a plain checkout builds and runs a fully functional app with
+no account, key, or card anywhere.
 
 | Key | Used by | Where it comes from | Notes |
 |-----|---------|---------------------|-------|
-| `HERE_API_KEY` | The **legacy solver CLI** only (`:solver` harness) — never the app | HERE Access Manager → your app → **API Keys** → Create API key | Optional. Only needed to run the old HERE-based CLI; put it in `local.properties` (`HERE_API_KEY=…`) or the environment. A **refresh token** (a `reftkn:…` value) is *not* an API key and returns 401. |
-| Tessie token | The production vehicle client | The user's own Tessie account | **Part B only** — not used anywhere in this repo. |
+| Tessie token | The production vehicle client | The user's own Tessie account | **Part B only** — optional; without it the app runs against the fake client. |
 
-No key is committed, and a missing `HERE_API_KEY` doesn't fail the build: only
-the legacy CLI needs it, and it prints a clear error when absent.
+No key is committed, and none is required to build.
 
 The **basemap** needs no key: the app ships with a dark
 [OpenFreeMap](https://openfreemap.org) street style. Override `map_style_url`
@@ -246,8 +225,8 @@ pushes them to the vehicle, and monitors the drive, with the production Tessie
 client wired behind the vehicle seam.
 
 - **M0** — Gradle multi-module scaffolding, license separation, key hygiene.
-- **M1** (`:solver`) — camera source, route solver, waypoint extraction, and
-  CLI, unit-tested and verified against the live DeFlock and HERE endpoints.
+- **M1** (`:solver`) — camera source, route solver, and waypoint extraction,
+  unit-tested and verified against the live DeFlock endpoints.
 - **M2** (`:tesla`) — the `VehicleNavClient` interface, the scriptable
   `FakeVehicleNavClient`, and an abstract contract suite (shipped as test
   fixtures) that the production client must also pass. DI is wired so `:app`

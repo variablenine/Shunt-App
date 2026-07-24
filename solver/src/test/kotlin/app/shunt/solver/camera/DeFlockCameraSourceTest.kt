@@ -18,21 +18,21 @@ class DeFlockCameraSourceTest {
     private val cacheDir = File(System.getProperty("java.io.tmpdir"), "shunt-test-${System.nanoTime()}")
     private var now = 1_000_000L
 
-    private val bbox = BoundingBox(44.9, -88.1, 45.1, -87.9) // inside tile 40/-100
+    private val bbox = BoundingBox(32.9, -97.1, 33.1, -96.9) // inside tile 20/-100
 
     // Note: braces must stay literal — HttpUrl would percent-encode them.
     private fun tileUrlTemplate(v: String) = "${server.url("/regions/")}{lat}/{lon}.json?v=$v"
 
     private fun indexJson(expiration: Long, v: String = "77") = """
         {"expiration_utc": $expiration,
-         "regions": ["40/-100", "40/-80"],
+         "regions": ["20/-100", "20/-80"],
          "tile_url": "${tileUrlTemplate(v)}",
          "tile_size_degrees": 20}
     """.trimIndent()
 
     private val tileJson = """
-        [{"id": 1, "lat": 45.0, "lon": -88.0, "tags": {"direction": "90"}},
-         {"id": 2, "lat": 46.5, "lon": -88.0, "tags": {}}]
+        [{"id": 1, "lat": 33.0, "lon": -97.0, "tags": {"direction": "90"}},
+         {"id": 2, "lat": 34.5, "lon": -97.0, "tags": {}}]
     """.trimIndent()
 
     private fun source() = DeFlockCameraSource(
@@ -50,7 +50,7 @@ class DeFlockCameraSourceTest {
                     path.startsWith("/regions/index.json") ->
                         if (failIndex) MockResponse().setResponseCode(500)
                         else MockResponse().setBody(indexJson(indexExpiration))
-                    path.startsWith("/regions/40/-100.json") ->
+                    path.startsWith("/regions/20/-100.json") ->
                         if (failTiles) MockResponse().setResponseCode(500)
                         else MockResponse().setBody(tileJson)
                     path.startsWith("/regions/") -> MockResponse().setBody("[]")
@@ -124,11 +124,11 @@ class DeFlockCameraSourceTest {
         // Fresh cache dir, dead network: only the bundled snapshot remains.
         val result = source().camerasIn(bbox)
         assertEquals(Freshness.BUNDLED, result.freshness)
-        // The real snapshot ships in resources; this bbox (Marinette WI area,
-        // widened) contains cameras in the recorded data.
-        val wide = BoundingBox(44.4, -88.3, 45.3, -87.4)
+        // The real snapshot ships in resources; this widened bbox covers a
+        // dense metro area that has cameras in the recorded data.
+        val wide = BoundingBox(32.4, -97.5, 33.5, -96.4)
         val wideResult = source().camerasIn(wide)
-        assertTrue(wideResult.cameras.isNotEmpty(), "bundled snapshot should cover NE Wisconsin")
+        assertTrue(wideResult.cameras.isNotEmpty(), "bundled snapshot should cover a dense metro")
     }
 
     @Test

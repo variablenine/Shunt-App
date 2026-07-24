@@ -21,15 +21,15 @@ import org.junit.jupiter.api.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlanViewModelTest {
 
-    private val origin = GeoPoint(44.5133, -88.0133)
-    private val dest = GeoPoint(45.0906, -87.6431)
+    private val origin = GeoPoint(39.5133, -98.0133)
+    private val dest = GeoPoint(40.0906, -97.6431)
 
     private fun plannedRoute(
         choice: RouteChoice,
         seconds: Int,
         cameras: List<Camera> = emptyList(),
         added: Int = 0,
-        waypoints: List<GeoPoint> = listOf(GeoPoint(44.8, -87.9)),
+        waypoints: List<GeoPoint> = listOf(GeoPoint(39.8, -97.9)),
     ) = PlannedRoute(
         choice = choice,
         polyline = listOf(origin, dest),
@@ -44,7 +44,7 @@ class PlanViewModelTest {
     private val fastest = plannedRoute(RouteChoice.FASTEST, 600)
     private val withCameras = plannedRoute(
         RouteChoice.FASTEST, 900,
-        cameras = listOf(Camera(1, GeoPoint(44.7, -88.0)), Camera(2, GeoPoint(44.9, -87.8))),
+        cameras = listOf(Camera(1, GeoPoint(39.7, -98.0)), Camera(2, GeoPoint(39.9, -97.8))),
     )
 
     private fun routes(vararg options: PlannedRoute): PlanOutcome = PlanOutcome.Routes(options.toList())
@@ -86,13 +86,13 @@ class PlanViewModelTest {
 
     @Test
     fun `typing debounces then shows suggestions`() = runTest {
-        val suggestions = listOf(Suggestion("Lambeau Field", dest, "place"))
+        val suggestions = listOf(Suggestion("Civic Center", dest, "place"))
         val model = vm(this, suggestions = suggestions)
-        model.onQueryChange("Lam")
-        model.onQueryChange("Lambeau") // supersedes the first before debounce fires
+        model.onQueryChange("Civ")
+        model.onQueryChange("Civic") // supersedes the first before debounce fires
         advanceUntilIdle()
         assertEquals(suggestions, model.state.value.suggestions)
-        assertEquals("Lambeau", model.state.value.query)
+        assertEquals("Civic", model.state.value.query)
     }
 
     @Test
@@ -107,7 +107,7 @@ class PlanViewModelTest {
             vehicle = FakeVehicleNavClient(),
             scope = this,
         )
-        model.onQueryChange("Lambeau")
+        model.onQueryChange("Civic")
         advanceUntilIdle()
         assertTrue(model.state.value.searchFailed)
         assertTrue(model.state.value.suggestions.isEmpty())
@@ -138,12 +138,12 @@ class PlanViewModelTest {
 
     @Test
     fun `selecting a suggestion routes to options`() = runTest {
-        val model = vm(this, suggestions = listOf(Suggestion("Lambeau Field", dest, "place")))
-        model.onQueryChange("Lambeau"); advanceUntilIdle()
+        val model = vm(this, suggestions = listOf(Suggestion("Civic Center", dest, "place")))
+        model.onQueryChange("Civic"); advanceUntilIdle()
         model.onSuggestionSelected(0)
         advanceUntilIdle()
         val solved = assertIs<Phase.Solved>(model.state.value.phase)
-        assertEquals("Lambeau Field", solved.destination.title)
+        assertEquals("Civic Center", solved.destination.title)
         assertEquals(0, solved.chosen.camerasPassed)
         assertTrue(model.state.value.suggestions.isEmpty(), "suggestions clear once routing")
     }

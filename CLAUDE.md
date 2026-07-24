@@ -21,8 +21,8 @@ alerts work without a car).
 - **On-device / offline-first.** Routing and the drive monitor need no network
   once a region's tile is cached. No background work, no analytics, no telemetry.
 - **Search coverage is OSM-limited by design.** Because we're keyless, some
-  businesses HERE/Google had (e.g. a specific supper club) may be missing from
-  OpenStreetMap. The chosen direction is **"stay keyless, maximize OSM"**: rank
+  businesses HERE/Google had may be missing from OpenStreetMap (community data
+  has gaps). The chosen direction is **"stay keyless, maximize OSM"**: rank
   nearby OSM results first (done — `PhotonSearch.rankByProximity`) and add
   genuinely-missing places to OpenStreetMap rather than reintroducing a paid
   geocoder.
@@ -55,8 +55,12 @@ Non-UI stack is Android-free so it's unit-testable without an emulator.
 - **Commit identity:** `Claude <noreply@anthropic.com>`. (GitHub's own merge
   commits show as `noreply@github.com` / "Unverified" — that's expected and not
   something to amend.)
-- Don't commit personal location data (home coords, town names) — scrub tests
-  and docs to neutral coordinates.
+- **Never commit personal location data.** No real home/work coordinates, no
+  local town or business names, no recorded API responses from routes the owner
+  actually drove (encoded polylines hide coordinates from text search). All
+  fixtures, tests, and docs use **neutral placeholder coordinates in the central
+  US** (~39,-98 or ~33,-97) and generic names. Treat a real-world example in a
+  test as a bug, and check `git grep` for regional coordinates before pushing.
 
 ## Release / R8 gotchas (release builds only — debug skips minification)
 
