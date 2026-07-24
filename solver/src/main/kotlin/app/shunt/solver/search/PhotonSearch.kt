@@ -29,10 +29,7 @@ class PhotonSearch(
             .addQueryParameter("lat", at.lat.toString())
             .addQueryParameter("lon", at.lon.toString())
             .addQueryParameter("limit", limit.toString())
-            // English labels, and don't over-weight nearness so a distinct
-            // far-away place (e.g. "El Capitan") still surfaces from a rural bias.
-            .addQueryParameter("lang", "en")
-            .addQueryParameter("location_bias_scale", "0.1")
+            .addQueryParameter("lang", "en") // English labels
             .build()
         val body = withContext(Dispatchers.IO) {
             http.newCall(Request.Builder().url(url).header("User-Agent", "Shunt").build()).execute().use { resp ->
