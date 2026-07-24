@@ -4,7 +4,7 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.Freshness
-import app.shunt.solver.here.Suggestion
+import app.shunt.solver.search.Suggestion
 
 /** A place the user can route to: a search result or a saved favorite. */
 data class Destination(val title: String, val location: GeoPoint) {
@@ -37,7 +37,7 @@ data class DrivePlan(
 data class PlanUiState(
     val query: String = "",
     val suggestions: List<Suggestion> = emptyList(),
-    /** Destination search couldn't reach HERE (offline / service error). */
+    /** Destination search couldn't be reached (offline / service error). */
     val searchFailed: Boolean = false,
     val favorites: Favorites = Favorites(),
     val cameraDataFreshness: Freshness? = null,

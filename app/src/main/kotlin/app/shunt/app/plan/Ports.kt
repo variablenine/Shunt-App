@@ -3,7 +3,7 @@ package app.shunt.app.plan
 import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.PlanOutcome
 import app.shunt.solver.camera.Freshness
-import app.shunt.solver.here.Suggestion
+import app.shunt.solver.search.Suggestion
 
 /**
  * The small seams the plan layer depends on, so it can be driven by fakes in
@@ -11,7 +11,7 @@ import app.shunt.solver.here.Suggestion
  * :solver / :tesla types are wired in AppContainer.
  */
 
-/** Destination search (HERE autosuggest). */
+/** Destination search (keyless, OpenStreetMap-based via Photon). */
 fun interface SuggestionSearch {
     suspend fun suggest(query: String, at: GeoPoint): List<Suggestion>
 }
