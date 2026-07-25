@@ -113,7 +113,13 @@ class BrouterPlanner(
             PlannedRoute(
                 choice = r.choice,
                 polyline = r.polyline,
-                waypoints = WaypointExtractor.extract(r.polyline, fastest.polyline),
+                // Camera-aware: the vehicle routes itself between waypoints, so
+                // they must also stop it cutting back through what we avoided.
+                waypoints = WaypointExtractor.extract(
+                    chosen = r.polyline,
+                    fastest = fastest.polyline,
+                    avoid = cameras.map { CameraVision(it.location, it.directionDegrees) },
+                ),
                 // A camera is "passed" if the route enters its field of view.
                 passedCameras = cameras.filter {
                     CameraVision(it.location, it.directionDegrees).seesRoute(r.polyline)

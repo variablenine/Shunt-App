@@ -1,18 +1,44 @@
 package app.shunt.solver.waypoints
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointToPolyline
+import app.shunt.solver.geo.pointToSegmentMeters
 
 /**
- * Emits the smallest set of intermediate points that pins the chosen route
- * against the unconstrained fastest route: find where the chosen polyline
- * diverges from the fastest one, and drop one waypoint at the most divergent
- * point of each stretch. Targets [MAX_WAYPOINTS] or fewer; when the routes
- * diverge in more places than that, the longest stretches win.
+ * Picks the intermediate points to pin the chosen route against the vehicle's
+ * own routing.
+ *
+ * The vehicle is not given our polyline — only a short chain of waypoints — and
+ * it routes *itself* between them. So every waypoint we omit is a stretch where
+ * the car may take its own line. For a camera-avoiding route that is the whole
+ * ballgame: a car that cuts the corner between two sparse waypoints can rejoin
+ * the fast road and drive straight past the camera the detour existed to avoid,
+ * while the app still shows the route as camera-free.
+ *
+ * So selection happens in two passes:
+ *  1. **Shape** — one waypoint at the most divergent point of each stretch where
+ *     the chosen route leaves the fastest one. This is what makes the car take
+ *     the detour at all.
+ *  2. **Safety** — for each consecutive pair of pins, ask whether a car cutting
+ *     straight between them would enter a camera's field of view that our own
+ *     route stays out of. Where it would, insert the route point that pulls
+ *     hardest away from that shortcut, and re-check. This spends the limited
+ *     waypoint budget where it actually prevents exposure.
+ *
+ * The budget itself is a real constraint: the vehicle API takes a bounded chain,
+ * and the fallback path sends one rate-limited command per waypoint. [MAX_WAYPOINTS]
+ * is deliberately conservative. **The vehicle's true limit is unverified** — it
+ * needs testing against a real car.
  */
 object WaypointExtractor {
-    const val MAX_WAYPOINTS = 5
+    /**
+     * Upper bound on intermediate waypoints. Conservative: the exact number the
+     * vehicle accepts is not yet confirmed on real hardware, and the fallback
+     * path costs one rate-limited command each.
+     */
+    const val MAX_WAYPOINTS = 8
 
     /** Chosen-route points farther than this from the fastest route count as divergent. */
     const val DIVERGENCE_THRESHOLD_METERS = 50.0
@@ -20,22 +46,34 @@ object WaypointExtractor {
     fun extract(
         chosen: List<GeoPoint>,
         fastest: List<GeoPoint>,
+        avoid: List<CameraVision> = emptyList(),
         maxWaypoints: Int = MAX_WAYPOINTS,
         thresholdMeters: Double = DIVERGENCE_THRESHOLD_METERS,
     ): List<GeoPoint> {
         if (chosen.size < 2 || fastest.size < 2) return emptyList()
 
-        // Contiguous runs of chosen-route indices that are off the fastest route.
-        data class Run(val start: Int, val end: Int, val peakIndex: Int, val lengthMeters: Double)
+        val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
+        val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints)
+        return pinned.map { chosen[it] }
+    }
+
+    /** Indices of the most divergent point of each stretch off the fastest route. */
+    private fun shapeIndices(
+        chosen: List<GeoPoint>,
+        fastest: List<GeoPoint>,
+        maxWaypoints: Int,
+        thresholdMeters: Double,
+    ): List<Int> {
+        data class Run(val peakIndex: Int, val lengthMeters: Double)
         val runs = mutableListOf<Run>()
         var runStart = -1
         var peakIndex = -1
         var peakDistance = -1.0
         var runLength = 0.0
 
-        fun closeRun(endExclusive: Int) {
+        fun closeRun() {
             if (runStart >= 0) {
-                runs += Run(runStart, endExclusive - 1, peakIndex, runLength)
+                runs += Run(peakIndex, runLength)
                 runStart = -1; peakIndex = -1; peakDistance = -1.0; runLength = 0.0
             }
         }
@@ -47,15 +85,88 @@ object WaypointExtractor {
                 if (d > peakDistance) { peakDistance = d; peakIndex = i }
                 if (i > 0) runLength += haversineMeters(chosen[i - 1], chosen[i])
             } else {
-                closeRun(i)
+                closeRun()
             }
         }
-        closeRun(chosen.size)
+        closeRun()
 
         return runs
             .sortedByDescending { it.lengthMeters }
             .take(maxWaypoints)
-            .sortedBy { it.peakIndex } // restore route order
-            .map { chosen[it.peakIndex] }
+            .map { it.peakIndex }
+            .sorted() // restore route order
+    }
+
+    /**
+     * Insert extra waypoints wherever a car cutting straight from one pin to the
+     * next would pass through a camera our route avoids, until no such shortcut
+     * remains or the budget runs out.
+     */
+    private fun pinAgainstShortcuts(
+        chosen: List<GeoPoint>,
+        avoid: List<CameraVision>,
+        shape: List<Int>,
+        maxWaypoints: Int,
+    ): List<Int> {
+        if (avoid.isEmpty()) return shape
+
+        // Only cameras our own route genuinely stays clear of are worth pinning
+        // against — one the route knowingly passes is already reported to the
+        // user, and no waypoint will change that.
+        val avoided = avoid.filterNot { it.seesRoute(chosen) }
+        if (avoided.isEmpty()) return shape
+
+        // Work over the full chain including the endpoints, which bound the
+        // first and last shortcuts.
+        val pins = (listOf(0) + shape + listOf(chosen.lastIndex)).distinct().toMutableList()
+
+        var budget = maxWaypoints - shape.size
+        var madeProgress = true
+        while (budget > 0 && madeProgress) {
+            madeProgress = false
+            var i = 0
+            while (i < pins.size - 1 && budget > 0) {
+                val a = pins[i]
+                val b = pins[i + 1]
+                if (b - a > 1 && shortcutIsExposed(chosen, a, b, avoided)) {
+                    val insert = mostDivergentBetween(chosen, a, b)
+                    if (insert != null) {
+                        pins.add(i + 1, insert)
+                        budget--
+                        madeProgress = true
+                        continue // re-check the first half of the split span
+                    }
+                }
+                i++
+            }
+        }
+
+        // Endpoints are the origin and destination, supplied separately.
+        return pins.filter { it != 0 && it != chosen.lastIndex }
+    }
+
+    /** True if the straight line from `chosen[a]` to `chosen[b]` enters a camera's view. */
+    private fun shortcutIsExposed(
+        chosen: List<GeoPoint>,
+        a: Int,
+        b: Int,
+        avoided: List<CameraVision>,
+    ): Boolean {
+        val chord = listOf(chosen[a], chosen[b])
+        return avoided.any { it.seesRoute(chord) }
+    }
+
+    /**
+     * The route point between [a] and [b] that sits farthest from the straight
+     * line between them — the one that most forces the car off the shortcut.
+     */
+    private fun mostDivergentBetween(chosen: List<GeoPoint>, a: Int, b: Int): Int? {
+        var best = -1
+        var bestDistance = 0.0
+        for (i in (a + 1) until b) {
+            val d = pointToSegmentMeters(chosen[i], chosen[a], chosen[b])
+            if (d > bestDistance) { bestDistance = d; best = i }
+        }
+        return best.takeIf { it >= 0 }
     }
 }
