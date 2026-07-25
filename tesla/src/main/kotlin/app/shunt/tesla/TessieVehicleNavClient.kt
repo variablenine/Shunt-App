@@ -9,6 +9,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
@@ -89,20 +90,48 @@ class TessieVehicleNavClient(
         return shareDestination(chain.last())
     }
 
-    /** Share a single destination as text — the one navigation command the proxy has. */
+    /**
+     * Share a single destination via Tessie's own `share` command.
+     *
+     * Not the Fleet passthrough: Tesla's signed-command proxy answers
+     * navigation_request with "command requires using the REST API" — it knows
+     * the command but refuses to sign it. Tessie's native endpoint performs that
+     * REST call itself, which is what actually reaches the car. It takes one
+     * destination and no waypoints, so the route shape is lost.
+     */
     private suspend fun shareDestination(point: GeoPoint): PushResult {
-        val body = json.encodeToString(
-            NavigationRequest(
-                value = mapOf<String, String>(SHARE_TEXT_KEY to "${point.lat},${point.lon}"),
-                locale = locale,
-                timestampMs = nowMillis(),
-            ),
-        )
-        return when (val outcome = executeCommand("navigation_request", body)) {
-            CommandOutcome.Ok -> PushResult.DestinationOnly(
+        rateLimiter.acquire()
+        val url = "$baseUrl/$vin/command/share".toHttpUrl().newBuilder()
+            .addQueryParameter("value", "${point.lat},${point.lon}")
+            .addQueryParameter("locale", locale)
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $bearerToken")
+            .post(EMPTY_BODY)
+            .build()
+
+        val (code, text) = runCatching {
+            withContext(Dispatchers.IO) {
+                http.newCall(request).execute().use { it.code to it.body?.string().orEmpty() }
+            }
+        }.getOrElse { e ->
+            return PushResult.Failed("network error: ${e.message}", retryable = true)
+        }
+
+        if (code !in 200..299) {
+            return PushResult.Failed(
+                "HTTP $code${text.take(200).let { if (it.isBlank()) "" else ": $it" }}",
+                retryable = statusRetryable(code),
+            )
+        }
+        val ok = runCatching { json.decodeFromString<ShareResponse>(text).result }.getOrDefault(false)
+        return if (ok) {
+            PushResult.DestinationOnly(
                 "this vehicle only accepts a single destination, not a waypoint route",
             )
-            is CommandOutcome.Rejected -> PushResult.Failed(outcome.reason, outcome.retryable)
+        } else {
+            PushResult.Failed("the vehicle rejected the destination", retryable = true)
         }
     }
 
@@ -196,12 +225,7 @@ class TessieVehicleNavClient(
     private data class WaypointsRequest(val waypoints: String)
 
     @Serializable
-    private data class NavigationRequest(
-        val value: Map<String, String>,
-        val locale: String,
-        @SerialName("timestamp_ms") val timestampMs: Long,
-        val type: String = "share_ext_content_raw",
-    )
+    private data class ShareResponse(val result: Boolean = false)
 
     @Serializable
     private data class CommandResponse(val response: CommandResult? = null, val error: String? = null)
@@ -210,8 +234,8 @@ class TessieVehicleNavClient(
     private data class CommandResult(val result: Boolean = false, val reason: String = "")
 
     private companion object {
-        /** Tesla's share payload carries the destination under this key. */
-        const val SHARE_TEXT_KEY = "android.intent.extra.TEXT"
+        /** Tessie's share command takes its parameters in the query string. */
+        val EMPTY_BODY = "".toRequestBody(null)
 
         const val ORDER_REPLACE_TRIP = 1
         const val ORDER_APPEND_STOP = 3

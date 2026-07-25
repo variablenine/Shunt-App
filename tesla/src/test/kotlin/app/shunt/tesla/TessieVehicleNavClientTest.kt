@@ -190,7 +190,7 @@ class TessieVehicleNavClientTest {
         val invalid = """{"response": null, "error": "invalid_command", "error_description": ""}"""
         server.enqueue(MockResponse().setResponseCode(400).setBody(invalid)) // waypoints
         server.enqueue(MockResponse().setResponseCode(400).setBody(invalid)) // gps chain
-        server.enqueue(MockResponse().setBody("""{"response":{"result":true,"reason":""}}""")) // share
+        server.enqueue(MockResponse().setBody("""{"result":true}""")) // Tessie native share
 
         val client = TessieVehicleNavClient(
             http = OkHttpClient(),
@@ -209,13 +209,15 @@ class TessieVehicleNavClientTest {
 
         server.takeRequest() // waypoints attempt
         server.takeRequest() // gps attempt
+        // Tessie's OWN share endpoint, not the Fleet passthrough: the signed
+        // command proxy answers navigation_request with "requires using the
+        // REST API", so only this path actually reaches the car.
         val share = server.takeRequest()
-        assertEquals("navigation_request", share.command())
-        val body = share.body.readUtf8()
-        assertTrue("share_ext_content_raw" in body, "body was $body")
-        assertTrue("android.intent.extra.TEXT" in body, "body was $body")
+        val path = share.path.orEmpty()
+        assertTrue("/VIN/command/share" in path, "path was $path")
+        assertTrue("/api/1/vehicles" !in path, "must not use the signing passthrough; was $path")
         // The final destination of the chain is what gets shared.
-        assertTrue("${chain.last().lat},${chain.last().lon}" in body, "body was $body")
+        assertTrue("${chain.last().lat}%2C${chain.last().lon}" in path, "path was $path")
         server.shutdown()
     }
 }
