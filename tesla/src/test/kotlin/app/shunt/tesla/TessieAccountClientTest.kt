@@ -62,4 +62,39 @@ class TessieAccountClientTest {
         assertEquals(0, server.requestCount)
         server.shutdown()
     }
+
+    @Test
+    fun `reads the active route and battery without waking the car`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setBody(
+                """{"drive_state":{"active_route_destination":"Prairie Supercharger",
+                    "active_route_latitude":39.12,"active_route_longitude":-98.34,
+                    "active_route_miles_to_arrival":42.5,
+                    "active_route_energy_at_arrival":18.0},
+                    "charge_state":{"battery_level":64,"est_battery_range":180.5}}""",
+            ),
+        )
+        val route = client(server).activeRoute("tok", "VIN")!!
+        assertEquals("Prairie Supercharger", route.destinationName)
+        assertEquals(39.12, route.latitude!!, 1e-6)
+        assertEquals(64, route.batteryLevel)
+        assertTrue(route.isNavigating)
+
+        val request = server.takeRequest()
+        assertEquals("GET", request.method, "reading state must never command the car")
+        // use_cache keeps a sleeping car asleep.
+        assertTrue("use_cache=true" in request.path.orEmpty(), "path was ${request.path}")
+        server.shutdown()
+    }
+
+    @Test
+    fun `a car that is not navigating reports so rather than failing`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"charge_state":{"battery_level":80}}"""))
+        val route = client(server).activeRoute("tok", "VIN")!!
+        assertTrue(!route.isNavigating)
+        assertEquals(80, route.batteryLevel)
+        server.shutdown()
+    }
 }

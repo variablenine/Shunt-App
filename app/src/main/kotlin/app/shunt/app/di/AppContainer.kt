@@ -112,6 +112,20 @@ class AppContainer(context: Context) {
             is ConnectionCheck.Unreachable -> app.shunt.app.ui.VehicleCheckResult.Unreachable(result.detail)
         }
 
+    /** What the car says it's navigating to. Read-only; never wakes it. */
+    suspend fun readCarNavState(token: String, vin: String): app.shunt.app.ui.CarNavState? =
+        tessieAccount.activeRoute(token, vin)?.let {
+            app.shunt.app.ui.CarNavState(
+                destinationName = it.destinationName,
+                latitude = it.latitude,
+                longitude = it.longitude,
+                milesToArrival = it.milesToArrival,
+                energyAtArrival = it.energyAtArrival,
+                batteryLevel = it.batteryLevel,
+                estimatedRangeMiles = it.estimatedRangeMiles,
+            )
+        }
+
     /**
      * Credentials in force: what the user entered, else anything baked in at
      * build time (a developer convenience via local.properties).

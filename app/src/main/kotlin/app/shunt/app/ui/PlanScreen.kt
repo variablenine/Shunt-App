@@ -61,6 +61,7 @@ data class VehicleSettingsUi(
     val onSave: (token: String, vin: String) -> Unit,
     val onClear: () -> Unit,
     val onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
+    val onReadCarState: (suspend (token: String, vin: String) -> CarNavState?)? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -125,6 +126,7 @@ fun PlanScreen(
                 onSave = vehicleSettings.onSave,
                 onClear = vehicleSettings.onClear,
                 onTestConnection = vehicleSettings.onTestConnection,
+                onReadCarState = vehicleSettings.onReadCarState,
                 onDismiss = { showVehicleSettings = false },
             )
         }

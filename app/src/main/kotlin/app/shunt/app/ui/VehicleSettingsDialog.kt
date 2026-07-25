@@ -43,12 +43,17 @@ fun VehicleSettingsDialog(
      * no command, so it can't make the car do anything.
      */
     onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
+    /** Reads what the car currently thinks it's navigating to. Read-only. */
+    onReadCarState: (suspend (token: String, vin: String) -> CarNavState?)? = null,
 ) {
     var token by remember { mutableStateOf(currentToken) }
     var vin by remember { mutableStateOf(currentVin) }
     var revealToken by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<VehicleCheckResult?>(null) }
+    var navState by remember { mutableStateOf<CarNavState?>(null) }
+    var readingNav by remember { mutableStateOf(false) }
+    var navRead by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     AlertDialog(
@@ -132,6 +137,22 @@ fun VehicleSettingsDialog(
                     ) { Text(if (testing) "Checking…" else "Test connection") }
 
                     testResult?.let { ConnectionResultText(it, onPickVin = { vin = it }) }
+                }
+
+                if (onReadCarState != null) {
+                    Spacer(Modifier.height(10.dp))
+                    TextButton(
+                        enabled = token.isNotBlank() && vin.isNotBlank() && !readingNav,
+                        onClick = {
+                            readingNav = true
+                            scope.launch {
+                                navState = onReadCarState(token, vin)
+                                navRead = true
+                                readingNav = false
+                            }
+                        },
+                    ) { Text(if (readingNav) "Reading…" else "What is my car navigating to?") }
+                    if (navRead) CarNavStateText(navState)
                 }
 
                 Spacer(Modifier.height(14.dp))
@@ -219,4 +240,52 @@ private fun ConnectionResultText(result: VehicleCheckResult, onPickVin: (String)
             color = scheme.error,
         )
     }
+}
+
+/** What the car reports about its current navigation, for the diagnostic readout. */
+data class CarNavState(
+    val destinationName: String?,
+    val latitude: Double?,
+    val longitude: Double?,
+    val milesToArrival: Double?,
+    val energyAtArrival: Double?,
+    val batteryLevel: Int?,
+    val estimatedRangeMiles: Double?,
+)
+
+/**
+ * Shows what the car says it's doing. The point of this readout is to settle a
+ * question no documentation answers: when Tesla's planner inserts a charging
+ * stop, does the reported destination become the *supercharger* or stay the
+ * *final destination*? Set a long trip in the car and read this to find out.
+ */
+@Composable
+private fun CarNavStateText(state: CarNavState?) {
+    val scheme = MaterialTheme.colorScheme
+    Spacer(Modifier.height(6.dp))
+    if (state == null) {
+        Text(
+            "Couldn't read the car's state.",
+            style = MaterialTheme.typography.labelSmall,
+            color = scheme.error,
+        )
+        return
+    }
+    val lines = buildList {
+        if (state.latitude != null && state.longitude != null) {
+            add("Navigating to: ${state.destinationName ?: "(unnamed)"}")
+            add("  at ${state.latitude}, ${state.longitude}")
+            state.milesToArrival?.let { add("  ${"%.1f".format(it)} mi to arrival") }
+            state.energyAtArrival?.let { add("  ${"%.0f".format(it)}% battery on arrival") }
+        } else {
+            add("The car isn't navigating anywhere right now.")
+        }
+        state.batteryLevel?.let { add("Battery: $it%") }
+        state.estimatedRangeMiles?.let { add("Estimated range: ${"%.0f".format(it)} mi") }
+    }
+    Text(
+        lines.joinToString("\n"),
+        style = MaterialTheme.typography.labelSmall,
+        color = scheme.onSurfaceVariant,
+    )
 }

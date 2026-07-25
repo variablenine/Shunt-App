@@ -14,6 +14,28 @@ data class VehicleSummary(val vin: String, val displayName: String, val state: S
     val isAwake: Boolean get() = state.equals("online", ignoreCase = true)
 }
 
+/**
+ * What the car currently thinks it is doing, read from cached state.
+ *
+ * The open question this exists to answer: when Tesla's own planner inserts a
+ * charging stop, does the active route report the *supercharger* or the *final
+ * destination*? That determines whether Shunt can route to the car's chosen
+ * charger, and no documentation settles it — a real vehicle does.
+ */
+data class ActiveRoute(
+    val destinationName: String?,
+    val latitude: Double?,
+    val longitude: Double?,
+    val milesToArrival: Double?,
+    val minutesToArrival: Double?,
+    /** Battery % the car predicts on arrival — negative/low means it must charge. */
+    val energyAtArrival: Double?,
+    val batteryLevel: Int?,
+    val estimatedRangeMiles: Double?,
+) {
+    val isNavigating: Boolean get() = latitude != null && longitude != null
+}
+
 /** Outcome of checking the credentials without touching the car. */
 sealed interface ConnectionCheck {
     data class Ok(val vehicles: List<VehicleSummary>) : ConnectionCheck
@@ -67,8 +89,43 @@ class TessieAccountClient(
         }
     }
 
+    /**
+     * Read the car's current state from Tessie's cache. `use_cache=true` means
+     * this never wakes the vehicle — it is safe to call while it sleeps.
+     */
+    suspend fun activeRoute(token: String, vin: String): ActiveRoute? {
+        if (token.isBlank() || vin.isBlank()) return null
+        val request = Request.Builder()
+            .url("$baseUrl/$vin/state?use_cache=true")
+            .header("Authorization", "Bearer $token")
+            .get()
+            .build()
+        val text = runCatching {
+            withContext(Dispatchers.IO) {
+                http.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) null else resp.body?.string()
+                }
+            }
+        }.getOrNull() ?: return null
+        return runCatching { parseState(text) }.getOrNull()
+    }
+
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+
+        fun parseState(body: String): ActiveRoute {
+            val state = json.decodeFromString<VehicleState>(body)
+            return ActiveRoute(
+                destinationName = state.driveState?.activeRouteDestination,
+                latitude = state.driveState?.activeRouteLatitude,
+                longitude = state.driveState?.activeRouteLongitude,
+                milesToArrival = state.driveState?.activeRouteMilesToArrival,
+                minutesToArrival = state.driveState?.activeRouteMinutesToArrival,
+                energyAtArrival = state.driveState?.activeRouteEnergyAtArrival,
+                batteryLevel = state.chargeState?.batteryLevel,
+                estimatedRangeMiles = state.chargeState?.estBatteryRange,
+            )
+        }
 
         fun parse(body: String): List<VehicleSummary> =
             json.decodeFromString<VehicleListResponse>(body).response.mapNotNull { v ->
@@ -80,6 +137,34 @@ class TessieAccountClient(
                 )
             }
     }
+
+    @Serializable
+    private data class VehicleState(
+        @kotlinx.serialization.SerialName("drive_state") val driveState: DriveState? = null,
+        @kotlinx.serialization.SerialName("charge_state") val chargeState: ChargeState? = null,
+    )
+
+    @Serializable
+    private data class DriveState(
+        @kotlinx.serialization.SerialName("active_route_destination")
+        val activeRouteDestination: String? = null,
+        @kotlinx.serialization.SerialName("active_route_latitude")
+        val activeRouteLatitude: Double? = null,
+        @kotlinx.serialization.SerialName("active_route_longitude")
+        val activeRouteLongitude: Double? = null,
+        @kotlinx.serialization.SerialName("active_route_miles_to_arrival")
+        val activeRouteMilesToArrival: Double? = null,
+        @kotlinx.serialization.SerialName("active_route_minutes_to_arrival")
+        val activeRouteMinutesToArrival: Double? = null,
+        @kotlinx.serialization.SerialName("active_route_energy_at_arrival")
+        val activeRouteEnergyAtArrival: Double? = null,
+    )
+
+    @Serializable
+    private data class ChargeState(
+        @kotlinx.serialization.SerialName("battery_level") val batteryLevel: Int? = null,
+        @kotlinx.serialization.SerialName("est_battery_range") val estBatteryRange: Double? = null,
+    )
 
     @Serializable
     private data class VehicleListResponse(val response: List<VehicleEntry> = emptyList())
