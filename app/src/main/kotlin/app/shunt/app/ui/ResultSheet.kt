@@ -182,6 +182,10 @@ private fun SolvedContent(
     Spacer(Modifier.height(4.dp))
     SelectedRouteDetail(phase.chosen)
 
+    // Immediately above Go — the moment the user decides to hand this to the car.
+    Spacer(Modifier.height(14.dp))
+    TeslaWipWarning()
+
     Spacer(Modifier.height(16.dp))
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Button(onClick = onGo, modifier = Modifier.weight(1f)) { Text("Go") }
@@ -331,6 +335,8 @@ private fun PushingContent(destination: Destination) {
         Spacer(Modifier.width(14.dp))
         Text("Sending route to your vehicle…", style = MaterialTheme.typography.bodyLarge)
     }
+    Spacer(Modifier.height(14.dp))
+    TeslaWipWarning()
 }
 
 @Composable
@@ -355,6 +361,9 @@ private fun DrivingContent(destination: Destination, cameraCount: Int, onCancel:
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    // Compact form: this is the screen that's up while actually driving.
+    Spacer(Modifier.height(12.dp))
+    TeslaWipWarning(compact = true)
     Spacer(Modifier.height(16.dp))
     OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel drive") }
 }

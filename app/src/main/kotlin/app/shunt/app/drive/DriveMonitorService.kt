@@ -61,6 +61,9 @@ class DriveMonitorService : Service() {
                 container.driveStatus.value = status
                 if (status is DriveStatus.Arrived) stopSelf()
             },
+            // Leaving the route voids the camera avoidance, so recover it:
+            // re-plan on-device from where the car actually is.
+            replan = { from -> container.replanFrom(from, plan.destination) },
         )
         monitorJob?.cancel()
         monitorJob = scope.launch {
@@ -85,6 +88,15 @@ class DriveMonitorService : Service() {
             .setSmallIcon(R.drawable.ic_drive_monitor)
             .setContentTitle("Shunt — monitoring drive")
             .setContentText("Guiding you to $destinationTitle")
+            // Expanded, this is on screen for the whole drive — the one place
+            // the caveat is guaranteed to be visible while actually driving.
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "Guiding you to $destinationTitle.\n\n" +
+                        "Tesla/FSD support is a work in progress — the route sent to the car " +
+                        "is unproven. Stay attentive and ready to take over.",
+                ),
+            )
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .build()

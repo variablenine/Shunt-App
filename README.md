@@ -22,15 +22,24 @@ and offers a few options** — from *Fastest* (may pass cameras) through
 *Balanced* to *Fewest cameras* — each labelled with its time, distance, and the
 cameras it passes, so the driver chooses their own trade-off.
 
-Under the hood each camera is a weighted "nogo" shaped by its **field of view**:
-a camera with a known facing watches a 180° wedge in front of it (so routes may
-pass behind it), while an unknown-facing camera is treated as watching every
-direction, with more distance. BRouter minimises time spent within any camera's
-view in a single shortest-path pass — no greedy backtracking, no route
-"technically" avoiding a camera while driving through its cone. Nothing is
-silent: every option states the cameras it passes,
-the map marks each one, and the drive monitor warns on approach while driving.
+Under the hood each camera is a "nogo" shaped by its **field of view**: a camera
+with a known facing watches a 180° wedge in front of it (so routes may pass
+behind it), while an unknown-facing camera is treated as watching every
+direction, with more distance. *Fewest cameras* blocks those zones outright, so
+it returns a camera-free route whenever one exists at any distance; *Balanced*
+weights them, trading a camera for a much shorter trip. Nothing is silent: every
+option states the cameras it passes, the map marks each one, and the drive
+monitor warns on approach while driving — and if you leave the planned route it
+says so, because the avoidance was computed for the road you're no longer on.
 See [docs/brouter-spike.md](docs/brouter-spike.md) for the engine's evaluation.
+
+> ### ⚠️ Tesla/FSD support is a work in progress
+>
+> Route planning, the map, and the on-phone drive alerts are working and
+> tested. **Sending the route to a vehicle is not proven on real cars yet** — it
+> may be rejected, altered, or driven differently than what Shunt shows. Never
+> rely on it to avoid a camera, and stay fully attentive and ready to take over
+> at any moment when using this alongside FSD.
 
 ## Architecture
 

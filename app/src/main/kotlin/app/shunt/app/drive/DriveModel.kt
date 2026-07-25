@@ -32,6 +32,18 @@ sealed interface DriveSignal {
         val imminent: Boolean,
     ) : DriveSignal
 
+    /**
+     * The vehicle has left the planned route by more than the configured
+     * tolerance, for long enough that it isn't GPS noise. This matters beyond
+     * navigation: the route's camera avoidance was computed for a path we are
+     * no longer on, so the "camera-free" promise no longer holds.
+     * [metersOffRoute] is the current distance from the planned line.
+     */
+    data class OffRoute(val at: GeoPoint, val metersOffRoute: Double) : DriveSignal
+
+    /** The vehicle rejoined the planned route after being off it. */
+    data object BackOnRoute : DriveSignal
+
     /** Reached the final destination. */
     data object Arrived : DriveSignal
 }
@@ -53,6 +65,19 @@ data class DriveMonitorConfig(
     val cameraWarnMeters: Double = 400.0,
     /** Second (escalated) camera warning tier. */
     val cameraImminentMeters: Double = 150.0,
+    /**
+     * Farther than this from the planned line counts as off it. Generous: a
+     * car's GPS routinely wanders 20 m, and a divided highway or a parallel
+     * frontage road can read as tens of metres off without being a wrong turn.
+     */
+    val offRouteMeters: Double = 80.0,
+    /** Within this of the line again counts as rejoined (hysteresis). */
+    val backOnRouteMeters: Double = 45.0,
+    /**
+     * Consecutive fixes beyond [offRouteMeters] before raising it — a single
+     * bad fix under a bridge or beside a building must not cry wolf.
+     */
+    val offRouteConsecutiveFixes: Int = 3,
 )
 
 /**
@@ -70,6 +95,33 @@ sealed interface Alert {
         val imminent: Boolean,
     ) : Alert {
         override val severity get() = if (imminent) Severity.URGENT else Severity.WARNING
+    }
+
+    /**
+     * Left the planned route. Urgent because the camera avoidance was computed
+     * for the path we're no longer on: cameras ahead may be unknown to us.
+     * [replanning] is true when a replacement route is already being worked out.
+     */
+    data class OffRoute(val metersOffRoute: Double, val replanning: Boolean) : Alert {
+        override val severity get() = Severity.URGENT
+    }
+
+    /** A replacement route was found and is now in force. */
+    data class Replanned(val camerasOnNewRoute: Int) : Alert {
+        override val severity get() = Severity.WARNING
+    }
+
+    /** Rejoined the planned route; its camera avoidance applies again. */
+    data object BackOnRoute : Alert {
+        override val severity get() = Severity.INFO
+    }
+
+    /**
+     * We are off the planned route and could not work out a new one, so no
+     * camera avoidance is in force at all until the driver rejoins.
+     */
+    data class ReplanFailed(val reason: String) : Alert {
+        override val severity get() = Severity.URGENT
     }
 
     /** advanceTo failed mid-drive — the car may still stop at the passed waypoint. */

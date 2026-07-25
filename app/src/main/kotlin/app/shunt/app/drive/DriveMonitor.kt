@@ -22,9 +22,16 @@ class DriveMonitor(
     private val alerter: Alerter,
     private val config: DriveMonitorConfig = DriveMonitorConfig(),
     private val onStatus: (DriveStatus) -> Unit = {},
+    /**
+     * Works out a fresh camera-aware plan from the vehicle's current position
+     * when it has left the planned route, or null if it can't. Absent, leaving
+     * the route is still detected and alerted — just not recovered from.
+     */
+    private val replan: (suspend (from: GeoPoint) -> DrivePlan?)? = null,
 ) {
     suspend fun run(plan: DrivePlan, locations: Flow<LocationUpdate>) {
-        val engine = DriveMonitorEngine(plan.chain, plan.cameras, config)
+        var current = plan
+        var engine = newEngine(current)
         onStatus(DriveStatus.Driving(plan.destination.title))
         var arrived = false
         try {
@@ -37,6 +44,18 @@ class DriveMonitor(
                                 signal.camera, signal.distanceMeters, signal.side, signal.imminent,
                             ),
                         )
+                        is DriveSignal.OffRoute -> {
+                            // Say it first and unconditionally: from here the
+                            // camera avoidance is void until a new route is in
+                            // force, and the driver must know that immediately
+                            // rather than after a re-plan that may fail.
+                            alerter.alert(Alert.OffRoute(signal.metersOffRoute, replanning = replan != null))
+                            replanFrom(signal.at, current)?.let { fresh ->
+                                current = fresh
+                                engine = newEngine(fresh)
+                            }
+                        }
+                        DriveSignal.BackOnRoute -> alerter.alert(Alert.BackOnRoute)
                         DriveSignal.Arrived -> {
                             arrived = true
                             alerter.alert(Alert.Arrived)
@@ -48,6 +67,34 @@ class DriveMonitor(
         } finally {
             if (!arrived) onStatus(DriveStatus.Idle)
         }
+    }
+
+    private fun newEngine(plan: DrivePlan) =
+        DriveMonitorEngine(plan.chain, plan.cameras, config, plan.polyline)
+
+    /**
+     * Re-plan from [from] and put the new route in force, pushing it to the
+     * vehicle. Returns the new plan, or null when we could not produce one —
+     * in which case the driver has already been told they're off route and is
+     * additionally told that no avoidance is active.
+     */
+    private suspend fun replanFrom(from: GeoPoint, previous: DrivePlan): DrivePlan? {
+        val doReplan = replan ?: return null
+        val fresh = runCatching { doReplan(from) }.getOrNull()
+        if (fresh == null) {
+            alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
+            return null
+        }
+        // Hand the car the new chain. A push failure is loud but doesn't discard
+        // the plan: our own camera warnings still follow the new route, which is
+        // the part that matters when the vehicle isn't cooperating.
+        val pushed = runCatching { vehicle.pushRoute(fresh.chain) }
+            .getOrElse { e -> PushResult.Failed("replan push threw: ${e.message}", retryable = true) }
+        if (pushed is PushResult.Failed) {
+            alerter.alert(Alert.AdvanceFailed(fresh.chain, pushed.reason, pushed.retryable))
+        }
+        alerter.alert(Alert.Replanned(fresh.cameras.size))
+        return fresh
     }
 
     private suspend fun advance(remaining: List<GeoPoint>) {

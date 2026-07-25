@@ -120,4 +120,102 @@ class DriveMonitorTest {
         monitor.run(plan(), flowOf(fix(west(w1, 1000.0)), fix(west(w1, 300.0))))
         assertEquals(DriveStatus.Idle, statuses.last())
     }
+
+    // ---- Leaving the planned route --------------------------------------
+
+    /** Straight eastbound line; the plan's polyline for adherence checks. */
+    private val routeLine = listOf(GeoPoint(33.0, -97.01), GeoPoint(33.0, -96.95))
+
+    private fun routedPlan(cameras: List<Camera> = emptyList()) = DrivePlan(
+        destination = Destination("Home", dest),
+        chain = chain,
+        cameras = cameras,
+        polyline = routeLine,
+    )
+
+    private fun north(p: GeoPoint, meters: Double) =
+        GeoPoint(p.lat + meters / 111_320.0, p.lon)
+
+    /** Enough consecutive off-line fixes to clear the hysteresis. */
+    private fun departure(): List<LocationUpdate> {
+        val off = north(GeoPoint(33.0, -96.995), 300.0)
+        return List(4) { fix(off) }
+    }
+
+    @Test
+    fun `leaving the route warns that camera avoidance no longer applies`() = runTest {
+        val alerter = RecordingAlerter()
+        // No re-planner wired: detection alone must still be loud and honest.
+        DriveMonitor(FakeVehicleNavClient(), alerter).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        val offRoute = alerter.alerts.filterIsInstance<Alert.OffRoute>().single()
+        assertEquals(Alert.Severity.URGENT, offRoute.severity, "leaving the route is urgent")
+        assertTrue(!offRoute.replanning, "no re-planner was provided")
+    }
+
+    @Test
+    fun `leaving the route re-plans from the car's actual position and pushes it`() = runTest {
+        val alerter = RecordingAlerter()
+        val vehicle = FakeVehicleNavClient()
+        val freshChain = listOf(GeoPoint(33.2, -96.97), dest)
+        var replannedFrom: GeoPoint? = null
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = alerter,
+            replan = { from ->
+                replannedFrom = from
+                DrivePlan(Destination("Home", dest), freshChain, emptyList(), freshChain)
+            },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertTrue(replannedFrom != null, "must re-plan from where the car actually is")
+        assertTrue(
+            replannedFrom!!.lat > 33.001,
+            "must re-plan from the off-route position, not the original start",
+        )
+        // The driver is told before the re-plan lands, then told the outcome.
+        assertTrue(alerter.alerts.any { it is Alert.OffRoute })
+        val replanned = alerter.alerts.filterIsInstance<Alert.Replanned>().single()
+        assertEquals(0, replanned.camerasOnNewRoute)
+        // And the car got the new route.
+        val pushes = vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>()
+        assertEquals(listOf(freshChain), pushes.map { it.waypoints })
+    }
+
+    @Test
+    fun `a failed re-plan says plainly that nothing is protecting you`() = runTest {
+        val alerter = RecordingAlerter()
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = alerter,
+            replan = { null }, // e.g. camera data unavailable out here
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        val failed = alerter.alerts.filterIsInstance<Alert.ReplanFailed>().single()
+        assertEquals(Alert.Severity.URGENT, failed.severity)
+        assertTrue(alerter.alerts.none { it is Alert.Replanned }, "must not claim a new route")
+    }
+
+    @Test
+    fun `after re-planning, camera warnings follow the new route`() = runTest {
+        val alerter = RecordingAlerter()
+        // A camera that is only on the *replacement* route.
+        val onNewRoute = Camera(42, north(GeoPoint(33.0, -96.99), 300.0))
+        val off = north(GeoPoint(33.0, -96.995), 300.0)
+        val fixes = List(4) { fix(off) } + fix(north(GeoPoint(33.0, -96.991), 300.0))
+
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = alerter,
+            replan = { from ->
+                DrivePlan(Destination("Home", dest), listOf(dest), listOf(onNewRoute), listOf(from, dest))
+            },
+        ).run(routedPlan(), flowOf(*fixes.toTypedArray()))
+
+        assertTrue(
+            alerter.alerts.filterIsInstance<Alert.CameraApproaching>().any { it.camera.id == 42L },
+            "the new plan's cameras must be the ones warned about; alerts=${alerter.alerts}",
+        )
+    }
 }

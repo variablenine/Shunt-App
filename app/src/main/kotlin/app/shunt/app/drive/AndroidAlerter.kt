@@ -62,6 +62,37 @@ class AndroidAlerter(private val context: Context) : Alerter {
             "Couldn't advance the next waypoint (${alert.reason}). " +
                 if (alert.retryable) "Retrying." else "The car may stop at the passed waypoint.",
         )
+        is Alert.OffRoute -> Triple(
+            OFF_ROUTE_NOTIF,
+            "Off the planned route",
+            "You're ${formatFeet(alert.metersOffRoute)} off the route. " +
+                if (alert.replanning) {
+                    "Camera avoidance doesn't apply here — finding a new route."
+                } else {
+                    "Camera avoidance doesn't apply here. Rejoin the route or re-plan."
+                },
+        )
+        is Alert.Replanned -> Triple(
+            OFF_ROUTE_NOTIF,
+            "New route in force",
+            if (alert.camerasOnNewRoute == 0) {
+                "Re-planned from here and it's camera-free."
+            } else {
+                "Re-planned from here. It passes ${alert.camerasOnNewRoute} camera" +
+                    (if (alert.camerasOnNewRoute == 1) "." else "s.")
+            },
+        )
+        is Alert.ReplanFailed -> Triple(
+            OFF_ROUTE_NOTIF,
+            "No camera avoidance active",
+            "Off the route and couldn't work out a new one (${alert.reason}). " +
+                "Cameras ahead are unknown — drive as if unprotected.",
+        )
+        Alert.BackOnRoute -> Triple(
+            OFF_ROUTE_NOTIF,
+            "Back on the route",
+            "Camera avoidance applies again.",
+        )
         Alert.Arrived -> Triple(ARRIVED_NOTIF, "Arrived", "You've reached your destination.")
     }
 
@@ -103,5 +134,8 @@ class AndroidAlerter(private val context: Context) : Alerter {
         const val CAMERA_NOTIF_BASE = 2000
         const val FAILURE_NOTIF = 1001
         const val ARRIVED_NOTIF = 1002
+
+        /** Route-adherence updates share an id so each replaces the last. */
+        const val OFF_ROUTE_NOTIF = 1003
     }
 }

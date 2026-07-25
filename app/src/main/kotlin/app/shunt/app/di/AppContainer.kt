@@ -163,6 +163,32 @@ class AppContainer(context: Context) {
         vehicle = vehicleNavClient,
     )
 
+    /**
+     * A fresh camera-aware plan from [from] to [destination], for the drive
+     * monitor when the vehicle has left its route. Returns null if no route can
+     * be produced (including when camera data can't be vetted) — the caller
+     * must then tell the driver there is no avoidance in force rather than
+     * carry on as if there were.
+     */
+    suspend fun replanFrom(
+        from: app.shunt.core.GeoPoint,
+        destination: app.shunt.app.plan.Destination,
+    ): DrivePlan? {
+        val outcome = runCatching { brouterPlanner.plan(from, destination.location) }.getOrNull()
+        val chosen = (outcome as? app.shunt.solver.brouter.PlanOutcome.Routes)
+            ?.options
+            // Prefer the camera-free option when the detour exists; that is the
+            // whole point of re-planning after leaving the route.
+            ?.minByOrNull { it.camerasPassed }
+            ?: return null
+        return DrivePlan(
+            destination = destination,
+            chain = chosen.waypoints + destination.location,
+            cameras = chosen.passedCameras,
+            polyline = chosen.polyline,
+        )
+    }
+
     /** Download every tile this trip needs, reporting overall 0f..1f progress. */
     private suspend fun downloadTripTiles(
         origin: app.shunt.core.GeoPoint,
