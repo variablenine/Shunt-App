@@ -28,6 +28,7 @@ import app.shunt.app.plan.PlanViewModel
 import app.shunt.app.ui.CrashScreen
 import app.shunt.app.ui.PlanActions
 import app.shunt.app.ui.PlanScreen
+import app.shunt.app.ui.VehicleSettingsUi
 import app.shunt.app.ui.theme.ShuntTheme
 
 class MainActivity : ComponentActivity() {
@@ -103,9 +104,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                val credentials by container.vehicleCredentials.credentials.collectAsStateWithLifecycle()
+
                 PlanScreen(
                     state = state,
                     cameraViewportFetcher = container.viewportCameras,
+                    vehicleSettings = VehicleSettingsUi(
+                        token = credentials.token,
+                        vin = credentials.vin,
+                        encryptedStorage = container.vehicleCredentials.usingEncryptedStorage,
+                        onSave = container.vehicleCredentials::save,
+                        onClear = container.vehicleCredentials::clear,
+                    ),
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,
                         onSuggestionSelected = vm::onSuggestionSelected,

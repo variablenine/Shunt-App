@@ -18,10 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
@@ -29,7 +31,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -45,6 +50,15 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.search.Suggestion
+
+/** Everything the vehicle-settings dialog needs, or null to hide the entry point. */
+data class VehicleSettingsUi(
+    val token: String,
+    val vin: String,
+    val encryptedStorage: Boolean,
+    val onSave: (token: String, vin: String) -> Unit,
+    val onClear: () -> Unit,
+)
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
 class PlanActions(
@@ -66,10 +80,12 @@ fun PlanScreen(
     actions: PlanActions,
     modifier: Modifier = Modifier,
     cameraViewportFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
+    vehicleSettings: VehicleSettingsUi? = null,
 ) {
     val (polyline, cameras) = routeOverlay(state.phase)
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    var showVehicleSettings by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(
@@ -85,8 +101,23 @@ fun PlanScreen(
                 Spacer(Modifier.height(8.dp))
             }
             if (state.phase is Phase.Browsing) {
-                SearchAndFavorites(state, actions)
+                SearchAndFavorites(
+                    state,
+                    actions,
+                    onOpenVehicleSettings = vehicleSettings?.let { { showVehicleSettings = true } },
+                )
             }
+        }
+
+        if (showVehicleSettings && vehicleSettings != null) {
+            VehicleSettingsDialog(
+                currentToken = vehicleSettings.token,
+                currentVin = vehicleSettings.vin,
+                encryptedStorage = vehicleSettings.encryptedStorage,
+                onSave = vehicleSettings.onSave,
+                onClear = vehicleSettings.onClear,
+                onDismiss = { showVehicleSettings = false },
+            )
         }
 
         if (state.phase !is Phase.Browsing) {
@@ -118,17 +149,28 @@ fun PlanScreen(
 }
 
 @Composable
-private fun SearchAndFavorites(state: PlanUiState, actions: PlanActions) {
+private fun SearchAndFavorites(
+    state: PlanUiState,
+    actions: PlanActions,
+    onOpenVehicleSettings: (() -> Unit)?,
+) {
     Surface(tonalElevation = 2.dp, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = actions.onQueryChange,
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                placeholder = { Text("Where to?") },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = actions.onQueryChange,
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    placeholder = { Text("Where to?") },
+                    modifier = Modifier.weight(1f),
+                )
+                if (onOpenVehicleSettings != null) {
+                    IconButton(onClick = onOpenVehicleSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Vehicle settings")
+                    }
+                }
+            }
 
             if (state.suggestions.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {

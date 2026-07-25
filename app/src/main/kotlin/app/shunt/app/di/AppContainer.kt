@@ -97,13 +97,51 @@ class AppContainer(context: Context) {
      * the real client is the one construction below — everything downstream
      * depends only on [VehicleNavClient].
      */
-    val vehicleNavClient: VehicleNavClient by lazy {
-        val token = BuildConfig.TESSIE_TOKEN
-        val vin = BuildConfig.TESSIE_VIN
-        if (token.isNotBlank() && vin.isNotBlank()) {
-            TessieVehicleNavClient(http = http, bearerToken = token, vin = vin)
-        } else {
-            FakeVehicleNavClient()
+    /** The user's Tessie token + VIN, entered in-app and stored encrypted. */
+    val vehicleCredentials = VehicleCredentialsStore(appContext)
+
+    /**
+     * Credentials in force: what the user entered, else anything baked in at
+     * build time (a developer convenience via local.properties).
+     */
+    fun effectiveCredentials(): VehicleCredentials {
+        val entered = vehicleCredentials.credentials.value
+        if (entered.isConfigured) return entered
+        return VehicleCredentials(BuildConfig.TESSIE_TOKEN, BuildConfig.TESSIE_VIN)
+    }
+
+    /** True when no vehicle is configured, so Go runs against the fake client. */
+    fun vehicleUnconfigured(): Boolean = !effectiveCredentials().isConfigured
+
+    /**
+     * The single vehicle-client seam. It delegates per call rather than being
+     * built once, so saving credentials takes effect immediately — anything
+     * holding this reference (the drive monitor, mid-trip) picks up the change
+     * without an app restart. With none configured it stays on the fake, so a
+     * keyless build and CI still work.
+     */
+    val vehicleNavClient: VehicleNavClient = object : VehicleNavClient {
+        override suspend fun pushRoute(waypoints: List<app.shunt.core.GeoPoint>) =
+            delegate().pushRoute(waypoints)
+
+        override suspend fun advanceTo(remaining: List<app.shunt.core.GeoPoint>) =
+            delegate().advanceTo(remaining)
+
+        private var cachedFor: VehicleCredentials? = null
+        private var cached: VehicleNavClient = FakeVehicleNavClient()
+
+        @Synchronized
+        private fun delegate(): VehicleNavClient {
+            val creds = effectiveCredentials()
+            if (creds != cachedFor) {
+                cachedFor = creds
+                cached = if (creds.isConfigured) {
+                    TessieVehicleNavClient(http = http, bearerToken = creds.token, vin = creds.vin)
+                } else {
+                    FakeVehicleNavClient()
+                }
+            }
+            return cached
         }
     }
 

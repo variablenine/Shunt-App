@@ -120,6 +120,7 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.maplibre)
+    implementation(libs.androidx.security.crypto)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(kotlin("test"))
