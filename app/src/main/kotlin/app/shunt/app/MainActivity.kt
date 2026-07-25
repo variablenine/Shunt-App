@@ -127,6 +127,7 @@ class MainActivity : ComponentActivity() {
                         onDismiss = vm::onDismissResult,
                         onSaveHome = { vm.onSaveFavorite(FavoriteSlot.HOME, it) },
                         onSaveWork = { vm.onSaveFavorite(FavoriteSlot.WORK, it) },
+                        onMapLongPress = vm::onMapLongPress,
                     ),
                 )
             }

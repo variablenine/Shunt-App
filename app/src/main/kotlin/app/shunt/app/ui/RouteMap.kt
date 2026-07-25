@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,6 +116,8 @@ fun RouteMap(
     modifier: Modifier = Modifier,
     showLocation: Boolean = true,
     cameraFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
+    /** Long-press anywhere to route there, Google-Maps style. */
+    onLongPress: ((GeoPoint) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -130,6 +133,9 @@ fun RouteMap(
     // Set by the map's camera-idle listener; drives the viewport fetch below.
     var requestedBounds by remember { mutableStateOf<BoundingBox?>(null) }
     val locationActivated = remember { mutableStateOf(false) }
+    // The map listeners are registered once; this keeps them pointing at the
+    // current callback instead of the one captured on first composition.
+    val longPress = rememberUpdatedState(onLongPress)
     // Which route we've already framed, so we fit once per route and don't
     // fight the user's panning afterward.
     val fitKey = remember { mutableStateOf<Int?>(null) }
@@ -170,6 +176,18 @@ fun RouteMap(
                     }.getOrNull()
                     val cam = hit?.let { id -> viewportCameras.firstOrNull { it.id == id } }
                     if (cam != null) { selectedCamera = cam; true } else false
+                }
+                // Long-press anywhere to route to that spot.
+                map.addOnMapLongClickListener { latLng ->
+                    val handler = longPress.value
+                    if (handler == null) {
+                        false
+                    } else {
+                        runCatching { GeoPoint(latLng.latitude, latLng.longitude) }
+                            .getOrNull()
+                            ?.let { handler(it); true }
+                            ?: false
+                    }
                 }
             }
         }

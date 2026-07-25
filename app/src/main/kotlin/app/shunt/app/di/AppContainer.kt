@@ -90,13 +90,6 @@ class AppContainer(context: Context) {
             (brouterRouter.lastFailureDiagnostic?.let { " | $it" } ?: "")
     }
 
-    /**
-     * The single vehicle-client seam. The production [TessieVehicleNavClient]
-     * is used when a Tessie token + VIN are configured; otherwise the app
-     * runs against the fake, so keyless builds and CI still work. Flipping to
-     * the real client is the one construction below — everything downstream
-     * depends only on [VehicleNavClient].
-     */
     /** The user's Tessie token + VIN, entered in-app and stored encrypted. */
     val vehicleCredentials = VehicleCredentialsStore(appContext)
 
@@ -199,6 +192,7 @@ class AppContainer(context: Context) {
         },
         favoritesStore = favoritesStore,
         vehicle = vehicleNavClient,
+        placeNamer = { point -> nominatimSearch.reverse(point)?.title },
     )
 
     /**

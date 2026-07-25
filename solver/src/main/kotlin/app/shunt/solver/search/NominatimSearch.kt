@@ -60,6 +60,39 @@ class NominatimSearch(
         return parse(body)
     }
 
+    /**
+     * The place at [point], for naming a spot the user picked straight off the
+     * map. Returns null if nothing is known there (open country, mid-lake) or
+     * the lookup fails — the caller should fall back to plain coordinates
+     * rather than block on it.
+     */
+    suspend fun reverse(point: GeoPoint): Suggestion? {
+        val url = "$baseUrl/reverse".toHttpUrl().newBuilder()
+            .addQueryParameter("lat", point.lat.toString())
+            .addQueryParameter("lon", point.lon.toString())
+            .addQueryParameter("format", "jsonv2")
+            .addQueryParameter("addressdetails", "1")
+            // Street-level: a house number is rarely what was meant by a press.
+            .addQueryParameter("zoom", "17")
+            .build()
+
+        awaitTurn()
+        val body = withContext(Dispatchers.IO) {
+            http.newCall(Request.Builder().url(url).header("User-Agent", userAgent).build())
+                .execute().use { resp ->
+                    val text = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) throw IOException("Nominatim HTTP ${resp.code}: ${text.take(200)}")
+                    text
+                }
+        }
+        // /reverse returns a single object, not an array.
+        val place = runCatching { json.decodeFromString<Place>(body) }.getOrNull() ?: return null
+        val label = title(place).takeIf { it != "Unknown place" } ?: return null
+        // Keep the pressed point: the named place's own centre can be a street
+        // or suburb centroid some way from where the user actually pointed.
+        return Suggestion(label, point, place.type ?: "place")
+    }
+
     /** Hold each caller until the public instance's 1 req/s policy is satisfied. */
     private suspend fun awaitTurn() {
         val waitFor = throttle.withLock {

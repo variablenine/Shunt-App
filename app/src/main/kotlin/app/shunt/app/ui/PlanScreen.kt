@@ -72,6 +72,7 @@ class PlanActions(
     val onDismiss: () -> Unit,
     val onSaveHome: (Destination) -> Unit,
     val onSaveWork: (Destination) -> Unit,
+    val onMapLongPress: (GeoPoint) -> Unit,
 )
 
 @Composable
@@ -93,6 +94,8 @@ fun PlanScreen(
             passedCameras = cameras,
             modifier = Modifier.fillMaxSize(),
             cameraFetcher = cameraViewportFetcher,
+            // Only while browsing: a long press mid-drive would abandon the trip.
+            onLongPress = actions.onMapLongPress.takeIf { state.phase is Phase.Browsing },
         )
 
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -193,6 +196,13 @@ private fun SearchAndFavorites(
                 // so an unmatched query reads as a result, not a broken search.
                 SearchStatus("No matching places found. Try a fuller name or a nearby town.")
             }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Tip: press and hold anywhere on the map to route there.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             val favorites = state.favorites
             if (favorites.home != null || favorites.work != null) {

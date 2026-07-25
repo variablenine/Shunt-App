@@ -30,6 +30,8 @@ class PlanViewModel(
     private val cameras: CameraGateway,
     private val favoritesStore: FavoritesStore,
     private val vehicle: VehicleNavClient,
+    /** Names a long-pressed map point; absent, such points get coordinates. */
+    private val placeNamer: PlaceNamer? = null,
     private val scope: CoroutineScope? = null,
     private val searchDebounceMillis: Long = 350,
 ) : ViewModel() {
@@ -87,6 +89,19 @@ class PlanViewModel(
             FavoriteSlot.WORK -> _state.value.favorites.work
         } ?: return
         planTo(favorite)
+    }
+
+    /**
+     * Long-press on the map: route to that spot. The label is resolved
+     * best-effort — a name makes the result card readable, but never blocks or
+     * fails the routing, which is the part the user actually asked for.
+     */
+    fun onMapLongPress(point: GeoPoint) {
+        searchJob?.cancel()
+        workScope.launch {
+            val name = placeNamer?.let { namer -> runCatching { namer.nameFor(point) }.getOrNull() }
+            planTo(Destination(name ?: DROPPED_PIN, point))
+        }
     }
 
     private fun planTo(destination: Destination) {
@@ -252,6 +267,9 @@ class PlanViewModel(
         )
 
     companion object {
+        /** Label for a map point we couldn't name. */
+        const val DROPPED_PIN = "Dropped pin"
+
         /** Fallback search bias when no location is known (US geographic center). */
         val DEFAULT_BIAS = GeoPoint(39.8283, -98.5795)
     }

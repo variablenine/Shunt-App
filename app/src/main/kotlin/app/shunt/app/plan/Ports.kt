@@ -17,6 +17,14 @@ fun interface SuggestionSearch {
 }
 
 /**
+ * Names a point the user picked straight off the map. Null when nothing is
+ * known there or the lookup fails — routing must not depend on it.
+ */
+fun interface PlaceNamer {
+    suspend fun nameFor(point: GeoPoint): String?
+}
+
+/**
  * Native, offline camera-aware routing (BRouter) — returns chooseable options.
  * [onProgress] reports 0f..1f with a label so a long plan can show real
  * movement rather than an unexplained wait.

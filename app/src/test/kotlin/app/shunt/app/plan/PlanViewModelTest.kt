@@ -65,6 +65,7 @@ class PlanViewModelTest {
         freshness: Freshness = Freshness.NETWORK,
         vehicle: app.shunt.tesla.VehicleNavClient = FakeVehicleNavClient(),
         favoritesStore: FavoritesStore = InMemoryFavorites(),
+        placeNamer: PlaceNamer? = null,
     ) = PlanViewModel(
         search = { _, _ -> suggestions },
         planner = planner,
@@ -73,6 +74,7 @@ class PlanViewModelTest {
         cameras = { freshness },
         favoritesStore = favoritesStore,
         vehicle = vehicle,
+        placeNamer = placeNamer,
         scope = scope,
     )
 
@@ -333,5 +335,35 @@ class PlanViewModelTest {
         model.onDismissResult()
         assertIs<Phase.Browsing>(model.state.value.phase)
         assertEquals("", model.state.value.query)
+    }
+
+    @Test
+    fun `long-pressing the map routes to that point with its resolved name`() = runTest {
+        val pressed = GeoPoint(39.7, -98.2)
+        val model = vm(this, placeNamer = { "Prairie Road" })
+        model.onMapLongPress(pressed)
+        advanceUntilIdle()
+        val solved = assertIs<Phase.Solved>(model.state.value.phase)
+        assertEquals("Prairie Road", solved.destination.title)
+        assertEquals(pressed, solved.destination.location)
+    }
+
+    @Test
+    fun `a point that cannot be named still routes`() = runTest {
+        // Open country, a lake, or the namer being unreachable must not stop the
+        // routing — the name is a nicety, the route is the request.
+        val model = vm(this, placeNamer = { throw java.io.IOException("offline") })
+        model.onMapLongPress(GeoPoint(39.7, -98.2))
+        advanceUntilIdle()
+        val solved = assertIs<Phase.Solved>(model.state.value.phase)
+        assertEquals(PlanViewModel.DROPPED_PIN, solved.destination.title)
+    }
+
+    @Test
+    fun `with no namer configured the point still routes`() = runTest {
+        val model = vm(this, placeNamer = null)
+        model.onMapLongPress(GeoPoint(39.7, -98.2))
+        advanceUntilIdle()
+        assertIs<Phase.Solved>(model.state.value.phase)
     }
 }
