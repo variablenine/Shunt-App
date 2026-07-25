@@ -3,6 +3,7 @@ package app.shunt.tesla
 import app.shunt.core.GeoPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -41,6 +42,8 @@ class TessieVehicleNavClient(
     private val vin: String,
     private val baseUrl: String = "https://api.tessie.com",
     private val rateLimiter: CommandRateLimiter = CommandRateLimiter(),
+    private val locale: String = "en-US",
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) : VehicleNavClient {
 
     /** null = not yet probed, true = single-call works, false = use the chain. */
@@ -70,13 +73,53 @@ class TessieVehicleNavClient(
             }
         }
 
-        return sendGpsChain(chain)
+        if (gpsChainWorks != false) {
+            when (val outcome = sendGpsChain(chain)) {
+                is PushResult.Failed ->
+                    if (!outcome.reason.looksUnsupported()) return outcome
+                    else gpsChainWorks = false
+                else -> return outcome
+            }
+        }
+
+        // Last resort: share just the destination. Tesla's signed-command proxy
+        // implements navigation_request and none of the chain commands, so on a
+        // car that requires signing this is the only thing that lands — at the
+        // cost of the route shape, which the caller must surface.
+        return shareDestination(chain.last())
+    }
+
+    /** Share a single destination as text — the one navigation command the proxy has. */
+    private suspend fun shareDestination(point: GeoPoint): PushResult {
+        val body = json.encodeToString(
+            NavigationRequest(
+                value = mapOf<String, String>(SHARE_TEXT_KEY to "${point.lat},${point.lon}"),
+                locale = locale,
+                timestampMs = nowMillis(),
+            ),
+        )
+        return when (val outcome = executeCommand("navigation_request", body)) {
+            CommandOutcome.Ok -> PushResult.DestinationOnly(
+                "this vehicle only accepts a single destination, not a waypoint route",
+            )
+            is CommandOutcome.Rejected -> PushResult.Failed(outcome.reason, outcome.retryable)
+        }
+    }
+
+    private fun String.looksUnsupported(): Boolean {
+        val r = lowercase()
+        return "invalid_command" in r || "not_found" in r || "unsupported" in r ||
+            "invalid command" in r
     }
 
     private suspend fun tryWaypointsRequest(chain: List<GeoPoint>): CommandOutcome {
         val encoded = chain.joinToString("|") { "${it.lat},${it.lon}" }
         return executeCommand("navigation_waypoints_request", json.encodeToString(WaypointsRequest(encoded)))
     }
+
+    /** null = not yet probed, false = this car rejects the per-point chain too. */
+    @Volatile
+    private var gpsChainWorks: Boolean? = null
 
     private suspend fun sendGpsChain(chain: List<GeoPoint>): PushResult {
         chain.forEachIndexed { index, point ->
@@ -153,12 +196,23 @@ class TessieVehicleNavClient(
     private data class WaypointsRequest(val waypoints: String)
 
     @Serializable
+    private data class NavigationRequest(
+        val value: Map<String, String>,
+        val locale: String,
+        @SerialName("timestamp_ms") val timestampMs: Long,
+        val type: String = "share_ext_content_raw",
+    )
+
+    @Serializable
     private data class CommandResponse(val response: CommandResult? = null, val error: String? = null)
 
     @Serializable
     private data class CommandResult(val result: Boolean = false, val reason: String = "")
 
     private companion object {
+        /** Tesla's share payload carries the destination under this key. */
+        const val SHARE_TEXT_KEY = "android.intent.extra.TEXT"
+
         const val ORDER_REPLACE_TRIP = 1
         const val ORDER_APPEND_STOP = 3
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()

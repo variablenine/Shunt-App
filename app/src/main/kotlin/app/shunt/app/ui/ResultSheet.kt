@@ -82,7 +82,7 @@ fun ResultSheet(
                 is Phase.NeedTile -> NeedTileContent(phase, onDownloadTile, onDismiss)
                 is Phase.Solved -> SolvedContent(phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork)
                 is Phase.Pushing -> PushingContent(phase.destination)
-                is Phase.Driving -> DrivingContent(phase.destination, phase.plan.cameras.size, onDismiss)
+                is Phase.Driving -> DrivingContent(phase, onDismiss)
                 is Phase.PushFailed -> PushFailedContent(phase, onRetryPush, onDismiss)
                 is Phase.Error -> ErrorContent(phase.message, onDismiss)
                 Phase.Browsing -> Unit
@@ -340,7 +340,9 @@ private fun PushingContent(destination: Destination) {
 }
 
 @Composable
-private fun DrivingContent(destination: Destination, cameraCount: Int, onCancel: () -> Unit) {
+private fun DrivingContent(phase: Phase.Driving, onCancel: () -> Unit) {
+    val destination = phase.destination
+    val cameraCount = phase.plan.cameras.size
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(12.dp))
@@ -361,6 +363,36 @@ private fun DrivingContent(destination: Destination, cameraCount: Int, onCancel:
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    if (phase.destinationOnly) {
+        // The car took the destination but not the shaped route, so it is
+        // navigating its own way — which may go past cameras this route
+        // avoided. Say so plainly; the phone alerts still follow OUR route.
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.errorContainer,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    "Your car only accepted the destination",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "It's navigating there its own way, NOT along the camera-avoiding " +
+                        "route shown here — so it may drive past cameras this route " +
+                        "avoids. Shunt still warns you on approach to every camera on " +
+                        "the planned route. Follow the map, not the car's directions.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+
     // Compact form: this is the screen that's up while actually driving.
     Spacer(Modifier.height(12.dp))
     TeslaWipWarning(compact = true)

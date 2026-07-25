@@ -30,7 +30,20 @@ interface VehicleNavClient {
 }
 
 sealed interface PushResult {
+    /** The whole waypoint chain reached the vehicle. */
     data object Success : PushResult
+
+    /**
+     * The vehicle accepted only the final destination, not the shaped chain.
+     *
+     * Newer cars require Tesla's signed Vehicle Command Protocol, whose command
+     * proxy implements `navigation_request` (a single shared destination) but
+     * not the chain commands. So the car navigates there its own way — which may
+     * run straight past cameras this route was built to avoid. Shunt's own
+     * on-phone camera warnings still follow the planned route, but the car is
+     * not being steered along it, and the user must be told.
+     */
+    data class DestinationOnly(val reason: String) : PushResult
 
     /**
      * [retryable] must be accurate: the drive monitor retries retryable

@@ -23,7 +23,9 @@ import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
 import app.shunt.solver.search.PlaceSearch
+import app.shunt.tesla.ConnectionCheck
 import app.shunt.tesla.FakeVehicleNavClient
+import app.shunt.tesla.TessieAccountClient
 import app.shunt.tesla.TessieVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
 import java.io.File
@@ -92,6 +94,23 @@ class AppContainer(context: Context) {
 
     /** The user's Tessie token + VIN, entered in-app and stored encrypted. */
     val vehicleCredentials = VehicleCredentialsStore(appContext)
+
+    private val tessieAccount = TessieAccountClient(http)
+
+    /**
+     * Verify a token by listing its vehicles. Read-only — it sends no command,
+     * so checking can never make the car do something.
+     */
+    suspend fun checkVehicleToken(token: String): app.shunt.app.ui.VehicleCheckResult =
+        when (val result = tessieAccount.check(token)) {
+            is ConnectionCheck.Ok -> app.shunt.app.ui.VehicleCheckResult.Reachable(
+                result.vehicles.map {
+                    app.shunt.app.ui.VehicleOption(it.vin, it.displayName, it.isAwake)
+                },
+            )
+            is ConnectionCheck.BadToken -> app.shunt.app.ui.VehicleCheckResult.BadToken(result.detail)
+            is ConnectionCheck.Unreachable -> app.shunt.app.ui.VehicleCheckResult.Unreachable(result.detail)
+        }
 
     /**
      * Credentials in force: what the user entered, else anything baked in at

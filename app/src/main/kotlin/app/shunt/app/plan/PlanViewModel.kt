@@ -234,6 +234,9 @@ class PlanViewModel(
             _state.update {
                 when (result) {
                     is PushResult.Success -> it.copy(phase = Phase.Driving(solved.destination, plan))
+                    is PushResult.DestinationOnly -> it.copy(
+                        phase = Phase.Driving(solved.destination, plan, destinationOnly = true),
+                    )
                     is PushResult.Failed -> it.copy(
                         phase = Phase.PushFailed(solved.destination, option, result.reason, result.retryable),
                     )

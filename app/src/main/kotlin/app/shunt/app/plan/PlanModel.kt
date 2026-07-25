@@ -107,7 +107,16 @@ sealed interface Phase {
      * tracked, waypoints advance on approach, and cameras/failures alert
      * locally until arrival or cancel.
      */
-    data class Driving(val destination: Destination, val plan: DrivePlan) : Phase
+    data class Driving(
+        val destination: Destination,
+        val plan: DrivePlan,
+        /**
+         * The car accepted only the destination, not the shaped route — so it
+         * is navigating its own way and may pass cameras this route avoided.
+         * Shunt's own warnings still follow the planned route.
+         */
+        val destinationOnly: Boolean = false,
+    ) : Phase
 
     /** The push failed. [retryable] mirrors PushResult so the UI can offer retry. */
     data class PushFailed(

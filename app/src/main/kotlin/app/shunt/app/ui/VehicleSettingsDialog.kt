@@ -16,7 +16,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -36,10 +38,18 @@ fun VehicleSettingsDialog(
     onSave: (token: String, vin: String) -> Unit,
     onClear: () -> Unit,
     onDismiss: () -> Unit,
+    /**
+     * Verifies the token by listing the account's vehicles. Read-only: it sends
+     * no command, so it can't make the car do anything.
+     */
+    onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
 ) {
     var token by remember { mutableStateOf(currentToken) }
     var vin by remember { mutableStateOf(currentVin) }
     var revealToken by remember { mutableStateOf(false) }
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<VehicleCheckResult?>(null) }
+    val scope = rememberCoroutineScope()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -93,10 +103,36 @@ fun VehicleSettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "Shown in the Tesla app under the car's details.",
+                    "Shown in the Tesla app under the car's details — or just tap " +
+                        "Test connection below and Shunt will fill it in.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                if (onTestConnection != null) {
+                    Spacer(Modifier.height(12.dp))
+                    TextButton(
+                        enabled = token.isNotBlank() && !testing,
+                        onClick = {
+                            testing = true
+                            testResult = null
+                            scope.launch {
+                                val result = onTestConnection(token)
+                                testResult = result
+                                // One car on the account: fill the VIN in rather
+                                // than making them copy it across by hand.
+                                if (result is VehicleCheckResult.Reachable &&
+                                    result.vehicles.size == 1 && vin.isBlank()
+                                ) {
+                                    vin = result.vehicles.single().vin
+                                }
+                                testing = false
+                            }
+                        },
+                    ) { Text(if (testing) "Checking…" else "Test connection") }
+
+                    testResult?.let { ConnectionResultText(it, onPickVin = { vin = it }) }
+                }
 
                 Spacer(Modifier.height(14.dp))
                 Text(
@@ -131,4 +167,56 @@ fun VehicleSettingsDialog(
             }
         },
     )
+}
+
+/** What a read-only credential check found, for the dialog to state plainly. */
+sealed interface VehicleCheckResult {
+    data class Reachable(val vehicles: List<VehicleOption>) : VehicleCheckResult
+    data class BadToken(val detail: String) : VehicleCheckResult
+    data class Unreachable(val detail: String) : VehicleCheckResult
+}
+
+/** One vehicle the token can see. */
+data class VehicleOption(val vin: String, val name: String, val awake: Boolean)
+
+@Composable
+private fun ConnectionResultText(result: VehicleCheckResult, onPickVin: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Spacer(Modifier.height(6.dp))
+    when (result) {
+        is VehicleCheckResult.Reachable -> {
+            if (result.vehicles.isEmpty()) {
+                Text(
+                    "Connected, but this token can't see any vehicles.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.error,
+                )
+            } else {
+                Text(
+                    "Connected. Found ${result.vehicles.size} vehicle" +
+                        if (result.vehicles.size == 1) ":" else "s — tap one to use it:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.primary,
+                )
+                result.vehicles.forEach { v ->
+                    TextButton(onClick = { onPickVin(v.vin) }) {
+                        Text(
+                            "${v.name} · ${if (v.awake) "awake" else "asleep"}",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+        }
+        is VehicleCheckResult.BadToken -> Text(
+            "Couldn't sign in: ${result.detail}. Check the token was copied whole.",
+            style = MaterialTheme.typography.labelSmall,
+            color = scheme.error,
+        )
+        is VehicleCheckResult.Unreachable -> Text(
+            "Couldn't reach Tessie: ${result.detail}.",
+            style = MaterialTheme.typography.labelSmall,
+            color = scheme.error,
+        )
+    }
 }

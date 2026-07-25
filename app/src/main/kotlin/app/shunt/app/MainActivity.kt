@@ -115,6 +115,7 @@ class MainActivity : ComponentActivity() {
                         encryptedStorage = container.vehicleCredentials.usingEncryptedStorage,
                         onSave = container.vehicleCredentials::save,
                         onClear = container.vehicleCredentials::clear,
+                        onTestConnection = { token -> container.checkVehicleToken(token) },
                     ),
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,

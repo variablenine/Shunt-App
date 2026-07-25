@@ -179,4 +179,43 @@ class TessieVehicleNavClientTest {
         val failed = assertIs<PushResult.Failed>(client.pushRoute(chain))
         assertTrue(failed.retryable, "connectivity failures must be retryable")
     }
+
+    @Test
+    fun `a car that rejects both chain commands still gets the destination`() = runTest {
+        // The real failure: newer cars need Tesla's signed Vehicle Command
+        // Protocol, whose proxy implements navigation_request but NEITHER chain
+        // command — both come back 400 invalid_command, and the push failed
+        // outright instead of falling through to what the car does accept.
+        val server = MockWebServer()
+        val invalid = """{"response": null, "error": "invalid_command", "error_description": ""}"""
+        server.enqueue(MockResponse().setResponseCode(400).setBody(invalid)) // waypoints
+        server.enqueue(MockResponse().setResponseCode(400).setBody(invalid)) // gps chain
+        server.enqueue(MockResponse().setBody("""{"response":{"result":true,"reason":""}}""")) // share
+
+        val client = TessieVehicleNavClient(
+            http = OkHttpClient(),
+            bearerToken = "tok",
+            vin = "VIN",
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            rateLimiter = CommandRateLimiter(maxCommands = 1000),
+        )
+        val result = client.pushRoute(chain)
+
+        // Reported as a success, but explicitly a degraded one: the car has the
+        // destination and will route there its own way, possibly past cameras
+        // this route avoided. Callers must be able to tell the difference.
+        val degraded = assertIs<PushResult.DestinationOnly>(result)
+        assertTrue(degraded.reason.isNotBlank())
+
+        server.takeRequest() // waypoints attempt
+        server.takeRequest() // gps attempt
+        val share = server.takeRequest()
+        assertEquals("navigation_request", share.command())
+        val body = share.body.readUtf8()
+        assertTrue("share_ext_content_raw" in body, "body was $body")
+        assertTrue("android.intent.extra.TEXT" in body, "body was $body")
+        // The final destination of the chain is what gets shared.
+        assertTrue("${chain.last().lat},${chain.last().lon}" in body, "body was $body")
+        server.shutdown()
+    }
 }

@@ -60,6 +60,7 @@ data class VehicleSettingsUi(
     val encryptedStorage: Boolean,
     val onSave: (token: String, vin: String) -> Unit,
     val onClear: () -> Unit,
+    val onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -123,6 +124,7 @@ fun PlanScreen(
                 encryptedStorage = vehicleSettings.encryptedStorage,
                 onSave = vehicleSettings.onSave,
                 onClear = vehicleSettings.onClear,
+                onTestConnection = vehicleSettings.onTestConnection,
                 onDismiss = { showVehicleSettings = false },
             )
         }
