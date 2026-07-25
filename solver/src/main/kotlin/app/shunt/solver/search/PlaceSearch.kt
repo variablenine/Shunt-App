@@ -31,7 +31,7 @@ class PlaceSearch(
 
         // A *non-empty* result set is not the same as a match. Asked for a place
         // it doesn't have, the typeahead index happily returns fuzzy near-misses
-        // (search a named supper club, get four unrelated supper clubs), so
+        // (search a named diner, get four unrelated diners), so
         // "results.isNotEmpty()" would wrongly declare success and never consult
         // the index that actually has the place.
         if (hits.any { it.matches(query) }) return hits

@@ -26,13 +26,13 @@ class NominatimSearchTest {
     @Test
     fun `a named POI keeps its name and place`() {
         val body = """
-            [{"lat":"39.8758417","lon":"-98.0894523","name":"Prairie Supper Club",
+            [{"lat":"39.8758417","lon":"-98.0894523","name":"Prairie Diner",
               "category":"amenity","type":"restaurant",
-              "display_name":"Prairie Supper Club, Highway 9, Smith County, Kansas, United States",
+              "display_name":"Prairie Diner, Highway 9, Smith County, Kansas, United States",
               "address":{"county":"Smith County","state":"Kansas"}}]
         """.trimIndent()
         val first = NominatimSearch.parse(body).single()
-        assertEquals("Prairie Supper Club, Smith County, Kansas", first.title)
+        assertEquals("Prairie Diner, Smith County, Kansas", first.title)
         assertEquals("restaurant", first.resultType)
     }
 

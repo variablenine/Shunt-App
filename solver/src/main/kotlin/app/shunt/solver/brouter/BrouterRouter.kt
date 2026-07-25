@@ -53,15 +53,27 @@ class BrouterRouter(
 
     fun route(origin: GeoPoint, destination: GeoPoint, cameras: List<CameraVision>): List<BrouterRoute> {
         lastFailureDiagnostic = null
-        val fastest = runRoute(origin, destination, cameras, weight = 0.0)
+        val fastest = runRoute(origin, destination, cameras, Avoidance.None)
             ?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) return listOfNotNull(fastest)
 
-        val balanced = runRoute(origin, destination, cameras, weight = BALANCED_WEIGHT)
+        val balanced = runRoute(origin, destination, cameras, Avoidance.Weighted(BALANCED_WEIGHT))
             ?.toResult(RouteChoice.BALANCED, cameras)
-        val fewest = runRoute(origin, destination, cameras, weight = FEWEST_WEIGHT)
-            ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+
+        // "Fewest cameras" must mean *none* whenever a camera-free path exists at
+        // any distance. A weighted nogo can't promise that: BRouter charges
+        // (metres inside the zone × weight), so a road clipping the edge of a
+        // cone costs little and gets chosen over a long back-road detour — the
+        // route then passes a camera that was in fact avoidable. Blocking the
+        // zones outright makes the engine find the camera-free path or none.
+        val fewest = (
+            runRoute(origin, destination, cameras, Avoidance.Blocked)
+                // No camera-free path exists (or an endpoint sits inside a zone,
+                // which a hard block rejects outright) — fall back to avoiding as
+                // hard as possible so the user still gets the best available.
+                ?: runRoute(origin, destination, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
+            )?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
 
         // Fastest first, then the avoidance options — but only ones that are
         // genuinely a different road, each kept under its own truthful label
@@ -82,11 +94,26 @@ class BrouterRouter(
 
     private data class RawRoute(val polyline: List<GeoPoint>, val distanceMeters: Int, val seconds: Int)
 
+    /** How hard this pass should avoid camera zones. */
+    internal sealed interface Avoidance {
+        /** Ignore cameras entirely — the plain fastest route. */
+        data object None : Avoidance
+
+        /** Penalise metres driven inside a zone; a camera can still be accepted. */
+        data class Weighted(val weight: Double) : Avoidance
+
+        /**
+         * Treat every zone as impassable (BRouter's NaN-weight nogo). Either the
+         * route is camera-free or there is no route at all.
+         */
+        data object Blocked : Avoidance
+    }
+
     private fun runRoute(
         origin: GeoPoint,
         destination: GeoPoint,
         cameras: List<CameraVision>,
-        weight: Double,
+        avoidance: Avoidance,
     ): RawRoute? {
         return try {
             val rc = RoutingContext()
@@ -97,7 +124,9 @@ class BrouterRouter(
             val waypoints = collector.getWayPointList(
                 "${origin.lon},${origin.lat}|${destination.lon},${destination.lat}",
             )
-            if (weight > 0.0 && cameras.isNotEmpty()) {
+            if (avoidance != Avoidance.None && cameras.isNotEmpty()) {
+                // NaN is BRouter's "impassable"; a finite value is a per-metre penalty.
+                val weight = (avoidance as? Avoidance.Weighted)?.weight ?: Double.NaN
                 val nogos = buildNogos(cameras, weight, collector)
                 if (nogos.isNotEmpty()) {
                     RoutingContext.prepareNogoPoints(nogos)
@@ -127,17 +156,21 @@ class BrouterRouter(
      * Nogos matching each camera's field of view: directional cameras get a
      * 180° sector polygon they face; unknown-facing cameras get a full circle.
      */
-    private fun buildNogos(
+    internal fun buildNogos(
         cameras: List<CameraVision>,
         weight: Double,
         collector: RoutingParamCollector,
     ): List<OsmNodeNamed> {
         val nogos = mutableListOf<OsmNodeNamed>()
 
+        // NaN must reach BRouter verbatim — it means "impassable". Formatting it
+        // as an Int would silently become 0, i.e. a nogo with no effect at all.
+        val weightSpec = if (weight.isNaN()) "NaN" else weight.toInt().toString()
+
         val omni = cameras.filter { it.directionDegrees == null }
         if (omni.isNotEmpty()) {
             val spec = omni.joinToString("|") { c ->
-                "${c.location.lon},${c.location.lat},${CameraVision.OMNI_RANGE_M.toInt()},${weight.toInt()}"
+                "${c.location.lon},${c.location.lat},${CameraVision.OMNI_RANGE_M.toInt()},$weightSpec"
             }
             collector.readNogoList(spec)?.let { nogos.addAll(it) }
         }

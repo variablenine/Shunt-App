@@ -41,15 +41,15 @@ class PlaceSearchTest {
         // index returns unrelated results that merely share a common word. A
         // non-empty list is not a match, so the fallback must still run.
         val nearMisses = listOf(
-            Suggestion("Elias Inn Supper Club", GeoPoint(39.2, -98.2), "restaurant"),
-            Suggestion("City Lights Supper Club", GeoPoint(39.3, -98.3), "restaurant"),
+            Suggestion("Lakeside Grill", GeoPoint(39.2, -98.2), "restaurant"),
+            Suggestion("Riverside Grill", GeoPoint(39.3, -98.3), "restaurant"),
         )
-        val real = Suggestion("Prairie View Supper Club", GeoPoint(39.05, -98.05), "restaurant")
+        val real = Suggestion("Prairie View Grill", GeoPoint(39.05, -98.05), "restaurant")
         val search = PlaceSearch(
             primary = { _, _ -> nearMisses },
             fallback = { _, _ -> listOf(real) },
         )
-        val results = search.suggest("Prairie View Supper Club", at)
+        val results = search.suggest("Prairie View Grill", at)
         assertEquals(real, results.first(), "the real match must lead")
         assertTrue(results.containsAll(nearMisses), "near-misses stay as alternatives")
     }

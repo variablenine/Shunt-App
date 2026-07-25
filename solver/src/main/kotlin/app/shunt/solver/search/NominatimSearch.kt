@@ -93,9 +93,9 @@ class NominatimSearch(
             }
 
         /**
-         * "El Capitan Supper Club, Florence, WI" or "5260 Deerfield Road,
-         * Eau Claire County, WI" — Nominatim's own display_name is a long
-         * comma-chain ending in the country, too wide for a suggestion row.
+         * "Prairie Diner, Rockton, KS" or "5260 Prairie Road, Smith County, KS"
+         * — Nominatim's own display_name is a long comma-chain ending in the
+         * country, too wide for a suggestion row.
          */
         private fun title(place: Place): String {
             val a = place.address ?: Address()
