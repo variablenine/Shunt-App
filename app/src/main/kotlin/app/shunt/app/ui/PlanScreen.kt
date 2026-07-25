@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
@@ -64,6 +66,8 @@ data class VehicleSettingsUi(
 class PlanActions(
     val onQueryChange: (String) -> Unit,
     val onSuggestionSelected: (Int) -> Unit,
+    val onSuggestionAddedAsStop: (Int) -> Unit,
+    val onRemoveStop: (Int) -> Unit,
     val onFavoriteSelected: (FavoriteSlot) -> Unit,
     val onGo: () -> Unit,
     val onSelectRoute: (Int) -> Unit,
@@ -159,6 +163,10 @@ private fun SearchAndFavorites(
 ) {
     Surface(tonalElevation = 2.dp, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
+            if (state.stops.isNotEmpty()) {
+                StopsList(state.stops, actions.onRemoveStop)
+                Spacer(Modifier.height(8.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = state.query,
@@ -178,9 +186,12 @@ private fun SearchAndFavorites(
             if (state.suggestions.isNotEmpty()) {
                 LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {
                     items(state.suggestions) { suggestion ->
-                        SuggestionRow(suggestion) {
-                            actions.onSuggestionSelected(state.suggestions.indexOf(suggestion))
-                        }
+                        val index = state.suggestions.indexOf(suggestion)
+                        SuggestionRow(
+                            suggestion = suggestion,
+                            onClick = { actions.onSuggestionSelected(index) },
+                            onAddStop = { actions.onSuggestionAddedAsStop(index) },
+                        )
                         HorizontalDivider()
                     }
                 }
@@ -231,14 +242,46 @@ private fun SearchStatus(message: String, color: androidx.compose.ui.graphics.Co
 }
 
 @Composable
-private fun SuggestionRow(suggestion: Suggestion, onClick: () -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp)) {
-        Text(suggestion.title, style = MaterialTheme.typography.bodyLarge)
+private fun SuggestionRow(suggestion: Suggestion, onClick: () -> Unit, onAddStop: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 12.dp),
+        ) {
+            Text(suggestion.title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                suggestion.resultType,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        // Tapping the row goes there; the + queues it as a stop on the way.
+        IconButton(onClick = onAddStop) {
+            Icon(Icons.Filled.Add, contentDescription = "Add \"${suggestion.title}\" as a stop")
+        }
+    }
+}
+
+/** The stops queued before the destination, in order, each removable. */
+@Composable
+private fun StopsList(stops: List<Destination>, onRemove: (Int) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            suggestion.resultType,
-            style = MaterialTheme.typography.labelSmall,
+            "Stops on the way",
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        stops.forEachIndexed { index, stop ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "${index + 1}. ${stop.title}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { onRemove(index) }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Remove ${stop.title}")
+                }
+            }
+        }
     }
 }
 

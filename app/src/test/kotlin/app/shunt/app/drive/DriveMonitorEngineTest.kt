@@ -238,4 +238,51 @@ class DriveMonitorEngineTest {
         val signals = engine.onLocation(update(north(GeoPoint(33.0, -96.99), 5_000.0)))
         assertTrue(signals.none { it is DriveSignal.OffRoute })
     }
+
+    // ---- The driver's own stops -----------------------------------------
+    //
+    // The vehicle parks at every waypoint, which is why shaping pins are shed
+    // early. A stop the driver asked for is the opposite: shedding it means
+    // driving straight past where they wanted to be.
+
+    @Test
+    fun `a real stop is not shed early the way a shaping pin is`() {
+        val engine = DriveMonitorEngine(
+            chain, cameras = emptyList(), stopPoints = setOf(w1),
+        )
+        // Well inside the lead distance that would drop a shaping pin (450 m).
+        val signals = engine.onLocation(update(west(w1, 300.0)))
+        assertTrue(
+            signals.none { it is DriveSignal.ApproachingWaypoint },
+            "a stop must not be dropped on approach",
+        )
+        assertTrue(signals.none { it is DriveSignal.ReachedStop }, "not there yet either")
+    }
+
+    @Test
+    fun `arriving at a stop reports it and carries the rest of the trip`() {
+        val engine = DriveMonitorEngine(
+            chain, cameras = emptyList(), stopPoints = setOf(w1),
+        )
+        engine.onLocation(update(west(w1, 300.0)))
+        val reached = engine.onLocation(update(west(w1, 20.0)))
+            .filterIsInstance<DriveSignal.ReachedStop>()
+            .single()
+        assertEquals(w1, reached.stop)
+        assertEquals(listOf(w2, dest), reached.remaining, "the rest of the trip must follow")
+    }
+
+    @Test
+    fun `shaping pins on the same trip still advance early`() {
+        // w1 is a real stop; w2 is a shaping pin and must behave as before.
+        val engine = DriveMonitorEngine(
+            chain, cameras = emptyList(), stopPoints = setOf(w1),
+        )
+        engine.onLocation(update(west(w1, 20.0))) // pass the stop
+        val signals = engine.onLocation(update(west(w2, 400.0)))
+        assertTrue(
+            signals.any { it is DriveSignal.ApproachingWaypoint },
+            "the shaping pin must still be shed early",
+        )
+    }
 }

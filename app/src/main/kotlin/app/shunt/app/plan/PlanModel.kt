@@ -27,6 +27,12 @@ data class DrivePlan(
     val cameras: List<Camera>,
     /** The route line, for the map / notification context. */
     val polyline: List<GeoPoint>,
+    /**
+     * Which chain entries are the driver's own stops rather than shaping pins.
+     * Shaping pins must be dropped before the car reaches them (it treats every
+     * waypoint as a stop); real stops must not be — the driver wants to stop.
+     */
+    val stopPoints: Set<GeoPoint> = emptySet(),
 )
 
 /**
@@ -36,6 +42,12 @@ data class DrivePlan(
  */
 data class PlanUiState(
     val query: String = "",
+    /**
+     * Stops to visit before the destination, in order. Empty for a direct trip.
+     * These are places the driver actually wants to be — unlike the shaping
+     * waypoints the router adds, they are never dropped or reordered.
+     */
+    val stops: List<Destination> = emptyList(),
     val suggestions: List<Suggestion> = emptyList(),
     /** A search request is in flight (debounce elapsed, awaiting results). */
     val searching: Boolean = false,

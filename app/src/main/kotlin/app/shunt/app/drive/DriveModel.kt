@@ -44,6 +44,12 @@ sealed interface DriveSignal {
     /** The vehicle rejoined the planned route after being off it. */
     data object BackOnRoute : DriveSignal
 
+    /**
+     * Arrived at one of the driver's own stops (not a shaping pin). [remaining]
+     * is the rest of the chain, to re-push once they set off again.
+     */
+    data class ReachedStop(val stop: GeoPoint, val remaining: List<GeoPoint>) : DriveSignal
+
     /** Reached the final destination. */
     data object Arrived : DriveSignal
 }
@@ -113,6 +119,11 @@ sealed interface Alert {
 
     /** Rejoined the planned route; its camera avoidance applies again. */
     data object BackOnRoute : Alert {
+        override val severity get() = Severity.INFO
+    }
+
+    /** Arrived at an intermediate stop the driver added. */
+    data class ReachedStop(val remainingStops: Int) : Alert {
         override val severity get() = Severity.INFO
     }
 

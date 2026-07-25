@@ -83,6 +83,31 @@ class PlanViewModel(
         planTo(Destination.of(suggestion))
     }
 
+    /**
+     * Add the selected search result as a stop on the way rather than the
+     * destination. The trip isn't re-planned until the user picks a final
+     * destination, so several stops can be queued up first.
+     */
+    fun onSuggestionAddedAsStop(index: Int) {
+        val suggestion = _state.value.suggestions.getOrNull(index) ?: return
+        _state.update {
+            it.copy(
+                stops = it.stops + Destination.of(suggestion),
+                query = "",
+                suggestions = emptyList(),
+                searching = false,
+                searchFailed = false,
+            )
+        }
+    }
+
+    fun onRemoveStop(index: Int) {
+        _state.update {
+            if (index !in it.stops.indices) it
+            else it.copy(stops = it.stops.filterIndexed { i, _ -> i != index })
+        }
+    }
+
     fun onFavoriteSelected(slot: FavoriteSlot) {
         val favorite = when (slot) {
             FavoriteSlot.HOME -> _state.value.favorites.home
@@ -122,8 +147,9 @@ class PlanViewModel(
             _state.update { it.copy(phase = Phase.Error("No starting location. Enable location or set Home.")) }
             return
         }
+        val stops = _state.value.stops.map { it.location }
         val outcome = runCatching {
-            planner.plan(origin, destination.location) { progress, step ->
+            planner.plan(listOf(origin) + stops + destination.location) { progress, step ->
                 // Only advance the bar while this plan is still the live phase.
                 _state.update { state ->
                     val solving = state.phase as? Phase.Solving
@@ -264,6 +290,9 @@ class PlanViewModel(
             chain = option.waypoints + destination.location,
             cameras = option.passedCameras,
             polyline = option.polyline,
+            // The driver's own stops are in the chain too, but must not be shed
+            // on approach the way shaping pins are — they're where they're going.
+            stopPoints = _state.value.stops.map { it.location }.toSet(),
         )
 
     companion object {

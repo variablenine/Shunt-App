@@ -72,8 +72,8 @@ class AppContainer(context: Context) {
         profileDir = brouterProfileDir,
     )
     private val brouterPlanner = BrouterPlanner(
-        route = { origin, destination, cams ->
-            withContext(Dispatchers.Default) { brouterRouter.route(origin, destination, cams) }
+        route = { points, cams ->
+            withContext(Dispatchers.Default) { brouterRouter.route(points, cams) }
         },
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
         camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
@@ -173,11 +173,11 @@ class AppContainer(context: Context) {
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> placeSearch.suggest(query, at) },
-        planner = RoutePlanner { origin, destination, onProgress ->
-            brouterPlanner.plan(origin, destination, onProgress).also { outcome ->
+        planner = RoutePlanner { points, onProgress ->
+            brouterPlanner.plan(points, onProgress).also { outcome ->
                 // Keep the tiles we actually route through fresh against eviction.
                 if (outcome is app.shunt.solver.brouter.PlanOutcome.Routes) {
-                    val bbox = BoundingBox.of(listOf(origin, destination))
+                    val bbox = BoundingBox.of(points)
                         .expand(BrouterPlanner.ROUTE_BBOX_MARGIN_METERS)
                     tileSource.markUsed(bbox)
                 }

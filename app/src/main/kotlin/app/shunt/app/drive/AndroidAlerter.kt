@@ -93,6 +93,16 @@ class AndroidAlerter(private val context: Context) : Alerter {
             "Back on the route",
             "Camera avoidance applies again.",
         )
+        is Alert.ReachedStop -> Triple(
+            ARRIVED_NOTIF,
+            "Stop reached",
+            if (alert.remainingStops > 0) {
+                "${alert.remainingStops} more stop${if (alert.remainingStops == 1) "" else "s"} " +
+                    "before your destination."
+            } else {
+                "Next up: your destination."
+            },
+        )
         Alert.Arrived -> Triple(ARRIVED_NOTIF, "Arrived", "You've reached your destination.")
     }
 

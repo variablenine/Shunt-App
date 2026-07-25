@@ -32,6 +32,13 @@ class DriveMonitorEngine(
      * chain alone doesn't describe the roads taken between waypoints).
      */
     private val routePolyline: List<GeoPoint> = emptyList(),
+    /**
+     * Chain entries that are the driver's own stops. The vehicle treats every
+     * waypoint as a place to park, which is why shaping pins are dropped on
+     * approach — but a real stop is exactly where the driver means to end up,
+     * so it must be left alone.
+     */
+    private val stopPoints: Set<GeoPoint> = emptySet(),
 ) {
     init {
         require(chain.isNotEmpty()) { "drive chain must have at least the destination" }
@@ -131,6 +138,17 @@ class DriveMonitorEngine(
             if (distance <= config.arrivalRadiusMeters) {
                 arrived = true
                 return DriveSignal.Arrived
+            }
+            return null
+        }
+
+        // A stop the driver asked for is not a pin to shed: let the car arrive.
+        // Advance past it only once we're on top of it, so the rest of the trip
+        // still follows.
+        if (target in stopPoints) {
+            if (distance <= config.arrivalRadiusMeters) {
+                targetIndex++
+                return DriveSignal.ReachedStop(target, chain.subList(targetIndex, chain.size).toList())
             }
             return null
         }

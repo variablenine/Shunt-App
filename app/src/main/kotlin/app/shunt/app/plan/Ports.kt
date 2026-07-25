@@ -30,9 +30,9 @@ fun interface PlaceNamer {
  * movement rather than an unexplained wait.
  */
 fun interface RoutePlanner {
+    /** [points] is origin, any stops in order, then the destination. */
     suspend fun plan(
-        origin: GeoPoint,
-        destination: GeoPoint,
+        points: List<GeoPoint>,
         onProgress: (Float, String) -> Unit,
     ): PlanOutcome
 }

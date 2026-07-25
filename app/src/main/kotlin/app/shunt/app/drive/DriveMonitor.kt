@@ -56,6 +56,12 @@ class DriveMonitor(
                             }
                         }
                         DriveSignal.BackOnRoute -> alerter.alert(Alert.BackOnRoute)
+                        is DriveSignal.ReachedStop -> {
+                            // Re-push what's left so the car continues from here
+                            // once the driver sets off again.
+                            advance(signal.remaining)
+                            alerter.alert(Alert.ReachedStop(remainingStops = signal.remaining.size - 1))
+                        }
                         DriveSignal.Arrived -> {
                             arrived = true
                             alerter.alert(Alert.Arrived)
@@ -70,7 +76,7 @@ class DriveMonitor(
     }
 
     private fun newEngine(plan: DrivePlan) =
-        DriveMonitorEngine(plan.chain, plan.cameras, config, plan.polyline)
+        DriveMonitorEngine(plan.chain, plan.cameras, config, plan.polyline, plan.stopPoints)
 
     /**
      * Re-plan from [from] and put the new route in force, pushing it to the

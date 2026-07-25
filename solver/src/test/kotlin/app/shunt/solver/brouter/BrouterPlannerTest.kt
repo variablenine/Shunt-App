@@ -19,7 +19,7 @@ class BrouterPlannerTest {
     fun `missing tiles short-circuit to NeedsDownload before routing`() = runTest {
         var routed = false
         val planner = BrouterPlanner(
-            route = { _, _, _ -> routed = true; emptyList() },
+            route = { _, _ -> routed = true; emptyList() },
             missingTiles = { listOf(TileId(-90, 45)) },
             camerasIn = { emptyList() },
         )
@@ -37,7 +37,7 @@ class BrouterPlannerTest {
         val onFast = Camera(id = 1, location = destinationPoint(origin, 90.0, 1_000.0))
 
         val planner = BrouterPlanner(
-            route = { _, _, _ ->
+            route = { _, _ ->
                 listOf(
                     BrouterRoute(RouteChoice.FASTEST, fastLine, 2_000, 180, 1, 60),
                     BrouterRoute(RouteChoice.FEWEST_CAMERAS, detour, 2_600, 300, 0, 0),
@@ -64,7 +64,7 @@ class BrouterPlannerTest {
         val detour = listOf(origin, farCamera.location, destination) // "fewest" wanders north
 
         val planner = BrouterPlanner(
-            route = { _, _, _ ->
+            route = { _, _ ->
                 listOf(
                     BrouterRoute(RouteChoice.FASTEST, fastLine, 2_000, 180, 0, 0),
                     BrouterRoute(RouteChoice.FEWEST_CAMERAS, detour, 24_000, 1_400, 0, 0),
@@ -96,7 +96,7 @@ class BrouterPlannerTest {
         var plans = 0
 
         val planner = BrouterPlanner(
-            route = { _, _, _ ->
+            route = { _, _ ->
                 plans++
                 val wander = when (plans) {
                     1 -> GeoPoint(39.10, -98.0)
@@ -129,7 +129,7 @@ class BrouterPlannerTest {
         // Regression: a thrown camera lookup became an empty list, so every route
         // was confidently labeled "camera-free" — the worst possible failure mode.
         val planner = BrouterPlanner(
-            route = { _, _, _ ->
+            route = { _, _ ->
                 listOf(BrouterRoute(RouteChoice.FASTEST, listOf(origin, destination), 2_000, 180, 0, 0))
             },
             missingTiles = { emptyList() },
@@ -143,7 +143,7 @@ class BrouterPlannerTest {
     @Test
     fun `an empty route list is a failure, not an empty chooser`() = runTest {
         val planner = BrouterPlanner(
-            route = { _, _, _ -> emptyList() },
+            route = { _, _ -> emptyList() },
             missingTiles = { emptyList() },
             camerasIn = { emptyList() },
         )

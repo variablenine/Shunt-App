@@ -51,14 +51,19 @@ class BrouterRouter(
     var lastFailureDiagnostic: String? = null
         private set
 
-    fun route(origin: GeoPoint, destination: GeoPoint, cameras: List<CameraVision>): List<BrouterRoute> {
+    /**
+     * Route through [points] — origin, any intermediate stops in order, then the
+     * destination — returning up to three options.
+     */
+    fun route(points: List<GeoPoint>, cameras: List<CameraVision>): List<BrouterRoute> {
+        require(points.size >= 2) { "a route needs at least an origin and a destination" }
         lastFailureDiagnostic = null
-        val fastest = runRoute(origin, destination, cameras, Avoidance.None)
+        val fastest = runRoute(points, cameras, Avoidance.None)
             ?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) return listOfNotNull(fastest)
 
-        val balanced = runRoute(origin, destination, cameras, Avoidance.Weighted(BALANCED_WEIGHT))
+        val balanced = runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT))
             ?.toResult(RouteChoice.BALANCED, cameras)
 
         // "Fewest cameras" must mean *none* whenever a camera-free path exists at
@@ -68,11 +73,11 @@ class BrouterRouter(
         // route then passes a camera that was in fact avoidable. Blocking the
         // zones outright makes the engine find the camera-free path or none.
         val fewest = (
-            runRoute(origin, destination, cameras, Avoidance.Blocked)
+            runRoute(points, cameras, Avoidance.Blocked)
                 // No camera-free path exists (or an endpoint sits inside a zone,
                 // which a hard block rejects outright) — fall back to avoiding as
                 // hard as possible so the user still gets the best available.
-                ?: runRoute(origin, destination, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
+                ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
             )?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
 
         // Fastest first, then the avoidance options — but only ones that are
@@ -110,8 +115,7 @@ class BrouterRouter(
     }
 
     private fun runRoute(
-        origin: GeoPoint,
-        destination: GeoPoint,
+        points: List<GeoPoint>,
         cameras: List<CameraVision>,
         avoidance: Avoidance,
     ): RawRoute? {
@@ -121,8 +125,10 @@ class BrouterRouter(
             // system property, and lookups.dat is read from the same directory.
             rc.localFunction = File(profileDir, "$profileName.brf").absolutePath
             val collector = RoutingParamCollector()
+            // BRouter routes through the whole chain in one pass, so
+            // intermediate stops are honoured natively.
             val waypoints = collector.getWayPointList(
-                "${origin.lon},${origin.lat}|${destination.lon},${destination.lat}",
+                points.joinToString("|") { "${it.lon},${it.lat}" },
             )
             if (avoidance != Avoidance.None && cameras.isNotEmpty()) {
                 // NaN is BRouter's "impassable"; a finite value is a per-metre penalty.

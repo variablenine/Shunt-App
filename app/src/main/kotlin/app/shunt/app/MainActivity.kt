@@ -119,6 +119,8 @@ class MainActivity : ComponentActivity() {
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,
                         onSuggestionSelected = vm::onSuggestionSelected,
+                        onSuggestionAddedAsStop = vm::onSuggestionAddedAsStop,
+                        onRemoveStop = vm::onRemoveStop,
                         onFavoriteSelected = vm::onFavoriteSelected,
                         onGo = vm::onGo,
                         onSelectRoute = vm::onSelectRoute,

@@ -59,7 +59,7 @@ class PlanViewModelTest {
         scope: kotlinx.coroutines.CoroutineScope,
         suggestions: List<Suggestion> = emptyList(),
         outcome: PlanOutcome = routes(fastest),
-        planner: RoutePlanner = RoutePlanner { _, _, _ -> outcome },
+        planner: RoutePlanner = RoutePlanner { _, _ -> outcome },
         tileDownloader: TileDownloader = TileDownloader { _, _, _ -> true },
         originValue: GeoPoint? = origin,
         freshness: Freshness = Freshness.NETWORK,
@@ -102,7 +102,7 @@ class PlanViewModelTest {
     fun `search failure surfaces instead of blanking silently`() = runTest {
         val model = PlanViewModel(
             search = { _, _ -> throw java.io.IOException("offline") },
-            planner = { _, _, _ -> routes(fastest) },
+            planner = { _, _ -> routes(fastest) },
             tileDownloader = { _, _, _ -> true },
             location = { origin },
             cameras = { Freshness.NETWORK },
@@ -153,7 +153,7 @@ class PlanViewModelTest {
 
     @Test
     fun `planning progress reaches the solving phase for the progress bar`() = runTest {
-        val planner = RoutePlanner { _, _, onProgress ->
+        val planner = RoutePlanner { _, onProgress ->
             onProgress(0.3f, "Planning routes")
             onProgress(0.85f, "Checking the final route for cameras")
             routes(fastest)
@@ -198,7 +198,7 @@ class PlanViewModelTest {
     @Test
     fun `a missing tile is downloaded automatically, then routes without a prompt`() = runTest {
         var calls = 0
-        val planner = RoutePlanner { _, _, _ ->
+        val planner = RoutePlanner { _, _ ->
             calls++
             if (calls == 1) PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) else routes(fastest)
         }
@@ -220,7 +220,7 @@ class PlanViewModelTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> false },
         )
         model.onQueryChange("X"); advanceUntilIdle()
@@ -237,7 +237,7 @@ class PlanViewModelTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> true },
         )
         model.onQueryChange("X"); advanceUntilIdle()
@@ -365,5 +365,65 @@ class PlanViewModelTest {
         model.onMapLongPress(GeoPoint(39.7, -98.2))
         advanceUntilIdle()
         assertIs<Phase.Solved>(model.state.value.phase)
+    }
+
+    // ---- Stops on the way -----------------------------------------------
+
+    @Test
+    fun `a stop is queued without routing, then routed through in order`() = runTest {
+        var plannedPoints: List<GeoPoint>? = null
+        val planner = RoutePlanner { points, _ -> plannedPoints = points; routes(fastest) }
+        val stop = GeoPoint(39.6, -97.95)
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("Coffee", stop, "cafe")),
+            planner = planner,
+        )
+        model.onQueryChange("Coffee"); advanceUntilIdle()
+        model.onSuggestionAddedAsStop(0)
+        advanceUntilIdle()
+
+        // Queuing a stop must not start routing — more stops may follow.
+        assertIs<Phase.Browsing>(model.state.value.phase)
+        assertEquals(1, model.state.value.stops.size)
+        assertEquals("", model.state.value.query, "the query clears, ready for the next")
+
+        // Now pick a destination: the trip routes origin → stop → destination.
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        assertEquals(listOf(origin, stop, stop), plannedPoints, "stops must be routed through, in order")
+    }
+
+    @Test
+    fun `stops can be removed before the trip is planned`() = runTest {
+        val model = vm(this, suggestions = listOf(Suggestion("A", dest, "place")))
+        model.onQueryChange("A"); advanceUntilIdle()
+        model.onSuggestionAddedAsStop(0)
+        model.onQueryChange("A"); advanceUntilIdle()
+        model.onSuggestionAddedAsStop(0)
+        advanceUntilIdle()
+        assertEquals(2, model.state.value.stops.size)
+        model.onRemoveStop(0)
+        assertEquals(1, model.state.value.stops.size)
+        // Out-of-range removals are ignored rather than crashing.
+        model.onRemoveStop(9)
+        assertEquals(1, model.state.value.stops.size)
+    }
+
+    @Test
+    fun `the drive plan marks the driver's stops so they are not shed like shaping pins`() = runTest {
+        val stop = GeoPoint(39.6, -97.95)
+        val model = vm(this, suggestions = listOf(Suggestion("Coffee", stop, "cafe")))
+        model.onQueryChange("Coffee"); advanceUntilIdle()
+        model.onSuggestionAddedAsStop(0); advanceUntilIdle()
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+
+        val driving = assertIs<Phase.Driving>(model.state.value.phase)
+        assertTrue(
+            stop in driving.plan.stopPoints,
+            "the stop must be flagged, or the monitor drops it before the car gets there",
+        )
     }
 }

@@ -45,7 +45,7 @@ sealed interface PlanOutcome {
  * without a real tile on disk.
  */
 class BrouterPlanner(
-    private val route: suspend (origin: GeoPoint, destination: GeoPoint, cameras: List<CameraVision>) -> List<BrouterRoute>,
+    private val route: suspend (points: List<GeoPoint>, cameras: List<CameraVision>) -> List<BrouterRoute>,
     private val missingTiles: (BoundingBox) -> List<TileId>,
     private val camerasIn: suspend (BoundingBox) -> List<Camera>,
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
@@ -61,8 +61,20 @@ class BrouterPlanner(
         origin: GeoPoint,
         destination: GeoPoint,
         onProgress: (Float, String) -> Unit = { _, _ -> },
+    ): PlanOutcome = plan(listOf(origin, destination), onProgress)
+
+    /**
+     * Plan through [points]: origin, any intermediate stops in order, then the
+     * destination. Stops are honoured by the routing engine directly, and are
+     * always pinned for the vehicle — they are places the driver actually wants
+     * to be, not shaping hints.
+     */
+    suspend fun plan(
+        points: List<GeoPoint>,
+        onProgress: (Float, String) -> Unit = { _, _ -> },
     ): PlanOutcome {
-        val baseBbox = BoundingBox.of(listOf(origin, destination)).expand(bboxMarginMeters)
+        require(points.size >= 2) { "a trip needs at least an origin and a destination" }
+        val baseBbox = BoundingBox.of(points).expand(bboxMarginMeters)
 
         val missing = missingTiles(baseBbox)
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
@@ -73,7 +85,7 @@ class BrouterPlanner(
         // "no cameras," which would label every route camera-free.
         var cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
         onProgress(0.3f, "Planning routes")
-        var routes = runRoutes(origin, destination, cameras)
+        var routes = runRoutes(points, cameras)
             ?: return PlanOutcome.Failed("Routing failed.")
         if (routes.isEmpty()) return noRoute()
 
@@ -91,7 +103,7 @@ class BrouterPlanner(
             cameraBbox = cameraBbox.union(routeBbox)
             val widened = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
             cameras = widened
-            val replanned = runRoutes(origin, destination, cameras) ?: break
+            val replanned = runRoutes(points, cameras) ?: break
             if (replanned.isEmpty()) break
             routes = replanned
         }
@@ -115,10 +127,14 @@ class BrouterPlanner(
                 polyline = r.polyline,
                 // Camera-aware: the vehicle routes itself between waypoints, so
                 // they must also stop it cutting back through what we avoided.
-                waypoints = WaypointExtractor.extract(
-                    chosen = r.polyline,
-                    fastest = fastest.polyline,
-                    avoid = cameras.map { CameraVision(it.location, it.directionDegrees) },
+                waypoints = withStops(
+                    stops = points.drop(1).dropLast(1),
+                    shaping = WaypointExtractor.extract(
+                        chosen = r.polyline,
+                        fastest = fastest.polyline,
+                        avoid = cameras.map { CameraVision(it.location, it.directionDegrees) },
+                    ),
+                    polyline = r.polyline,
                 ),
                 // A camera is "passed" if the route enters its field of view.
                 passedCameras = cameras.filter {
@@ -148,12 +164,30 @@ class BrouterPlanner(
 
     /** Route with the given cameras as field-of-view nogos; null if the engine threw. */
     private suspend fun runRoutes(
-        origin: GeoPoint,
-        destination: GeoPoint,
+        points: List<GeoPoint>,
         cameras: List<Camera>,
     ): List<BrouterRoute>? {
         val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
-        return runCatching { route(origin, destination, visions) }.getOrNull()
+        return runCatching { route(points, visions) }.getOrNull()
+    }
+
+    /**
+     * Merge the user's stops into the shaping pins, in the order the route
+     * reaches them. Stops are never dropped to make room: a shaping pin only
+     * steers the car, while missing a stop means not going where the driver
+     * asked.
+     */
+    private fun withStops(
+        stops: List<GeoPoint>,
+        shaping: List<GeoPoint>,
+        polyline: List<GeoPoint>,
+    ): List<GeoPoint> {
+        if (stops.isEmpty()) return shaping
+        fun progressAlong(p: GeoPoint): Int =
+            polyline.indices.minByOrNull {
+                app.shunt.solver.geo.haversineMeters(polyline[it], p)
+            } ?: 0
+        return (stops + shaping).sortedBy { progressAlong(it) }
     }
 
     private fun noRoute(): PlanOutcome {
