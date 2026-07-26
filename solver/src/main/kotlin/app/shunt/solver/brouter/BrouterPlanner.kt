@@ -18,6 +18,13 @@ data class PlannedRoute(
     val exposureMeters: Int,
     /** Extra travel time vs. the fastest option (0 for the fastest). */
     val addedSecondsVsFastest: Int,
+    /**
+     * Every camera was treated as impassable and no route came back, so the
+     * cameras this option passes cannot be routed around at any distance. The
+     * distinction is worth showing: "unavoidable" is a fact about the roads,
+     * not the avoidance quietly failing.
+     */
+    val noCameraFreeRouteExists: Boolean = false,
 ) {
     val camerasPassed: Int get() = passedCameras.size
 }
@@ -144,6 +151,7 @@ class BrouterPlanner(
                 estimatedSeconds = r.estimatedSeconds,
                 exposureMeters = r.exposureMeters,
                 addedSecondsVsFastest = r.estimatedSeconds - fastest.estimatedSeconds,
+                noCameraFreeRouteExists = r.noCameraFreeRouteExists,
             )
         }
         return PlanOutcome.Routes(options)

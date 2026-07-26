@@ -86,3 +86,16 @@ interface FavoritesStore {
     fun load(): Favorites
     fun save(favorites: Favorites)
 }
+
+/**
+ * Places recently routed to, most recent first. This app is used on the same
+ * handful of trips, and typing a destination into a keyless geocoder is the
+ * slowest part of setting off — so what you went to last time is usually the
+ * best thing to offer before a single key is pressed.
+ */
+interface RecentPlacesStore {
+    fun load(): List<Destination>
+
+    /** Record a place as just used, moving it to the front if already present. */
+    fun record(destination: Destination)
+}

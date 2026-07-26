@@ -9,6 +9,7 @@ import btools.router.RoutingContext
 import btools.router.RoutingEngine
 import btools.router.RoutingParamCollector
 import java.io.File
+import kotlin.math.cos
 
 /** Which point on the camera-avoidance spectrum a route represents. */
 enum class RouteChoice { FASTEST, BALANCED, FEWEST_CAMERAS }
@@ -25,6 +26,14 @@ data class BrouterRoute(
     val estimatedSeconds: Int,
     val distinctCamerasPassed: Int,
     val exposureMeters: Int,
+    /**
+     * The engine was asked to treat every camera as impassable and came back
+     * with nothing: no camera-free route exists at any distance, so the cameras
+     * on this option are genuinely unavoidable. Only set on the fewest-cameras
+     * option, and the difference matters to the driver — "unavoidable" is a
+     * fact about the roads, not a failure of the avoidance.
+     */
+    val noCameraFreeRouteExists: Boolean = false,
 )
 
 /**
@@ -72,13 +81,16 @@ class BrouterRouter(
         // cone costs little and gets chosen over a long back-road detour — the
         // route then passes a camera that was in fact avoidable. Blocking the
         // zones outright makes the engine find the camera-free path or none.
-        val fewest = (
-            runRoute(points, cameras, Avoidance.Blocked)
-                // No camera-free path exists (or an endpoint sits inside a zone,
-                // which a hard block rejects outright) — fall back to avoiding as
-                // hard as possible so the user still gets the best available.
-                ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
-            )?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+        val blocked = runRoute(points, cameras, Avoidance.Blocked)
+            ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+        val fewest = blocked
+            // No camera-free path exists (or an endpoint sits inside a zone,
+            // which a hard block rejects outright) — fall back to avoiding as
+            // hard as possible so the user still gets the best available, and
+            // record that the cameras on it are unavoidable rather than missed.
+            ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
+                ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+                ?.copy(noCameraFreeRouteExists = true)
 
         // Fastest first, then the avoidance options — but only ones that are
         // genuinely a different road, each kept under its own truthful label
@@ -175,8 +187,9 @@ class BrouterRouter(
 
         val omni = cameras.filter { it.directionDegrees == null }
         if (omni.isNotEmpty()) {
+            val radius = (CameraVision.OMNI_RANGE_M + NOGO_MARGIN_METERS).toInt()
             val spec = omni.joinToString("|") { c ->
-                "${c.location.lon},${c.location.lat},${CameraVision.OMNI_RANGE_M.toInt()},$weightSpec"
+                "${c.location.lon},${c.location.lat},$radius,$weightSpec"
             }
             collector.readNogoList(spec)?.let { nogos.addAll(it) }
         }
@@ -210,23 +223,60 @@ class BrouterRouter(
         private const val BALANCED_WEIGHT = 500.0
         private const val FEWEST_WEIGHT = 20_000.0
 
+        /**
+         * Blocked zones are grown by this much so they strictly contain the
+         * footprint [CameraVision] counts. Erring outward costs a marginally
+         * longer detour; erring inward silently prints "camera-free" over a
+         * route that drives past a camera, so the direction is not a toss-up.
+         */
+        internal const val NOGO_MARGIN_METERS = 15.0
+
+        /** Widen the blocked fan past the field of view, for the same reason. */
+        private const val NOGO_ANGLE_MARGIN_DEGREES = 5.0
+
+        /** Chords per fan; more means a tighter fit around the true arc. */
+        private const val SECTOR_STEPS = 12
+
         /** ETA fallback if BRouter timing is unavailable: ~40 km/h town average. */
         private fun estimateSeconds(meters: Int): Int = (meters / (40_000.0 / 3600.0)).toInt()
 
-        /** A closed sector polygon (half-disc) fanning ±90° around [directionDeg]. */
-        private fun sectorPolygon(
+        /**
+         * A closed sector polygon covering a camera's field of view, built to
+         * **contain** it rather than approximate it.
+         *
+         * This is load-bearing. `Avoidance.Blocked` promises that a route it
+         * returns is camera-free, and that promise is only as good as the
+         * agreement between the shape BRouter blocks and the shape
+         * [CameraVision.sees] counts. An inscribed polygon is *smaller* than the
+         * true sector, so a road clipping the arc is neither blocked nor
+         * unseen — it comes back labelled "fewest cameras" while passing one.
+         *
+         * So every approximation errs outward: the arc radius is scaled to
+         * circumscribe rather than inscribe, the fan is widened past the field
+         * of view (which also covers the small all-round disc [CameraVision]
+         * sees right at the lens), and a flat margin is added on top.
+         */
+        internal fun sectorPolygon(
             apex: GeoPoint,
             directionDeg: Double,
             range: Double,
             weight: Double,
         ): OsmNogoPolygon {
             val poly = OsmNogoPolygon(true)
-            poly.addVertex(lonToInt(apex.lon), latToInt(apex.lat))
-            val steps = 8
-            for (i in 0..steps) {
-                val bearing = directionDeg - CameraVision.FOV_HALF_ANGLE +
-                    (2 * CameraVision.FOV_HALF_ANGLE) * i / steps
-                val edge = destinationPoint(apex, bearing, range)
+            // Start the fan a little *behind* the lens rather than at it. A
+            // camera sees all round at point-blank range (CameraVision.sees
+            // ignores bearing within a couple of metres), which a strictly
+            // forward fan cannot contain; backing the apex off covers that
+            // pocket and only ever grows the zone.
+            val back = destinationPoint(apex, directionDeg + 180.0, NOGO_MARGIN_METERS)
+            poly.addVertex(lonToInt(back.lon), latToInt(back.lat))
+            val halfAngle = CameraVision.FOV_HALF_ANGLE + NOGO_ANGLE_MARGIN_DEGREES
+            // Push the vertices out so the chords sit outside the true arc.
+            val outer = (range + NOGO_MARGIN_METERS) /
+                cos(Math.toRadians(halfAngle / SECTOR_STEPS))
+            for (i in 0..SECTOR_STEPS) {
+                val bearing = directionDeg - halfAngle + (2 * halfAngle) * i / SECTOR_STEPS
+                val edge = destinationPoint(apex, bearing, outer)
                 poly.addVertex(lonToInt(edge.lon), latToInt(edge.lat))
             }
             poly.nogoWeight = weight

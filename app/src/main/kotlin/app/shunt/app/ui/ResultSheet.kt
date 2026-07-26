@@ -403,7 +403,15 @@ private fun SelectedRouteDetail(option: PlannedRoute) {
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Text(
-                "You'll be alerted on approach to each while driving.",
+                if (option.noCameraFreeRouteExists) {
+                    // The engine was asked to treat every camera as impassable
+                    // and found nothing. Saying so is the difference between
+                    // "the roads leave you no choice" and "avoidance failed".
+                    "There is no camera-free route between these points — every " +
+                        "road passes at least one. You'll be alerted on approach to each."
+                } else {
+                    "You'll be alerted on approach to each while driving."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )

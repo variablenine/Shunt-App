@@ -80,6 +80,7 @@ class PlanActions(
     val onSaveWork: (Destination) -> Unit,
     val onMapLongPress: (GeoPoint) -> Unit,
     val onChargeFirst: () -> Unit,
+    val onRecentSelected: (Int) -> Unit,
 )
 
 @Composable
@@ -92,15 +93,16 @@ fun PlanScreen(
     /** Names the charging stop the car inserted mid-drive, when it has. */
     chargingVia: String? = null,
 ) {
-    val (polyline, cameras) = routeOverlay(state.phase)
+    val overlay = routeOverlay(state.phase)
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showVehicleSettings by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(
-            routePolyline = polyline,
-            passedCameras = cameras,
+            routePolyline = overlay.polyline,
+            passedCameras = overlay.passedCameras,
+            steeringWaypoints = overlay.waypoints,
             modifier = Modifier.fillMaxSize(),
             cameraFetcher = cameraViewportFetcher,
             // Only while browsing: a long press mid-drive would abandon the trip.
@@ -218,6 +220,11 @@ private fun SearchAndFavorites(
                 // Distinguish "no such place in the map data" from a silent blank,
                 // so an unmatched query reads as a result, not a broken search.
                 SearchStatus("No matching places found. Try a fuller name or a nearby town.")
+            } else if (state.recents.isNotEmpty()) {
+                // Nothing typed yet: offer where you went last. Typing into a
+                // keyless geocoder is the slowest part of setting off, and this
+                // app is used on the same handful of trips.
+                RecentPlaces(state.recents, actions.onRecentSelected)
             }
 
             Spacer(Modifier.height(6.dp))
@@ -307,6 +314,36 @@ private fun FavoriteChip(label: String, icon: androidx.compose.ui.graphics.vecto
     )
 }
 
+/** Where you went last, offered before a single key is pressed. */
+@Composable
+private fun RecentPlaces(recents: List<Destination>, onSelect: (Int) -> Unit) {
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Recent",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    recents.forEachIndexed { index, place ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect(index) }
+                .padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.height(18.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(place.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+        }
+        HorizontalDivider()
+    }
+}
+
 @Composable
 private fun Banner(message: String, onClick: (() -> Unit)? = null) {
     val base = Modifier.fillMaxWidth()
@@ -324,18 +361,36 @@ private fun Banner(message: String, onClick: (() -> Unit)? = null) {
     }
 }
 
-/** The route line + passed-camera points to draw for the current phase. */
-private fun routeOverlay(phase: Phase): Pair<List<GeoPoint>, List<GeoPoint>> {
+/** What the map draws for the current phase: the line, passed cameras, and pins. */
+private data class RouteOverlay(
+    val polyline: List<GeoPoint> = emptyList(),
+    val passedCameras: List<GeoPoint> = emptyList(),
+    /** The waypoints the car will be steered through. */
+    val waypoints: List<GeoPoint> = emptyList(),
+)
+
+private fun routeOverlay(phase: Phase): RouteOverlay {
     val option: PlannedRoute? = when (phase) {
         is Phase.Solved -> phase.chosen
         is Phase.Pushing -> phase.option
         is Phase.PushFailed -> phase.option
         else -> null
     }
-    if (option != null) return option.polyline to option.passedCameras.map { it.location }
-    // The driving phase carries a prebuilt plan (polyline + cameras).
-    if (phase is Phase.Driving) {
-        return phase.plan.polyline to phase.plan.cameras.map { it.location }
+    if (option != null) {
+        return RouteOverlay(
+            option.polyline,
+            option.passedCameras.map { it.location },
+            option.waypoints,
+        )
     }
-    return emptyList<GeoPoint>() to emptyList()
+    // The driving phase carries a prebuilt plan (polyline + cameras + chain).
+    if (phase is Phase.Driving) {
+        return RouteOverlay(
+            phase.plan.polyline,
+            phase.plan.cameras.map { it.location },
+            // The last chain entry is the destination itself, not a shaping pin.
+            phase.plan.chain.dropLast(1),
+        )
+    }
+    return RouteOverlay()
 }

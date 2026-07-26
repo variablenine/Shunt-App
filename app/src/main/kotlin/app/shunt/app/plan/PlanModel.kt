@@ -62,6 +62,8 @@ data class PlanUiState(
     /** Destination search couldn't be reached (offline / service error). */
     val searchFailed: Boolean = false,
     val favorites: Favorites = Favorites(),
+    /** Places routed to before, newest first; shown when the query is empty. */
+    val recents: List<Destination> = emptyList(),
     val cameraDataFreshness: Freshness? = null,
     /**
      * How the route on the chooser compares with the car's remaining range.

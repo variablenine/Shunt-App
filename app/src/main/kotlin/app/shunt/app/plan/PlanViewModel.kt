@@ -32,6 +32,8 @@ class PlanViewModel(
     private val cameras: CameraGateway,
     private val favoritesStore: FavoritesStore,
     private val vehicle: VehicleNavClient,
+    /** Places routed to before; offered when the search box is empty. */
+    private val recentPlaces: RecentPlacesStore? = null,
     /** Names a long-pressed map point; absent, such points get coordinates. */
     private val placeNamer: PlaceNamer? = null,
     /** Reads the car's remaining range; absent, no range warning is shown. */
@@ -44,7 +46,12 @@ class PlanViewModel(
 
     private val workScope: CoroutineScope get() = scope ?: viewModelScope
 
-    private val _state = MutableStateFlow(PlanUiState(favorites = favoritesStore.load()))
+    private val _state = MutableStateFlow(
+        PlanUiState(
+            favorites = favoritesStore.load(),
+            recents = recentPlaces?.load().orEmpty(),
+        ),
+    )
     val state: StateFlow<PlanUiState> = _state.asStateFlow()
 
     private var searchJob: Job? = null
@@ -135,8 +142,17 @@ class PlanViewModel(
         }
     }
 
+    /** Route to a place picked from the recents list. */
+    fun onRecentSelected(index: Int) {
+        _state.value.recents.getOrNull(index)?.let { planTo(it) }
+    }
+
     private fun planTo(destination: Destination) {
         searchJob?.cancel()
+        // Recorded on the attempt, not on arrival: what you tried to go to is
+        // what you are likely to want offered again, even if the plan failed.
+        recentPlaces?.record(destination)
+        _state.update { it.copy(recents = recentPlaces?.load().orEmpty()) }
         _state.update { it.copy(phase = Phase.Solving(destination), suggestions = emptyList()) }
         workScope.launch { runPlan(destination) }
     }

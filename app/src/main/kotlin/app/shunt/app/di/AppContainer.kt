@@ -19,6 +19,7 @@ import app.shunt.solver.brouter.BrouterRouter
 import app.shunt.solver.brouter.BrouterTileSource
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
+import app.shunt.solver.charging.CHARGER_CORRIDOR_METERS
 import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.chooseChargeStop
 import app.shunt.solver.geo.BoundingBox
@@ -177,6 +178,7 @@ class AppContainer(context: Context) {
     }
 
     val favoritesStore = SharedPrefsFavoritesStore(appContext)
+    val recentPlacesStore = SharedPrefsRecentPlacesStore(appContext)
     private val locationProvider: LocationProvider =
         AndroidLocationProvider(appContext, favoritesStore)
 
@@ -230,6 +232,7 @@ class AppContainer(context: Context) {
         },
         favoritesStore = favoritesStore,
         vehicle = vehicleNavClient,
+        recentPlaces = recentPlacesStore,
         placeNamer = { point -> nominatimSearch.reverse(point)?.title },
         // A camera-avoiding detour can outrun a battery the direct route would
         // have been fine on, and the car's own planner never sees that route —
@@ -257,8 +260,7 @@ class AppContainer(context: Context) {
         reachableMeters: Double,
     ): app.shunt.app.plan.Destination? {
         if (route.size < 2) return null
-        val corridor = BoundingBox.of(route).expand(CHARGER_CORRIDOR_METERS)
-        val candidates = superchargers.inBox(corridor)
+        val candidates = superchargers.alongRoute(route, CHARGER_CORRIDOR_METERS)
         val chosen = chooseChargeStop(route, candidates, reachableMeters, CHARGER_CORRIDOR_METERS)
             ?: return null
         return app.shunt.app.plan.Destination(chosen.name, chosen.location)
@@ -355,8 +357,6 @@ class AppContainer(context: Context) {
         /** Routing tiles unused for this long are pruned (~6 months). */
         const val TILE_TTL_DAYS = 183L
 
-        /** How far off the route a charging stop may sit and still be "on the way". */
-        const val CHARGER_CORRIDOR_METERS = 8_000.0
     }
 }
 

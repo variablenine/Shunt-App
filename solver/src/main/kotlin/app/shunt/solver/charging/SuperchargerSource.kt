@@ -2,6 +2,7 @@ package app.shunt.solver.charging
 
 import app.shunt.core.GeoPoint
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointToPolylineProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -29,12 +30,27 @@ class SuperchargerSource(
     private val baseUrl: String = "https://overpass-api.de/api/interpreter",
 ) {
     /**
-     * Every Tesla charging site in [bbox]. Returns an empty list on any failure
-     * — a missing charger list degrades the suggestion, and must never block or
-     * fail the routing the user actually asked for.
+     * Tesla charging sites within [corridorMeters] of [route].
+     *
+     * A corridor, not a bounding box: a 400 km trip's box covers most of a
+     * state, which is both a far larger Overpass query than needed (they time
+     * out, and a timeout reads as "no chargers exist") and full of sites nowhere
+     * near the road. Overpass's `around` filter takes a polyline directly, so
+     * the query asks the question we actually mean.
+     *
+     * Returns an empty list on any failure — a missing charger list degrades
+     * the suggestion, and must never block or fail the routing the user asked
+     * for.
      */
-    suspend fun inBox(bbox: BoundingBox): List<Supercharger> {
-        val query = overpassQuery(bbox)
+    suspend fun alongRoute(route: List<GeoPoint>, corridorMeters: Double): List<Supercharger> {
+        if (route.size < 2) return emptyList()
+        return query(corridorQuery(route, corridorMeters))
+    }
+
+    /** Every Tesla charging site in [bbox]. */
+    suspend fun inBox(bbox: BoundingBox): List<Supercharger> = query(boxQuery(bbox))
+
+    private suspend fun query(query: String): List<Supercharger> {
         val request = Request.Builder()
             .url(baseUrl)
             .header("User-Agent", USER_AGENT)
@@ -53,34 +69,67 @@ class SuperchargerSource(
     companion object {
         const val USER_AGENT = "Shunt/1.0 (+https://github.com/variablenine/Shunt-App)"
 
-        /** Cap the reply size; a state-sized box can otherwise return thousands. */
+        /** Cap the reply size; a long corridor can otherwise return hundreds. */
         private const val RESULT_LIMIT = 400
+
+        /**
+         * Thin the route before putting it in an `around` filter. A routed
+         * polyline is tens of thousands of points; a query built from all of
+         * them would be megabytes. One point every 2 km still describes the
+         * corridor faithfully at the widths used here.
+         */
+        private const val CORRIDOR_SAMPLE_METERS = 2_000.0
 
         private val json = Json { ignoreUnknownKeys = true }
 
         /**
-         * Tesla sites are tagged inconsistently across OSM — some carry
-         * `brand`, some only `operator` or `network`, and some only the
-         * Supercharger socket type — so all four are unioned rather than
-         * trusting any one of them. `out center` gives ways (a mapped parking
-         * area rather than a single node) a usable coordinate.
+         * Ask for **every** charging station in the corridor and sort out which
+         * are Tesla's on this side.
+         *
+         * Overpass tag filtering is exact-match-ish and OSM tags Tesla sites
+         * every which way — `brand`, `operator`, `network`, socket types, or
+         * only the name — so a server-side filter quietly drops real sites. It
+         * is also one query instead of eight, which matters: the previous
+         * version fanned four tag filters across two element types over a
+         * whole-trip bounding box, and a timeout on that comes back looking
+         * exactly like "there are no chargers here".
          */
-        fun overpassQuery(bbox: BoundingBox): String {
+        fun corridorQuery(route: List<GeoPoint>, corridorMeters: Double): String {
+            val line = sampleAlong(route, CORRIDOR_SAMPLE_METERS)
+                .joinToString(",") { "${"%.5f".format(it.lat)},${"%.5f".format(it.lon)}" }
+            val around = "around:${corridorMeters.toInt()},$line"
+            return "[out:json][timeout:60];" +
+                """nwr["amenity"="charging_station"]($around);""" +
+                "out center $RESULT_LIMIT;"
+        }
+
+        fun boxQuery(bbox: BoundingBox): String {
             val box = "${bbox.minLat},${bbox.minLon},${bbox.maxLat},${bbox.maxLon}"
-            return buildString {
-                append("[out:json][timeout:25];(")
-                for (kind in listOf("node", "way")) {
-                    append("""$kind["amenity"="charging_station"]["brand"~"Tesla",i]($box);""")
-                    append("""$kind["amenity"="charging_station"]["operator"~"Tesla",i]($box);""")
-                    append("""$kind["amenity"="charging_station"]["network"~"Tesla",i]($box);""")
-                    append("""$kind["amenity"="charging_station"]["socket:tesla_supercharger"]($box);""")
+            return "[out:json][timeout:60];" +
+                """nwr["amenity"="charging_station"]($box);""" +
+                "out center $RESULT_LIMIT;"
+        }
+
+        /** Points along [route] roughly [every] metres apart, ends included. */
+        fun sampleAlong(route: List<GeoPoint>, every: Double): List<GeoPoint> {
+            if (route.size < 2) return route
+            val out = mutableListOf(route.first())
+            var since = 0.0
+            for (i in 1 until route.size) {
+                since += haversineMeters(route[i - 1], route[i])
+                if (since >= every) {
+                    out += route[i]
+                    since = 0.0
                 }
-                append(");out center $RESULT_LIMIT;")
             }
+            if (out.last() != route.last()) out += route.last()
+            return out
         }
 
         fun parse(body: String): List<Supercharger> =
-            json.decodeFromString<OverpassResponse>(body).elements.mapNotNull { it.toSupercharger() }
+            json.decodeFromString<OverpassResponse>(body).elements
+                .filter { it.isTesla() }
+                .mapNotNull { it.toSupercharger() }
     }
 
     @Serializable
@@ -94,6 +143,17 @@ class SuperchargerSource(
         val center: Center? = null,
         val tags: Map<String, String> = emptyMap(),
     ) {
+        /**
+         * Whether this is a Tesla site, decided here rather than by the server.
+         * OSM records the operator under whichever of these keys the mapper
+         * reached for, so all of them are checked; the socket tag settles the
+         * cases where none of the names mention Tesla at all.
+         */
+        fun isTesla(): Boolean {
+            if (tags.keys.any { it.startsWith("socket:tesla") }) return true
+            return TESLA_KEYS.any { key -> tags[key]?.contains("tesla", ignoreCase = true) == true }
+        }
+
         fun toSupercharger(): Supercharger? {
             val latitude = lat ?: center?.lat ?: return null
             val longitude = lon ?: center?.lon ?: return null
@@ -108,30 +168,42 @@ class SuperchargerSource(
     private data class Center(val lat: Double, val lon: Double)
 }
 
+/** Tag keys OSM mappers use to record who runs a charging site. */
+private val TESLA_KEYS = listOf("brand", "operator", "network", "name")
+
+/** How far off the route a charging site may sit and still be worth the detour. */
+const val CHARGER_CORRIDOR_METERS = 40_000.0
+
 /**
- * Pick the charging stop to slot in before a long detour: the one that gets you
- * *farthest along* the planned route while still being comfortably reachable
- * and close to the road you were going to drive anyway.
+ * Pick the charging stop to slot in before a long detour.
  *
- * Farthest-along rather than nearest is deliberate. Stopping at the first
- * charger you pass wastes the charge already in the battery and adds a stop
- * earlier than needed; the useful stop is the last one you can still reach.
+ * Two competing pulls, scored against each other rather than ranked in turn:
+ *
+ *  - **Get as far as you can first.** Stopping at the first charger you pass
+ *    wastes the charge already in the battery and adds a stop sooner than
+ *    needed; the useful stop is the last one you can still reach.
+ *  - **Don't drive miles out of your way.** Leaving the route costs the hop out
+ *    *and* the hop back, so a site 30 km off the road has to buy a lot of
+ *    progress to be worth more than one 5 km off it.
+ *
+ * So the score is progress along the route minus twice the excursion — plain
+ * net progress, in metres. That is what lets [CHARGER_CORRIDOR_METERS] be
+ * generous (chargers worth a detour are often a good way off a rural route)
+ * without the widest corridor automatically winning.
  *
  * [reachableMeters] is how far the car can go before it must be plugged in —
- * already derated, see [RangeEstimate.REACHABLE_FRACTION]. [corridorMeters] is
- * how far off the route a candidate may sit before it stops being "on the way".
+ * already derated, see [RangeEstimate.REACHABLE_FRACTION].
  */
 fun chooseChargeStop(
     route: List<GeoPoint>,
     candidates: List<Supercharger>,
     reachableMeters: Double,
-    corridorMeters: Double = 8_000.0,
+    corridorMeters: Double = CHARGER_CORRIDOR_METERS,
 ): Supercharger? {
     if (route.size < 2 || candidates.isEmpty()) return null
 
     var best: Supercharger? = null
-    var bestAlong = -1.0
-    var bestOffRoute = Double.MAX_VALUE
+    var bestScore = -Double.MAX_VALUE
 
     for (candidate in candidates) {
         val progress = pointToPolylineProgress(candidate.location, route)
@@ -139,13 +211,14 @@ fun chooseChargeStop(
         // Getting there costs the drive along the route plus the hop off it.
         if (progress.alongMeters + progress.distanceMeters > reachableMeters) continue
 
-        val better = progress.alongMeters > bestAlong ||
-            (progress.alongMeters == bestAlong && progress.distanceMeters < bestOffRoute)
-        if (better) {
+        val score = progress.alongMeters - DETOUR_COST * progress.distanceMeters
+        if (score > bestScore) {
             best = candidate
-            bestAlong = progress.alongMeters
-            bestOffRoute = progress.distanceMeters
+            bestScore = score
         }
     }
     return best
 }
+
+/** Leaving the route is a round trip, so an excursion costs twice its length. */
+private const val DETOUR_COST = 2.0

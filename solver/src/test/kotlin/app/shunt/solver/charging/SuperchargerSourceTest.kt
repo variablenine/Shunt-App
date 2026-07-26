@@ -31,6 +31,9 @@ class SuperchargerSourceTest {
 
     private val box = BoundingBox(38.5, -98.5, 39.5, -97.5)
 
+    /** A straight eastbound line, roughly 87 km end to end. */
+    private val route = listOf(GeoPoint(39.0, -98.5), GeoPoint(39.0, -97.5))
+
     @Test
     fun `nodes and ways both yield a usable coordinate`() {
         val body = """
@@ -59,12 +62,44 @@ class SuperchargerSourceTest {
     }
 
     @Test
-    fun `the query covers every way Tesla sites are tagged in OSM`() {
-        val query = SuperchargerSource.overpassQuery(box)
-        for (tag in listOf("brand", "operator", "network", "socket:tesla_supercharger")) {
-            assertTrue(tag in query, "missing $tag: sites tagged only that way would be invisible")
-        }
-        assertTrue("38.5,-98.5,39.5,-97.5" in query)
+    fun `Tesla sites are recognised however OSM happens to tag them`() {
+        // Filtering client-side rather than in the query is the point: mappers
+        // record the operator under whichever key they reached for, and an
+        // exact-match server-side filter quietly drops the rest.
+        val body = """
+            {"elements":[
+              {"type":"node","id":1,"lat":39.0,"lon":-98.0,"tags":{"amenity":"charging_station","brand":"Tesla"}},
+              {"type":"node","id":2,"lat":39.0,"lon":-98.0,"tags":{"amenity":"charging_station","operator":"Tesla, Inc."}},
+              {"type":"node","id":3,"lat":39.0,"lon":-98.0,"tags":{"amenity":"charging_station","network":"Tesla Supercharger"}},
+              {"type":"node","id":4,"lat":39.0,"lon":-98.0,"tags":{"amenity":"charging_station","name":"Tesla Supercharger"}},
+              {"type":"node","id":5,"lat":39.0,"lon":-98.0,"tags":{"amenity":"charging_station","socket:tesla_supercharger":"8"}},
+              {"type":"node","id":6,"lat":39.0,"lon":-98.0,"tags":{"amenity":"charging_station","operator":"Some Other Network"}}
+            ]}
+        """.trimIndent()
+
+        val ids = SuperchargerSource.parse(body).map { it.id }
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L), ids, "every Tesla tagging must be recognised")
+    }
+
+    @Test
+    fun `the corridor query asks along the route, not over its bounding box`() {
+        // A 400 km trip's bounding box covers most of a state: a far bigger
+        // Overpass query than needed, and one that times out — which comes back
+        // looking exactly like "there are no chargers here".
+        val query = SuperchargerSource.corridorQuery(route, 40_000.0)
+        assertTrue("around:40000" in query, "must ask for a corridor: $query")
+        assertTrue("charging_station" in query)
+    }
+
+    @Test
+    fun `a long route is thinned before going into the query`() {
+        // Routed polylines run to tens of thousands of points; all of them in an
+        // `around` filter would be a megabytes-long query body.
+        val dense = (0..4000).map { GeoPoint(39.0, -98.5 + it * 0.0001) }
+        val sampled = SuperchargerSource.sampleAlong(dense, 2_000.0)
+        assertTrue(sampled.size < 50, "expected a thinned line, got ${sampled.size} points")
+        assertEquals(dense.first(), sampled.first())
+        assertEquals(dense.last(), sampled.last(), "the end of the route must survive thinning")
     }
 
     @Test
@@ -72,19 +107,19 @@ class SuperchargerSourceTest {
         // This runs alongside routing the user actually asked for; it must
         // degrade the suggestion, never break the plan.
         server.enqueue(MockResponse().setResponseCode(504))
-        assertTrue(source.inBox(box).isEmpty())
+        assertTrue(source.alongRoute(route, 40_000.0).isEmpty())
     }
 
     @Test
     fun `nonsense in the response body yields no chargers`() = runTest {
         server.enqueue(MockResponse().setBody("<html>rate limited</html>"))
-        assertTrue(source.inBox(box).isEmpty())
+        assertTrue(source.alongRoute(route, 40_000.0).isEmpty())
     }
 
     @Test
     fun `the query is posted, keylessly, with a contactable user agent`() = runTest {
         server.enqueue(MockResponse().setBody("""{"elements":[]}"""))
-        source.inBox(box)
+        source.alongRoute(route, 40_000.0)
 
         val request = server.takeRequest()
         assertEquals("POST", request.method)
@@ -94,9 +129,6 @@ class SuperchargerSourceTest {
     }
 
     // ---- Choosing which one to stop at -----------------------------------
-
-    /** A straight eastbound line, roughly 87 km end to end. */
-    private val route = listOf(GeoPoint(39.0, -98.5), GeoPoint(39.0, -97.5))
 
     private fun charger(id: Long, lat: Double, lon: Double) =
         Supercharger(id, "Charger $id", GeoPoint(lat, lon))

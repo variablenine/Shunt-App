@@ -8,6 +8,7 @@ import androidx.core.content.ContextCompat
 import app.shunt.app.plan.Destination
 import app.shunt.app.plan.Favorites
 import app.shunt.app.plan.FavoritesStore
+import app.shunt.app.plan.RecentPlacesStore
 import app.shunt.app.plan.LocationProvider
 import app.shunt.core.GeoPoint
 
@@ -42,6 +43,56 @@ class SharedPrefsFavoritesStore(context: Context) : FavoritesStore {
     private companion object {
         const val KEY_HOME = "home"
         const val KEY_WORK = "work"
+    }
+}
+
+/**
+ * Recently-routed-to places, newest first.
+ *
+ * Stored as plain app-private prefs like the favorites, and capped: this is a
+ * convenience, not a history feature, and a short list is both easier to pick
+ * from and less of a record of where someone has been. Kept out of backups by
+ * the app's `allowBackup="false"`.
+ */
+class SharedPrefsRecentPlacesStore(context: Context) : RecentPlacesStore {
+    private val prefs = context.getSharedPreferences("recent_places", Context.MODE_PRIVATE)
+
+    override fun load(): List<Destination> {
+        val raw = prefs.getString(KEY_RECENTS, null) ?: return emptyList()
+        return raw.split(RECORD_SEPARATOR).mapNotNull(::parse)
+    }
+
+    override fun record(destination: Destination) {
+        // Same place again just moves to the front rather than piling up.
+        val updated = (listOf(destination) + load().filterNot { it.location == destination.location })
+            .take(MAX_RECENTS)
+        prefs.edit()
+            .putString(KEY_RECENTS, updated.joinToString(RECORD_SEPARATOR, transform = ::format))
+            .apply()
+    }
+
+    /** Clear the list — the user's own record of where they have been. */
+    fun clear() {
+        prefs.edit().remove(KEY_RECENTS).apply()
+    }
+
+    private fun format(d: Destination): String =
+        "${d.title.replace(FIELD_SEPARATOR, " ").replace(RECORD_SEPARATOR, " ")}" +
+            "$FIELD_SEPARATOR${d.location.lat}$FIELD_SEPARATOR${d.location.lon}"
+
+    private fun parse(raw: String): Destination? {
+        val parts = raw.split(FIELD_SEPARATOR)
+        if (parts.size != 3) return null
+        val lat = parts[1].toDoubleOrNull() ?: return null
+        val lon = parts[2].toDoubleOrNull() ?: return null
+        return runCatching { Destination(parts[0], GeoPoint(lat, lon)) }.getOrNull()
+    }
+
+    private companion object {
+        const val KEY_RECENTS = "recents"
+        const val MAX_RECENTS = 6
+        const val FIELD_SEPARATOR = "|"
+        const val RECORD_SEPARATOR = "\n"
     }
 }
 

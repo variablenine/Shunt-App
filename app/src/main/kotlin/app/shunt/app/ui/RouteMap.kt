@@ -98,6 +98,8 @@ private const val CONE_LAYER = "camera-cones-fill"
 // The subset of cameras the chosen route passes near — drawn brighter, on top.
 private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
+private const val WAYPOINT_SOURCE = "route-waypoints"
+private const val WAYPOINT_LAYER = "route-waypoint-dots"
 
 /** Above this viewport span (~44 km) we don't fetch cameras — too many, too zoomed out. */
 private const val MAX_VIEWPORT_SPAN_DEG = 0.4
@@ -113,6 +115,12 @@ private const val MAX_VIEWPORT_SPAN_DEG = 0.4
 fun RouteMap(
     routePolyline: List<GeoPoint>,
     passedCameras: List<GeoPoint>,
+    /**
+     * The shaping pins Shunt will send the car through. Worth drawing: the car
+     * navigates itself between them, so they are the whole reason it follows
+     * the camera-avoiding line rather than its own idea of the route.
+     */
+    steeringWaypoints: List<GeoPoint> = emptyList(),
     modifier: Modifier = Modifier,
     showLocation: Boolean = true,
     cameraFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
@@ -226,7 +234,7 @@ fun RouteMap(
             if (showLocation && hasLocationPermission && !locationActivated.value) {
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
-            renderRoute(loadedStyle, routePolyline, passedCameras)
+            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey) }
         }
@@ -301,7 +309,12 @@ private fun centerOnUserLocation(view: MapView): Boolean {
     return moved
 }
 
-private fun renderRoute(style: Style, polyline: List<GeoPoint>, passed: List<GeoPoint>) {
+private fun renderRoute(
+    style: Style,
+    polyline: List<GeoPoint>,
+    passed: List<GeoPoint>,
+    waypoints: List<GeoPoint> = emptyList(),
+) {
     if (polyline.size >= 2) {
         val line = Feature.fromGeometry(
             LineString.fromLngLats(polyline.map { Point.fromLngLat(it.lon, it.lat) }),
@@ -320,6 +333,26 @@ private fun renderRoute(style: Style, polyline: List<GeoPoint>, passed: List<Geo
                 ),
             )
         }
+    }
+
+    // The pins the car gets steered through, under the camera dots so an
+    // unavoidable camera is never hidden behind one.
+    val waypointFeatures = FeatureCollection.fromFeatures(
+        waypoints.map { Feature.fromGeometry(Point.fromLngLat(it.lon, it.lat)) },
+    )
+    val waypointSource = style.getSourceAs<GeoJsonSource>(WAYPOINT_SOURCE)
+    if (waypointSource != null) {
+        waypointSource.setGeoJson(waypointFeatures)
+    } else {
+        style.addSource(GeoJsonSource(WAYPOINT_SOURCE, waypointFeatures))
+        style.addLayer(
+            CircleLayer(WAYPOINT_LAYER, WAYPOINT_SOURCE).withProperties(
+                PropertyFactory.circleColor("#ffffff"),
+                PropertyFactory.circleRadius(4.5f),
+                PropertyFactory.circleStrokeColor("#1f6feb"),
+                PropertyFactory.circleStrokeWidth(2.5f),
+            ),
+        )
     }
 
     // Passed cameras: the unavoidable ALPRs on the chosen route, in alarm red.

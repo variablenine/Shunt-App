@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
                         onSaveWork = { vm.onSaveFavorite(FavoriteSlot.WORK, it) },
                         onMapLongPress = vm::onMapLongPress,
                         onChargeFirst = vm::onChargeFirst,
+                        onRecentSelected = vm::onRecentSelected,
                     ),
                 )
             }
