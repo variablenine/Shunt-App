@@ -197,6 +197,118 @@ class DriveMonitorTest {
         assertTrue(alerter.alerts.none { it is Alert.Replanned }, "must not claim a new route")
     }
 
+    // ---- Charging stops the car adds by itself ---------------------------
+
+    private val charger = GeoPoint(33.1, -96.99)
+
+    private fun navigatingTo(p: GeoPoint, name: String) = app.shunt.tesla.ActiveRoute(
+        destinationName = name,
+        latitude = p.lat,
+        longitude = p.lon,
+        milesToArrival = null,
+        minutesToArrival = null,
+        energyAtArrival = null,
+        batteryLevel = null,
+        estimatedRangeMiles = null,
+    )
+
+    private fun chargingCoordinator(
+        vehicle: FakeVehicleNavClient,
+        reads: MutableList<app.shunt.tesla.ActiveRoute?>,
+        chargerPlan: DrivePlan?,
+    ) = ChargeStopCoordinator(
+        vehicle = vehicle,
+        readActiveRoute = { reads.removeFirstOrNull() },
+        planLeg = { _, _, to -> if (to.location == charger) chargerPlan else null },
+        // Cadence is covered in ChargeStopCoordinatorTest; here every fix is
+        // due so the test is about what the monitor does with the answer.
+        window = ProbeWindow(readIntervalMillis = 0, minIntervalMillis = 0),
+        pause = {},
+    )
+
+    @Test
+    fun `a charging stop the car added takes over the drive, and arriving at it is not arriving`() = runTest {
+        val vehicle = FakeVehicleNavClient()
+        val alerter = RecordingAlerter()
+        val statuses = mutableListOf<DriveStatus>()
+        val chargerLeg = DrivePlan(
+            destination = Destination("Supercharger Anytown", charger),
+            chain = listOf(charger),
+            cameras = emptyList(),
+            polyline = listOf(w1, charger),
+        )
+        val charging = chargingCoordinator(
+            vehicle,
+            mutableListOf(navigatingTo(charger, "Supercharger Anytown")),
+            chargerLeg,
+        )
+
+        // Set off, then drive to the charger rather than the original destination.
+        val fixes = listOf(fix(west(w1, 1000.0)), fix(west(charger, 300.0)), fix(charger))
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = alerter,
+            onStatus = { statuses.add(it) },
+            charging = charging,
+        ).run(plan(), flowOf(*fixes.toTypedArray()))
+
+        val announced = alerter.alerts.filterIsInstance<Alert.ChargeStopAhead>().single()
+        assertEquals("Supercharger Anytown", announced.name)
+        // The car got the leg to the charger...
+        assertTrue(
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>()
+                .any { it.waypoints == listOf(charger) },
+        )
+        // ...and reaching it is a stop on the way, not the end of the trip.
+        assertTrue(alerter.alerts.any { it is Alert.ReachedChargeStop })
+        assertTrue(alerter.alerts.none { it is Alert.Arrived }, "the trip is not over at the charger")
+        assertTrue(statuses.none { it is DriveStatus.Arrived })
+        assertEquals(
+            "Supercharger Anytown",
+            statuses.filterIsInstance<DriveStatus.Driving>().last().chargingVia,
+            "the UI must be able to say the car is charging first",
+        )
+    }
+
+    @Test
+    fun `a charging stop we cannot route to is called out as unprotected`() = runTest {
+        val alerter = RecordingAlerter()
+        val charging = chargingCoordinator(
+            FakeVehicleNavClient(),
+            mutableListOf(navigatingTo(charger, "Supercharger Anytown")),
+            chargerPlan = null, // e.g. no offline tile out there
+        )
+
+        DriveMonitor(FakeVehicleNavClient(), alerter, charging = charging)
+            .run(plan(), flowOf(fix(west(w1, 1000.0))))
+
+        val unroutable = alerter.alerts.filterIsInstance<Alert.ChargeStopUnroutable>().single()
+        assertEquals("Supercharger Anytown", unroutable.name)
+        assertEquals(Alert.Severity.URGENT, unroutable.severity, "no avoidance in force is urgent")
+    }
+
+    @Test
+    fun `a car heading straight to the destination drives exactly as before`() = runTest {
+        val vehicle = FakeVehicleNavClient()
+        val alerter = RecordingAlerter()
+        val charging = chargingCoordinator(
+            vehicle,
+            mutableListOf(navigatingTo(dest, "Home")),
+            chargerPlan = null,
+        )
+
+        DriveMonitor(vehicle, alerter, charging = charging)
+            .run(plan(), flowOf(*approach.map { fix(it) }.toTypedArray()))
+
+        assertTrue(alerter.alerts.any { it is Alert.Arrived })
+        assertTrue(alerter.alerts.none { it is Alert.ChargeStopAhead })
+        // Only the two ordinary waypoint advances — no probe traffic.
+        assertEquals(
+            listOf(listOf(w2, dest), listOf(dest)),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>().map { it.waypoints },
+        )
+    }
+
     @Test
     fun `after re-planning, camera warnings follow the new route`() = runTest {
         val alerter = RecordingAlerter()

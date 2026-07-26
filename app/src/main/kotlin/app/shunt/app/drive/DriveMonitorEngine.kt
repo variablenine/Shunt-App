@@ -54,6 +54,27 @@ class DriveMonitorEngine(
     private var consecutiveOffRoute = 0
     private var offRoute = false
 
+    /**
+     * The not-yet-passed part of the chain — what the car should be steering
+     * along right now. Empty once the whole chain is behind us.
+     */
+    fun remainingChain(): List<GeoPoint> =
+        if (targetIndex > chain.lastIndex) emptyList() else chain.subList(targetIndex, chain.size).toList()
+
+    /** The driver's own stops still ahead, in order. */
+    fun remainingStops(): List<GeoPoint> = remainingChain().filter { it in stopPoints }
+
+    /** Metres to the waypoint being steered to, or null once the chain is done. */
+    fun metersToNextWaypoint(at: GeoPoint): Double? =
+        chain.getOrNull(targetIndex)?.let { haversineMeters(at, it) }
+
+    /** Metres to the nearest camera we're warning about, or null when there are none. */
+    fun metersToNearestCamera(at: GeoPoint): Double? =
+        cameras.minOfOrNull { haversineMeters(at, it.location) }
+
+    /** True while the vehicle is judged to have left the planned route. */
+    val isOffRoute: Boolean get() = offRoute
+
     /** Signals raised by this fix, in the order they should be acted on. */
     fun onLocation(update: LocationUpdate): List<DriveSignal> {
         if (arrived) return emptyList()

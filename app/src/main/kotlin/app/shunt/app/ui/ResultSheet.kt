@@ -45,6 +45,7 @@ import app.shunt.app.ui.theme.safeColor
 import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.brouter.RouteChoice
 import app.shunt.solver.camera.Camera
+import app.shunt.solver.charging.RangeCheck
 
 /**
  * The result card — the most important screen in the app. It offers the route
@@ -62,6 +63,13 @@ fun ResultSheet(
     onDismiss: () -> Unit,
     onSaveHome: (Destination) -> Unit,
     onSaveWork: (Destination) -> Unit,
+    /** The charging stop the car added on its own, when it has added one. */
+    chargingVia: String? = null,
+    /** How the chosen route compares with the car's range; null = no claim. */
+    rangeCheck: RangeCheck? = null,
+    findingChargeStop: Boolean = false,
+    chargeStopSearchFailed: Boolean = false,
+    onChargeFirst: () -> Unit = {},
 ) {
     // Never let the sheet cover the whole screen — keep the route visible above it.
     val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
@@ -80,9 +88,12 @@ fun ResultSheet(
             when (phase) {
                 is Phase.Solving -> SolvingContent(phase)
                 is Phase.NeedTile -> NeedTileContent(phase, onDownloadTile, onDismiss)
-                is Phase.Solved -> SolvedContent(phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork)
+                is Phase.Solved -> SolvedContent(
+                    phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork,
+                    rangeCheck, findingChargeStop, chargeStopSearchFailed, onChargeFirst,
+                )
                 is Phase.Pushing -> PushingContent(phase.destination)
-                is Phase.Driving -> DrivingContent(phase, onDismiss)
+                is Phase.Driving -> DrivingContent(phase, chargingVia, onDismiss)
                 is Phase.PushFailed -> PushFailedContent(phase, onRetryPush, onDismiss)
                 is Phase.Error -> ErrorContent(phase.message, onDismiss)
                 Phase.Browsing -> Unit
@@ -164,6 +175,10 @@ private fun SolvedContent(
     onDismiss: () -> Unit,
     onSaveHome: (Destination) -> Unit,
     onSaveWork: (Destination) -> Unit,
+    rangeCheck: RangeCheck?,
+    findingChargeStop: Boolean,
+    chargeStopSearchFailed: Boolean,
+    onChargeFirst: () -> Unit,
 ) {
     Text(
         "to ${phase.destination.title}",
@@ -182,6 +197,13 @@ private fun SolvedContent(
     Spacer(Modifier.height(4.dp))
     SelectedRouteDetail(phase.chosen)
 
+    // Range comes after the route detail and before Go: it's about the option
+    // just chosen, and it's the last thing worth knowing before setting off.
+    if (rangeCheck != null) {
+        Spacer(Modifier.height(12.dp))
+        RangeWarning(rangeCheck, findingChargeStop, chargeStopSearchFailed, onChargeFirst)
+    }
+
     // Immediately above Go — the moment the user decides to hand this to the car.
     Spacer(Modifier.height(14.dp))
     TeslaWipWarning()
@@ -195,6 +217,104 @@ private fun SolvedContent(
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = { onSaveHome(phase.destination) }) { Text("Save as Home") }
         TextButton(onClick = { onSaveWork(phase.destination) }) { Text("Save as Work") }
+    }
+}
+
+/**
+ * The battery warning for the route about to be driven.
+ *
+ * Shunt's job is to route *around* things, which makes its routes longer than
+ * the ones a car's own trip planner costs out — and the car only ever sees the
+ * destination, never the detour. So a trip that Tesla would happily start can
+ * still run the battery out on the road Shunt picked. Nothing else in the app
+ * is in a position to notice that, so it's said here, next to the option that
+ * causes it, with a way to fix it in one tap.
+ */
+@Composable
+private fun RangeWarning(
+    check: RangeCheck,
+    findingChargeStop: Boolean,
+    searchFailed: Boolean,
+    onChargeFirst: () -> Unit,
+) {
+    if (check.level == RangeCheck.Level.FINE) return
+    val short = check.level == RangeCheck.Level.SHORT
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        color = if (short) scheme.errorContainer else scheme.secondaryContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        val onColor = if (short) scheme.onErrorContainer else scheme.onSecondaryContainer
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = if (short) scheme.error else onColor,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    when {
+                        check.detourIsTheProblem -> "This detour outruns your battery"
+                        short -> "Not enough range for this trip"
+                        else -> "This will be tight on range"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = onColor,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                buildString {
+                    append("This route is ${formatKm(check.routeMeters)}")
+                    check.batteryPercent?.let { append(" and you're at $it%") }
+                    append(". Allowing for real-world driving that's about ")
+                    append("${formatKm(check.usableMeters.toInt())} of usable range")
+                    if (check.detourIsTheProblem) {
+                        append(" — the shortest option (${formatKm(check.shortestOptionMeters)}) ")
+                        append("would make it, but the camera-avoiding one won't")
+                    }
+                    append(".")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = onColor,
+            )
+            if (short) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Your car plans charging for the direct route, so it may not " +
+                        "add a stop for this one. Charge before you go.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onColor,
+                )
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = onChargeFirst,
+                    enabled = !findingChargeStop,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (findingChargeStop) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Finding a charger on the way…")
+                    } else {
+                        Text("Add a charging stop on the way")
+                    }
+                }
+                if (searchFailed) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "No charging site found on this route in OpenStreetMap. " +
+                            "Add one as a stop yourself, or charge before setting off.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = onColor,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -340,13 +460,40 @@ private fun PushingContent(destination: Destination) {
 }
 
 @Composable
-private fun DrivingContent(phase: Phase.Driving, onCancel: () -> Unit) {
+private fun DrivingContent(phase: Phase.Driving, chargingVia: String?, onCancel: () -> Unit) {
     val destination = phase.destination
     val cameraCount = phase.plan.cameras.size
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(12.dp))
         Text("Driving to ${destination.title}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    }
+    if (chargingVia != null) {
+        // The car quietly added a leg the driver never asked for. Say so, and
+        // say that Shunt is routing it rather than leaving it to the car.
+        Spacer(Modifier.height(10.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    "Charging first at $chargingVia",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Your car added this stop itself. Shunt has planned the route to " +
+                        "it with camera avoidance, and will route the rest of the trip " +
+                        "once you're charged.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
     }
     Spacer(Modifier.height(8.dp))
     Text(

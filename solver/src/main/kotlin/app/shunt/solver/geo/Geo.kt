@@ -128,7 +128,18 @@ fun destinationPoint(from: GeoPoint, bearingDeg: Double, meters: Double): GeoPoi
  * equirectangular projection. Accurate to well under a meter at the tens-of-
  * meters scale the camera buffers operate on.
  */
-fun pointToSegmentMeters(p: GeoPoint, a: GeoPoint, b: GeoPoint): Double {
+fun pointToSegmentMeters(p: GeoPoint, a: GeoPoint, b: GeoPoint): Double =
+    projectOntoSegment(p, a, b).distanceMeters
+
+/** Where the foot of the perpendicular from a point falls on a segment. */
+data class SegmentProjection(
+    val distanceMeters: Double,
+    /** How far along the segment the foot lies, clamped to [0, 1]. */
+    val alongFraction: Double,
+)
+
+/** Project [p] onto segment [a]-[b] under the same local equirectangular model. */
+fun projectOntoSegment(p: GeoPoint, a: GeoPoint, b: GeoPoint): SegmentProjection {
     val cosLat = cos(Math.toRadians(p.lat)).coerceAtLeast(0.01)
     val ax = (a.lon - p.lon) * METERS_PER_DEGREE_LAT * cosLat
     val ay = (a.lat - p.lat) * METERS_PER_DEGREE_LAT
@@ -136,10 +147,10 @@ fun pointToSegmentMeters(p: GeoPoint, a: GeoPoint, b: GeoPoint): Double {
     val by = (b.lat - p.lat) * METERS_PER_DEGREE_LAT
     val dx = bx - ax; val dy = by - ay
     val lenSq = dx * dx + dy * dy
-    if (lenSq == 0.0) return sqrt(ax * ax + ay * ay)
-    val t = ((-ax) * dx + (-ay) * dy / 1.0).let { ((-ax) * dx + (-ay) * dy) / lenSq }.coerceIn(0.0, 1.0)
+    if (lenSq == 0.0) return SegmentProjection(sqrt(ax * ax + ay * ay), 0.0)
+    val t = (((-ax) * dx + (-ay) * dy) / lenSq).coerceIn(0.0, 1.0)
     val cx = ax + t * dx; val cy = ay + t * dy
-    return sqrt(cx * cx + cy * cy)
+    return SegmentProjection(sqrt(cx * cx + cy * cy), t)
 }
 
 /** Result of projecting a point onto a polyline. */
@@ -155,6 +166,33 @@ fun pointToPolyline(p: GeoPoint, polyline: List<GeoPoint>): PolylineProjection {
         if (d < best) { best = d; bestIdx = i }
     }
     return PolylineProjection(best, bestIdx)
+}
+
+/** How far off a polyline a point is, and how far along the line that is. */
+data class PolylineProgress(val distanceMeters: Double, val alongMeters: Double)
+
+/**
+ * Project [p] onto [polyline], reporting distance travelled along the line to
+ * the nearest point — not merely which segment it fell on, which says nothing
+ * on a line made of two very long segments.
+ */
+fun pointToPolylineProgress(p: GeoPoint, polyline: List<GeoPoint>): PolylineProgress {
+    require(polyline.size >= 2) { "polyline needs at least 2 points" }
+    var best = Double.MAX_VALUE
+    var bestAlong = 0.0
+    var travelled = 0.0
+    for (i in 0 until polyline.size - 1) {
+        val a = polyline[i]
+        val b = polyline[i + 1]
+        val segmentLength = haversineMeters(a, b)
+        val projection = projectOntoSegment(p, a, b)
+        if (projection.distanceMeters < best) {
+            best = projection.distanceMeters
+            bestAlong = travelled + projection.alongFraction * segmentLength
+        }
+        travelled += segmentLength
+    }
+    return PolylineProgress(best, bestAlong)
 }
 
 /** Floor [value] to the nearest multiple of [step] (handles negatives correctly). */

@@ -16,6 +16,7 @@ alerts work without a car).
   - **Routing → BRouter**, vendored, fully offline/on-device.
   - **Basemap → OpenFreeMap** dark style, keyless.
   - **Camera data → DeFlock CDN** (OSM/ODbL).
+  - **Tesla charging sites → Overpass** (`overpass-api.de`), keyless OSM query.
   - The only credentialed integration is the *optional* Tessie vehicle client
     (the user's own account), and a far-future direct Tesla Fleet API.
 - **On-device / offline-first.** Routing and the drive monitor need no network
@@ -62,6 +63,34 @@ Non-UI stack is Android-free so it's unit-testable without an emulator.
   US** (~39,-98 or ~33,-97) and generic names. Treat a real-world example in a
   test as a bug, and check `git grep` for regional coordinates before pushing.
 
+## Charging (what the car does on its own)
+
+Two facts about a Tesla drive the design in `app/drive/ChargeStop*.kt`:
+
+- **It only accepts one destination.** On a car that requires the signed
+  command protocol every push collapses to a single shared destination
+  (`PushResult.DestinationOnly`), so whatever was last pushed is exactly what
+  the car is aiming at — and an active route naming somewhere else, miles away,
+  is the car's own inserted Supercharger. Confirmed on a real car: navigating
+  to a distant city, the reported destination was the *charger*, not the city.
+- **It doesn't plan charging until it's put into drive.** Reading at the moment
+  Go is tapped always answers "no charging stop", so the check repeats once the
+  car is actually moving.
+
+Hence two kinds of check: **free reads** (the car already holds the final
+destination — no push, so they run every ~45 s under way and are what catch the
+charger appearing) and **re-asserts** (the car is aimed at a charger; finding
+out if it still intends to means pushing the destination again, which briefly
+redirects it, so `ProbeWindow` rations them to moments well clear of the next
+waypoint and any camera). A charging stop found this way becomes a normal
+camera-avoided leg; arriving at it is a leg end, not the trip's end.
+
+Separately, `solver/charging/RangeCheck.kt` warns *before* setting off when the
+camera-avoiding detour outruns the battery — the car costs charging for the
+direct route it was given and never sees our detour, so nothing else is in a
+position to notice. `SuperchargerSource` (Overpass) backs the one-tap "add a
+charging stop on the way", which just inserts an ordinary first stop.
+
 ## Release / R8 gotchas (release builds only — debug skips minification)
 
 - **Keep rules are load-bearing** (`app/proguard-rules.pro`):
@@ -91,6 +120,9 @@ runs an emulator smoke test (`LaunchSmokeTest`).
   before real-world Tesla/FSD testing.
 - **OSM coverage:** keep improving nearby-first ranking; add missing local
   places to OpenStreetMap so they become searchable (permanent, community win).
+- **Charging fine-tuning:** the range derate (`REAL_WORLD_FRACTION`), the
+  charger corridor, and the probe cadences are first-pass numbers — worth
+  revisiting against real drives.
 - On-route arrow + gray out the traveled portion of the route.
 - Simplify the current-location dot to a solid pulsing dot (no accuracy halo).
 - Tap-and-hold on the map to navigate (Google-Maps style).

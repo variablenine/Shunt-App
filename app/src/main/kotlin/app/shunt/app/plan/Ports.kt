@@ -61,6 +61,26 @@ fun interface CameraGateway {
     suspend fun refresh(around: GeoPoint): Freshness
 }
 
+/** What the connected car reports about how far it can still go. */
+data class RangeReading(val estimatedRangeMiles: Double, val batteryPercent: Int?)
+
+/**
+ * Reads the car's remaining range without commanding it. Null when no car is
+ * connected or it couldn't be read — which must produce no range claim at all,
+ * rather than an optimistic guess.
+ */
+fun interface VehicleRangeReader {
+    suspend fun read(): RangeReading?
+}
+
+/**
+ * Finds a charging stop to slot in before a route that outruns the battery.
+ * Null when nothing suitable is on the way.
+ */
+fun interface ChargeStopFinder {
+    suspend fun onRoute(route: List<GeoPoint>, reachableMeters: Double): Destination?
+}
+
 /** Persists the Home/Work favorites. */
 interface FavoritesStore {
     fun load(): Favorites

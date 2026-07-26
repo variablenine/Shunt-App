@@ -79,6 +79,7 @@ class PlanActions(
     val onSaveHome: (Destination) -> Unit,
     val onSaveWork: (Destination) -> Unit,
     val onMapLongPress: (GeoPoint) -> Unit,
+    val onChargeFirst: () -> Unit,
 )
 
 @Composable
@@ -88,6 +89,8 @@ fun PlanScreen(
     modifier: Modifier = Modifier,
     cameraViewportFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
     vehicleSettings: VehicleSettingsUi? = null,
+    /** Names the charging stop the car inserted mid-drive, when it has. */
+    chargingVia: String? = null,
 ) {
     val (polyline, cameras) = routeOverlay(state.phase)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -135,6 +138,11 @@ fun PlanScreen(
             Box(modifier = Modifier.align(Alignment.BottomCenter)) {
                 ResultSheet(
                     phase = state.phase,
+                    chargingVia = chargingVia,
+                    rangeCheck = state.rangeCheck,
+                    findingChargeStop = state.findingChargeStop,
+                    chargeStopSearchFailed = state.chargeStopSearchFailed,
+                    onChargeFirst = actions.onChargeFirst,
                     onGo = actions.onGo,
                     onSelectRoute = actions.onSelectRoute,
                     onDownloadTile = actions.onDownloadTile,
