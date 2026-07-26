@@ -8,7 +8,8 @@ name: Build release APK
 #   3. This workflow runs automatically and uploads the APK to that release
 #      a few minutes later (refresh the release page to see it).
 #
-# The APK contains no API keys — install it and enter your HERE key in the app.
+# The APK contains no API keys and needs none — search, routing, the basemap and
+# camera data are all keyless. Connecting a Tesla (optional) is done in the app.
 # You can also run this manually from the Actions tab (it produces a downloadable
 # build artifact) without publishing a release.
 
