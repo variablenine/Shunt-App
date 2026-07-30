@@ -92,45 +92,46 @@ class BrouterPlanner(
         val missing = missingTiles(baseBbox)
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
 
-        var cameraBbox = baseBbox
         onProgress(0.1f, "Finding cameras nearby")
-        // Camera data is safety-critical: a failure here must NEVER be treated as
-        // "no cameras," which would label every route camera-free.
+        // Plan against a camera set that PROVABLY covers the routes being
+        // labelled, by iterating to a fixed point: route, look at where the
+        // routes actually went, and if that escapes the area we fetched
+        // cameras for, widen and route again.
+        //
+        // Getting this wrong is the "it drove past an avoidable camera" bug.
+        // A route planned against a narrow set has never been asked to avoid
+        // anything outside it, so counting it afterwards against a wider set
+        // reports a camera the avoidance was never given a chance at — and the
+        // hard-block pass still "succeeded", so nothing looks wrong.
+        var cameraBbox = baseBbox
         var cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
-        onProgress(0.3f, "Planning routes")
-        var routes = runRoutes(points, cameras)
-            ?: return PlanOutcome.Failed("Routing failed.")
-        if (routes.isEmpty()) return noRoute()
+        var routes: List<BrouterRoute> = emptyList()
+        var covered = false
 
-        // The avoidance options can detour far outside the origin→destination
-        // box, into areas we never fetched cameras for — so a long "fewest
-        // cameras" route would drive through (and mislabel as camera-free) any
-        // camera along the detour. Widen the camera set to cover the actual
-        // routes and re-plan, iterating until the routes no longer escape the
-        // area we've looked at (or we hit the cap).
-        var passes = 0
-        while (passes++ < MAX_REFINEMENT_PASSES) {
-            val routeBbox = routeBbox(routes)
-            if (cameraBbox.contains(routeBbox)) break
-            onProgress(0.3f + 0.25f * passes, "Checking cameras along the detour")
-            cameraBbox = cameraBbox.union(routeBbox)
-            val widened = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
-            cameras = widened
-            val replanned = runRoutes(points, cameras) ?: break
-            if (replanned.isEmpty()) break
-            routes = replanned
+        for (pass in 0 until MAX_REFINEMENT_PASSES) {
+            onProgress(0.3f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
+            routes = runRoutes(points, cameras) ?: return PlanOutcome.Failed("Routing failed.")
+            if (routes.isEmpty()) return noRoute()
+
+            val actual = routeBbox(routes)
+            if (cameraBbox.contains(actual)) {
+                covered = true
+                break
+            }
+            // The routes left the area we looked at. Widen and go again, so the
+            // next pass plans with the cameras out there in hand.
+            cameraBbox = cameraBbox.union(actual)
+            cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
         }
 
-        // The counting set must PROVABLY cover the routes being labeled. The
-        // loop above can exit (on the pass cap) having just re-routed, leaving
-        // `cameras` narrower than the final routes — counting against it would
-        // silently miss cameras and print "camera-free" over a route that drives
-        // straight through one. Verify coverage and top up before labeling; if
-        // we can't, refuse to label rather than under-report.
-        onProgress(0.85f, "Checking the final route for cameras")
-        val finalBbox = routeBbox(routes)
-        if (!cameraBbox.contains(finalBbox)) {
-            cameras = fetchCameras(cameraBbox.union(finalBbox)) ?: return cameraDataUnavailable()
+        if (!covered) {
+            // Never label a route against cameras it was not planned to avoid.
+            // Refusing is the honest outcome: the alternative is printing a
+            // camera count the routing never had the chance to act on.
+            return PlanOutcome.Failed(
+                "Couldn't settle on the camera set for this trip — the routes kept " +
+                    "detouring outside the area checked. Try a shorter trip or plan again.",
+            )
         }
 
         val fastest = routes.first()
@@ -254,12 +255,23 @@ class BrouterPlanner(
 
     companion object {
         /** Pad the origin→destination box so an avoidance detour stays covered. */
-        const val ROUTE_BBOX_MARGIN_METERS = 3_000.0
+        /**
+         * How far outside the straight origin→destination box to look.
+         *
+         * This governs which cameras exist as far as the planner is concerned,
+         * and it was 3 km — barely wider than the line itself. A camera just
+         * off the end of a trip, or beside the alternative road a detour would
+         * take, simply was not in the set, so the avoidance was never asked to
+         * dodge it and the route came back "planned" but exposed. The whole
+         * point of this app is taking a road that is not the direct one, so the
+         * area considered has to be much wider than the direct one.
+         */
+        const val ROUTE_BBOX_MARGIN_METERS = 60_000.0
 
         /** How close to the line a camera has to be to be worth drawing as context. */
         const val NEARBY_CAMERA_METERS = 2_500.0
 
         /** How many times to widen the camera area to cover a detouring route. */
-        private const val MAX_REFINEMENT_PASSES = 2
+        private const val MAX_REFINEMENT_PASSES = 4
     }
 }

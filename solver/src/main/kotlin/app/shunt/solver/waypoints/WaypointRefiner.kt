@@ -39,7 +39,7 @@ import app.shunt.solver.geo.pointToPolylineProgress
 object WaypointRefiner {
 
     /** Give up after this many insertions; each one costs a routing pass. */
-    const val MAX_PASSES = 10
+    const val MAX_PASSES = 40
 
     /**
      * How far our route must be from the car's own path to count as having
@@ -77,19 +77,32 @@ object WaypointRefiner {
         if (avoided.isEmpty()) return pins
 
         val current = pins.toMutableList()
+        // Legs a pin cannot rescue — the car passes the camera however early we
+        // place one, typically because it sits on the only road out. Without
+        // this the refiner keeps inserting ever-earlier pins into the same leg,
+        // piling a dozen of them onto the first mile and starving the rest of
+        // the trip. One is a fact about the roads; more do not change it.
+        val hopeless = mutableSetOf<GeoPoint>()
+
         repeat(MAX_PASSES) {
             val chain = listOf(chosen.first()) + current + chosen.last()
             var inserted = false
             for (i in 0 until chain.size - 1) {
                 val from = chain[i]
                 val to = chain[i + 1]
+                if (from in hopeless) continue
                 val carPath = carRoute(from, to) ?: continue
                 if (avoided.none { it.seesRoute(carPath) }) continue
 
                 // The car would pass a camera getting to this pin. Put one in
                 // just past where its path and ours part company.
                 if (current.size >= maxPins) return current
-                val pin = pinPastFork(chosen, carPath, from, to) ?: continue
+                val pin = pinPastFork(chosen, carPath, from, to)
+                if (pin == null || pin in current) {
+                    // Nowhere left to put one on this stretch.
+                    hopeless += from
+                    continue
+                }
                 current.add(i, pin)
                 inserted = true
                 break

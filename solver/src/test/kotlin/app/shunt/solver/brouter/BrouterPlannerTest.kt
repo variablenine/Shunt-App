@@ -30,6 +30,53 @@ class BrouterPlannerTest {
     }
 
     @Test
+    fun `a route is never labelled against cameras it was not planned to avoid`() = runTest {
+        // The bug this exists to prevent: a camera just outside the box drawn
+        // around the trip is absent when the routing runs, so the avoidance is
+        // never asked to dodge it — and then it turns up in the count, reported
+        // as if the router had considered it and given up.
+        val seenBoxes = mutableListOf<BoundingBox>()
+        val far = destinationPoint(origin, 90.0, 40_000.0)
+        val cameraOutThere = Camera(id = 7, location = destinationPoint(origin, 90.0, 30_000.0))
+        val wanderingRoute = listOf(origin, far, destination)
+
+        var routedWith = 0
+        val planner = BrouterPlanner(
+            route = { _, cams ->
+                routedWith = cams.size
+                listOf(
+                    BrouterRoute(
+                        RouteChoice.FASTEST, wanderingRoute, 40_000, 1_800,
+                        distinctCamerasPassed = 0, exposureMeters = 0,
+                    ),
+                )
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { bbox ->
+                seenBoxes += bbox
+                if (bbox.contains(cameraOutThere.location)) listOf(cameraOutThere) else emptyList()
+            },
+            // Deliberately tiny, so the first look misses the far camera and the
+            // planner has to notice and widen before it labels anything.
+            bboxMarginMeters = 100.0,
+        )
+
+        val outcome = planner.plan(origin, destination)
+
+        assertIs<PlanOutcome.Routes>(outcome)
+        assertTrue(seenBoxes.size > 1, "must widen the camera search to cover where the route went")
+        assertTrue(
+            routedWith > 0,
+            "the final routing pass must have been given the camera that gets counted",
+        )
+        assertEquals(
+            listOf(cameraOutThere),
+            outcome.options.single().passedCameras,
+            "and the count must come from that same set",
+        )
+    }
+
+    @Test
     fun `options carry added time and the cameras they actually pass`() = runTest {
         // A straight fastest line through a camera; a detour that misses it.
         val fastLine = listOf(origin, destination)

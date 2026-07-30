@@ -34,11 +34,16 @@ import app.shunt.solver.geo.pointToSegmentMeters
  */
 object WaypointExtractor {
     /**
-     * Upper bound on intermediate waypoints. Conservative: the exact number the
-     * vehicle accepts is not yet confirmed on real hardware, and the fallback
-     * path costs one rate-limited command each.
+     * Upper bound on intermediate waypoints.
+     *
+     * This used to be 8, on the theory that the vehicle takes a bounded chain.
+     * It doesn't work that way: a car that requires signed commands accepts one
+     * destination at a time, so pins are pushed one by one as the drive
+     * progresses and the only real cost is a rate-limited command per pin,
+     * spread over hours of driving. A tight budget bought nothing and starved
+     * the far end of a long trip of the pins that keep the car on the detour.
      */
-    const val MAX_WAYPOINTS = 8
+    const val MAX_WAYPOINTS = 100
 
     /** Chosen-route points farther than this from the fastest route count as divergent. */
     const val DIVERGENCE_THRESHOLD_METERS = 50.0
