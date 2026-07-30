@@ -4,6 +4,7 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.waypoints.WaypointExtractor
+import app.shunt.solver.waypoints.WaypointRefiner
 
 /** A chooseable route: BRouter's geometry plus the pins + cameras Shunt needs. */
 data class PlannedRoute(
@@ -13,6 +14,12 @@ data class PlannedRoute(
     val waypoints: List<GeoPoint>,
     /** The actual camera records this route passes within standoff of. */
     val passedCameras: List<Camera>,
+    /**
+     * Every camera near this route, whether passed or avoided. Without it a
+     * camera-free route is indistinguishable on the map from a route through
+     * empty country, and there is no way to see what the detour bought.
+     */
+    val nearbyCameras: List<Camera> = emptyList(),
     val distanceMeters: Int,
     val estimatedSeconds: Int,
     val exposureMeters: Int,
@@ -127,6 +134,8 @@ class BrouterPlanner(
         }
 
         val fastest = routes.first()
+        val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
+        onProgress(0.9f, "Checking the car will follow the detour")
         val options = routes.map { r ->
             PlannedRoute(
                 choice = r.choice,
@@ -135,17 +144,14 @@ class BrouterPlanner(
                 // they must also stop it cutting back through what we avoided.
                 waypoints = withStops(
                     stops = points.drop(1).dropLast(1),
-                    shaping = WaypointExtractor.extract(
-                        chosen = r.polyline,
-                        fastest = fastest.polyline,
-                        avoid = cameras.map { CameraVision(it.location, it.directionDegrees) },
-                    ),
+                    shaping = pinsTheCarWillFollow(r.polyline, fastest.polyline, visions),
                     polyline = r.polyline,
                 ),
                 // A camera is "passed" if the route enters its field of view.
                 passedCameras = cameras.filter {
                     CameraVision(it.location, it.directionDegrees).seesRoute(r.polyline)
                 },
+                nearbyCameras = cameras.filter { near(it, r.polyline) },
                 distanceMeters = r.distanceMeters,
                 estimatedSeconds = r.estimatedSeconds,
                 exposureMeters = r.exposureMeters,
@@ -155,6 +161,50 @@ class BrouterPlanner(
         }
         return PlanOutcome.Routes(options)
     }
+
+    /**
+     * Shaping pins for [chosen] that the car will actually honour.
+     *
+     * [WaypointExtractor] picks candidates from the shape of the route; this
+     * then checks each one the only way that settles it — by routing the leg
+     * the way the *car* will, with no avoidance, and seeing whether that path
+     * enters a camera the route was built to dodge. Pins are added at the fork
+     * until it doesn't, because the car takes the quickest road to a pin and
+     * will not make an extra turn to reach one placed further along a detour.
+     */
+    private suspend fun pinsTheCarWillFollow(
+        chosen: List<GeoPoint>,
+        fastest: List<GeoPoint>,
+        visions: List<CameraVision>,
+    ): List<GeoPoint> {
+        val candidates = WaypointExtractor.extract(
+            chosen = chosen,
+            fastest = fastest,
+            avoid = visions,
+        )
+        return runCatching {
+            WaypointRefiner.refine(
+                chosen = chosen,
+                pins = candidates,
+                avoid = visions,
+                carRoute = { from, to -> carPathBetween(from, to) },
+            )
+        }.getOrDefault(candidates)
+    }
+
+    /** How the car would drive [from] to [to]: fastest, no camera avoidance. */
+    private suspend fun carPathBetween(from: GeoPoint, to: GeoPoint): List<GeoPoint>? =
+        runCatching { route(listOf(from, to), emptyList()) }
+            .getOrNull()
+            ?.firstOrNull()
+            ?.polyline
+            ?.takeIf { it.size >= 2 }
+
+    /** Within sight-of-the-road distance of the line, for the map's context layer. */
+    private fun near(camera: Camera, polyline: List<GeoPoint>): Boolean =
+        polyline.size >= 2 &&
+            app.shunt.solver.geo.pointToPolyline(camera.location, polyline)
+                .distanceMeters <= NEARBY_CAMERA_METERS
 
     /** The area the given routes actually cover, padded by the standard margin. */
     private fun routeBbox(routes: List<BrouterRoute>): BoundingBox =
@@ -205,6 +255,9 @@ class BrouterPlanner(
     companion object {
         /** Pad the origin→destination box so an avoidance detour stays covered. */
         const val ROUTE_BBOX_MARGIN_METERS = 3_000.0
+
+        /** How close to the line a camera has to be to be worth drawing as context. */
+        const val NEARBY_CAMERA_METERS = 2_500.0
 
         /** How many times to widen the camera area to cover a detouring route. */
         private const val MAX_REFINEMENT_PASSES = 2

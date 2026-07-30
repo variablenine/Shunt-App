@@ -149,6 +149,10 @@ class PlanViewModel(
 
     private fun planTo(destination: Destination) {
         searchJob?.cancel()
+        // The alternatives belong to one charger lookup on one route, and
+        // onChargeAlternative replaces stops[0] on the strength of that. Carried
+        // into a fresh trip they would drop a stop the driver had asked for.
+        _state.update { it.copy(chargeStopAlternatives = emptyList()) }
         // Recorded on the attempt, not on arrival: what you tried to go to is
         // what you are likely to want offered again, even if the plan failed.
         recentPlaces?.record(destination)
@@ -371,14 +375,14 @@ class PlanViewModel(
     /** Cancel the drive (user tapped cancel). The activity stops the service. */
     fun onStopDrive() {
         if (_state.value.phase is Phase.Driving) {
-            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false) }
+            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false, chargeStopAlternatives = emptyList()) }
         }
     }
 
     /** The monitor reported arrival; leave the driving phase. */
     fun onArrived() {
         if (_state.value.phase is Phase.Driving) {
-            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false) }
+            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false, chargeStopAlternatives = emptyList()) }
         }
     }
 
@@ -401,7 +405,7 @@ class PlanViewModel(
 
     /** Back to browsing (dismiss the chooser / clear an error). */
     fun onDismissResult() {
-        _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false) }
+        _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false, chargeStopAlternatives = emptyList()) }
     }
 
     /**

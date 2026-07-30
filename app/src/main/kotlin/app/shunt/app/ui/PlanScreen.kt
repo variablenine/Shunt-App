@@ -104,6 +104,7 @@ fun PlanScreen(
             routePolyline = overlay.polyline,
             passedCameras = overlay.passedCameras,
             steeringWaypoints = overlay.waypoints,
+            routeCameras = overlay.nearbyCameras,
             modifier = Modifier.fillMaxSize(),
             cameraFetcher = cameraViewportFetcher,
             // Only while browsing: a long press mid-drive would abandon the trip.
@@ -370,6 +371,8 @@ private data class RouteOverlay(
     val passedCameras: List<GeoPoint> = emptyList(),
     /** The waypoints the car will be steered through. */
     val waypoints: List<GeoPoint> = emptyList(),
+    /** Cameras near the route, drawn at any zoom so the avoidance is visible. */
+    val nearbyCameras: List<GeoPoint> = emptyList(),
 )
 
 private fun routeOverlay(phase: Phase): RouteOverlay {
@@ -384,6 +387,7 @@ private fun routeOverlay(phase: Phase): RouteOverlay {
             option.polyline,
             option.passedCameras.map { it.location },
             option.waypoints,
+            option.nearbyCameras.map { it.location },
         )
     }
     // The driving phase carries a prebuilt plan (polyline + cameras + chain).

@@ -98,11 +98,19 @@ private const val CONE_LAYER = "camera-cones-fill"
 // The subset of cameras the chosen route passes near — drawn brighter, on top.
 private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
+private const val NEARBY_SOURCE = "route-nearby-cameras"
+private const val NEARBY_LAYER = "route-nearby-camera-dots"
 private const val WAYPOINT_SOURCE = "route-waypoints"
 private const val WAYPOINT_LAYER = "route-waypoint-dots"
 
-/** Above this viewport span (~44 km) we don't fetch cameras — too many, too zoomed out. */
-private const val MAX_VIEWPORT_SPAN_DEG = 0.4
+/**
+ * Above this viewport span (~330 km) we stop fetching cameras for the visible
+ * area. It used to cut off at ~44 km, which meant that zooming out far enough
+ * to see a whole trip made every camera vanish — the exact moment you most want
+ * to see what the route is dodging. The tiles are cached and shared with the
+ * router, so a wide view costs little beyond the drawing.
+ */
+private const val MAX_VIEWPORT_SPAN_DEG = 3.0
 
 /**
  * MapLibre map (never the Google Maps SDK) showing the chosen route, the
@@ -121,6 +129,13 @@ fun RouteMap(
      * the camera-avoiding line rather than its own idea of the route.
      */
     steeringWaypoints: List<GeoPoint> = emptyList(),
+    /**
+     * Every camera near the planned route, drawn whatever the zoom. Without
+     * these a camera-free route looks identical to a route with nothing around
+     * it, and there is no way to see what the detour actually bought without
+     * zooming in and panning along the whole line.
+     */
+    routeCameras: List<GeoPoint> = emptyList(),
     modifier: Modifier = Modifier,
     showLocation: Boolean = true,
     cameraFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
@@ -234,7 +249,7 @@ fun RouteMap(
             if (showLocation && hasLocationPermission && !locationActivated.value) {
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
-            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints)
+            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints, routeCameras)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey) }
         }
@@ -314,7 +329,27 @@ private fun renderRoute(
     polyline: List<GeoPoint>,
     passed: List<GeoPoint>,
     waypoints: List<GeoPoint> = emptyList(),
+    nearby: List<GeoPoint> = emptyList(),
 ) {
+    // Cameras near the route but not on it — what the detour is avoiding. Drawn
+    // first so the passed ones and the pins sit on top.
+    val nearbyFeatures = FeatureCollection.fromFeatures(
+        nearby.map { Feature.fromGeometry(Point.fromLngLat(it.lon, it.lat)) },
+    )
+    val nearbySource = style.getSourceAs<GeoJsonSource>(NEARBY_SOURCE)
+    if (nearbySource != null) {
+        nearbySource.setGeoJson(nearbyFeatures)
+    } else {
+        style.addSource(GeoJsonSource(NEARBY_SOURCE, nearbyFeatures))
+        style.addLayer(
+            CircleLayer(NEARBY_LAYER, NEARBY_SOURCE).withProperties(
+                PropertyFactory.circleColor("#ffb020"),
+                PropertyFactory.circleRadius(4f),
+                PropertyFactory.circleOpacity(0.85f),
+            ),
+        )
+    }
+
     if (polyline.size >= 2) {
         val line = Feature.fromGeometry(
             LineString.fromLngLats(polyline.map { Point.fromLngLat(it.lon, it.lat) }),
