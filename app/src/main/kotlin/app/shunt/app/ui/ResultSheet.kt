@@ -69,7 +69,9 @@ fun ResultSheet(
     rangeCheck: RangeCheck? = null,
     findingChargeStop: Boolean = false,
     chargeStopSearchFailed: Boolean = false,
+    chargeStopAlternatives: List<Destination> = emptyList(),
     onChargeFirst: () -> Unit = {},
+    onChargeAlternative: (Int) -> Unit = {},
 ) {
     // Never let the sheet cover the whole screen — keep the route visible above it.
     val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
@@ -90,7 +92,8 @@ fun ResultSheet(
                 is Phase.NeedTile -> NeedTileContent(phase, onDownloadTile, onDismiss)
                 is Phase.Solved -> SolvedContent(
                     phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork,
-                    rangeCheck, findingChargeStop, chargeStopSearchFailed, onChargeFirst,
+                    rangeCheck, findingChargeStop, chargeStopSearchFailed,
+                    chargeStopAlternatives, onChargeFirst, onChargeAlternative,
                 )
                 is Phase.Pushing -> PushingContent(phase.destination)
                 is Phase.Driving -> DrivingContent(phase, chargingVia, onDismiss)
@@ -178,7 +181,9 @@ private fun SolvedContent(
     rangeCheck: RangeCheck?,
     findingChargeStop: Boolean,
     chargeStopSearchFailed: Boolean,
+    chargeStopAlternatives: List<Destination>,
     onChargeFirst: () -> Unit,
+    onChargeAlternative: (Int) -> Unit,
 ) {
     Text(
         "to ${phase.destination.title}",
@@ -201,7 +206,10 @@ private fun SolvedContent(
     // just chosen, and it's the last thing worth knowing before setting off.
     if (rangeCheck != null) {
         Spacer(Modifier.height(12.dp))
-        RangeWarning(rangeCheck, findingChargeStop, chargeStopSearchFailed, onChargeFirst)
+        RangeWarning(
+            rangeCheck, findingChargeStop, chargeStopSearchFailed,
+            chargeStopAlternatives, onChargeFirst, onChargeAlternative,
+        )
     }
 
     // Immediately above Go — the moment the user decides to hand this to the car.
@@ -235,7 +243,9 @@ private fun RangeWarning(
     check: RangeCheck,
     findingChargeStop: Boolean,
     searchFailed: Boolean,
+    alternatives: List<Destination>,
     onChargeFirst: () -> Unit,
+    onChargeAlternative: (Int) -> Unit,
 ) {
     if (check.level == RangeCheck.Level.FINE) return
     val short = check.level == RangeCheck.Level.SHORT
@@ -312,6 +322,15 @@ private fun RangeWarning(
                         style = MaterialTheme.typography.labelSmall,
                         color = onColor,
                     )
+                }
+                if (alternatives.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Other reachable charging sites", style = MaterialTheme.typography.labelMedium)
+                    alternatives.forEachIndexed { index, alternative ->
+                        TextButton(onClick = { onChargeAlternative(index) }) {
+                            Text(alternative.title)
+                        }
+                    }
                 }
             }
         }
@@ -403,12 +422,10 @@ private fun SelectedRouteDetail(option: PlannedRoute) {
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Text(
-                if (option.noCameraFreeRouteExists) {
-                    // The engine was asked to treat every camera as impassable
-                    // and found nothing. Saying so is the difference between
-                    // "the roads leave you no choice" and "avoidance failed".
-                    "There is no camera-free route between these points — every " +
-                        "road passes at least one. You'll be alerted on approach to each."
+                if (option.hardAvoidanceFailed) {
+                    "The hard camera-blocking pass could not produce a route. This may " +
+                        "mean a camera is unavoidable, an endpoint is inside its zone, or " +
+                        "routing failed. Review the marked cameras before continuing."
                 } else {
                     "You'll be alerted on approach to each while driving."
                 },

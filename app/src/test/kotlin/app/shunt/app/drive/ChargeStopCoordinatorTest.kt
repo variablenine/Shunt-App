@@ -230,8 +230,25 @@ class ChargeStopCoordinatorTest {
         val subject = coordinator(vehicle, reads = reads)
         subject.check(here, destination, emptyList(), emptyList())
 
-        assertEquals(LegChange.None, subject.check(here, destination, emptyList(), steering))
+        val failed = assertIs<LegChange.VehicleUpdateFailed>(
+            subject.check(here, destination, emptyList(), steering),
+        )
+        assertTrue(failed.retryable)
         assertEquals(1, reads.size, "the destination never landed, so nothing should have been read")
+        assertEquals(charger, subject.chargeStopUnderWay()?.at)
+    }
+
+    @Test
+    fun `a failed steering restore is surfaced instead of claiming nothing changed`() = runTest {
+        val vehicle = FakeVehicleNavClient(FakeVehicleNavClient.Behavior(failOnCalls = setOf(2)))
+        val reads = mutableListOf<ActiveRoute?>(navigatingTo(charger), null)
+        val subject = coordinator(vehicle, reads = reads)
+        subject.check(here, destination, emptyList(), emptyList())
+
+        val failed = assertIs<LegChange.VehicleUpdateFailed>(
+            subject.check(here, destination, emptyList(), steering),
+        )
+        assertTrue(failed.retryable)
         assertEquals(charger, subject.chargeStopUnderWay()?.at)
     }
 

@@ -278,12 +278,17 @@ class PlanViewModel(
 
         _state.update { it.copy(findingChargeStop = true, chargeStopSearchFailed = false) }
         workScope.launch {
-            val charger = runCatching {
+            val chargers = runCatching {
                 finder.onRoute(
                     solved.chosen.polyline,
-                    check.usableMeters * RangeEstimate.REACHABLE_FRACTION,
+                    // usableMeters is already weather/highway derated and has
+                    // an arrival reserve removed. Applying another percentage
+                    // here rejected safe rural chargers that were still inside
+                    // the range displayed immediately above this button.
+                    check.usableMeters,
                 )
-            }.getOrNull()
+            }.getOrNull().orEmpty()
+            val charger = chargers.firstOrNull()
             if (charger == null) {
                 _state.update { it.copy(findingChargeStop = false, chargeStopSearchFailed = true) }
                 return@launch
@@ -292,12 +297,30 @@ class PlanViewModel(
                 it.copy(
                     // Charge first, then everything the trip already had.
                     stops = listOf(charger) + it.stops,
+                    chargeStopAlternatives = chargers.drop(1).take(MAX_CHARGE_ALTERNATIVES),
                     findingChargeStop = false,
                     phase = Phase.Solving(solved.destination),
                 )
             }
             runPlan(solved.destination)
         }
+    }
+
+    /** Use an explicitly selected alternative returned by the last charger lookup. */
+    fun onChargeAlternative(index: Int) {
+        val charger = _state.value.chargeStopAlternatives.getOrNull(index) ?: return
+        val solved = _state.value.phase as? Phase.Solved ?: return
+        _state.update {
+            it.copy(
+                // The alternatives belong to the automatically inserted first
+                // charger, so choosing one replaces it rather than creating a
+                // two-charger trip.
+                stops = listOf(charger) + it.stops.drop(1),
+                chargeStopAlternatives = emptyList(),
+                phase = Phase.Solving(solved.destination),
+            )
+        }
+        workScope.launch { runPlan(solved.destination) }
     }
 
     /** Retry the offline-map download after a failure (the only NeedTile button). */
@@ -404,5 +427,6 @@ class PlanViewModel(
 
         /** Fallback search bias when no location is known (US geographic center). */
         val DEFAULT_BIAS = GeoPoint(39.8283, -98.5795)
+        private const val MAX_CHARGE_ALTERNATIVES = 3
     }
 }

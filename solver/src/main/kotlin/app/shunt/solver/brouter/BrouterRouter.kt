@@ -28,12 +28,11 @@ data class BrouterRoute(
     val exposureMeters: Int,
     /**
      * The engine was asked to treat every camera as impassable and came back
-     * with nothing: no camera-free route exists at any distance, so the cameras
-     * on this option are genuinely unavoidable. Only set on the fewest-cameras
-     * option, and the difference matters to the driver — "unavoidable" is a
-     * fact about the roads, not a failure of the avoidance.
+     * with nothing. This deliberately does not claim the cameras are proven
+     * unavoidable: an endpoint inside a nogo or an engine failure has the same
+     * raw outcome. Only set on the fewest-cameras fallback option.
      */
-    val noCameraFreeRouteExists: Boolean = false,
+    val hardAvoidanceFailed: Boolean = false,
 )
 
 /**
@@ -87,10 +86,10 @@ class BrouterRouter(
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
             // hard as possible so the user still gets the best available, and
-            // record that the cameras on it are unavoidable rather than missed.
+            // record that hard avoidance failed without claiming why it failed.
             ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
                 ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
-                ?.copy(noCameraFreeRouteExists = true)
+                ?.copy(hardAvoidanceFailed = true)
 
         // Fastest first, then the avoidance options — but only ones that are
         // genuinely a different road, each kept under its own truthful label

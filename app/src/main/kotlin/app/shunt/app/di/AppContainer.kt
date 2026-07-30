@@ -21,7 +21,7 @@ import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
 import app.shunt.solver.charging.CHARGER_CORRIDOR_METERS
 import app.shunt.solver.charging.SuperchargerSource
-import app.shunt.solver.charging.chooseChargeStop
+import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
@@ -258,12 +258,11 @@ class AppContainer(context: Context) {
     private suspend fun findChargeStop(
         route: List<app.shunt.core.GeoPoint>,
         reachableMeters: Double,
-    ): app.shunt.app.plan.Destination? {
-        if (route.size < 2) return null
+    ): List<app.shunt.app.plan.Destination> {
+        if (route.size < 2) return emptyList()
         val candidates = superchargers.alongRoute(route, CHARGER_CORRIDOR_METERS)
-        val chosen = chooseChargeStop(route, candidates, reachableMeters, CHARGER_CORRIDOR_METERS)
-            ?: return null
-        return app.shunt.app.plan.Destination(chosen.name, chosen.location)
+        return rankChargeStops(route, candidates, reachableMeters, CHARGER_CORRIDOR_METERS)
+            .map { app.shunt.app.plan.Destination(it.name, it.location) }
     }
 
     /**

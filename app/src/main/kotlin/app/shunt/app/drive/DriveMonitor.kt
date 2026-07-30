@@ -141,6 +141,10 @@ class DriveMonitor(
             alerter.alert(Alert.ChargeStopUnroutable(change.stop.name))
             null
         }
+        is LegChange.VehicleUpdateFailed -> {
+            alerter.alert(Alert.ChargingUpdateFailed(change.reason, change.retryable))
+            null
+        }
     }
 
     private fun newEngine(plan: DrivePlan) =

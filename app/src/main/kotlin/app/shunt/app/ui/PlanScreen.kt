@@ -80,6 +80,7 @@ class PlanActions(
     val onSaveWork: (Destination) -> Unit,
     val onMapLongPress: (GeoPoint) -> Unit,
     val onChargeFirst: () -> Unit,
+    val onChargeAlternative: (Int) -> Unit,
     val onRecentSelected: (Int) -> Unit,
 )
 
@@ -144,7 +145,9 @@ fun PlanScreen(
                     rangeCheck = state.rangeCheck,
                     findingChargeStop = state.findingChargeStop,
                     chargeStopSearchFailed = state.chargeStopSearchFailed,
+                    chargeStopAlternatives = state.chargeStopAlternatives,
                     onChargeFirst = actions.onChargeFirst,
+                    onChargeAlternative = actions.onChargeAlternative,
                     onGo = actions.onGo,
                     onSelectRoute = actions.onSelectRoute,
                     onDownloadTile = actions.onDownloadTile,

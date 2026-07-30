@@ -162,6 +162,11 @@ sealed interface Alert {
         override val severity get() = Severity.URGENT
     }
 
+    /** Shunt could not verify or restore the car's target during a charging probe. */
+    data class ChargingUpdateFailed(val reason: String, val retryable: Boolean) : Alert {
+        override val severity get() = Severity.URGENT
+    }
+
     /** advanceTo failed mid-drive — the car may still stop at the passed waypoint. */
     data class AdvanceFailed(
         val remaining: List<GeoPoint>,
