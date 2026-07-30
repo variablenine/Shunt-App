@@ -214,7 +214,12 @@ class AppContainer(context: Context) {
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> placeSearch.suggest(query, at) },
         planner = RoutePlanner { points, onProgress ->
-            brouterPlanner.plan(points, onProgress).also { outcome ->
+            // The whole plan, not just the routing engine. Camera counting and
+            // waypoint extraction are heavy geometry over routes tens of
+            // thousands of points long, and they were running on the caller's
+            // thread — which is the main one — so a long trip froze the UI and
+            // tripped Android's "isn't responding" dialog.
+            withContext(Dispatchers.Default) { brouterPlanner.plan(points, onProgress) }.also { outcome ->
                 // Keep the tiles we actually route through fresh against eviction.
                 if (outcome is app.shunt.solver.brouter.PlanOutcome.Routes) {
                     val bbox = BoundingBox.of(points)

@@ -1,6 +1,7 @@
 package app.shunt.solver.waypoints
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.CameraIndex
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointToPolyline
@@ -72,6 +73,8 @@ object WaypointRefiner {
         pins: List<GeoPoint>,
         avoid: List<CameraVision>,
         maxPins: Int = WaypointExtractor.NO_LIMIT,
+        /** Shared grid; building one per call would undo the point of having it. */
+        index: CameraIndex = CameraIndex(avoid),
         carRoute: suspend (from: GeoPoint, to: GeoPoint) -> List<GeoPoint>?,
     ): List<GeoPoint> {
         if (chosen.size < 2 || avoid.isEmpty()) return pins
@@ -79,8 +82,10 @@ object WaypointRefiner {
         // Only cameras this route actually avoids are worth spending a pin on.
         // One it drives past anyway is already counted and warned about, and
         // pinning against it would buy nothing.
-        val avoided = avoid.filterNot { it.seesRoute(chosen) }
+        val seen = index.seeing(chosen).toSet()
+        val avoided = avoid.filterNot { it in seen }
         if (avoided.isEmpty()) return pins
+        val avoidedIndex = CameraIndex(avoided)
 
         val current = pins.toMutableList()
         // Legs a pin cannot rescue — the car passes the camera however early we
@@ -90,15 +95,30 @@ object WaypointRefiner {
         // the trip. One is a fact about the roads; more do not change it.
         val hopeless = mutableSetOf<GeoPoint>()
 
-        repeat(MAX_PASSES) {
+        // Legs already known clean. Re-checking them after every insertion made
+        // the whole thing quadratic in routing calls — the expensive kind — for
+        // no new information, since inserting a pin later in the trip cannot
+        // change how the car drives an earlier leg.
+        val clean = mutableSetOf<Pair<GeoPoint, GeoPoint>>()
+        var passes = 0
+
+        while (passes++ < MAX_PASSES) {
             val chain = listOf(chosen.first()) + current + chosen.last()
             var inserted = false
             for (i in 0 until chain.size - 1) {
                 val from = chain[i]
                 val to = chain[i + 1]
-                if (from in hopeless) continue
-                val carPath = carRoute(from, to) ?: continue
-                if (avoided.none { it.seesRoute(carPath) }) continue
+                if (from in hopeless || (from to to) in clean) continue
+
+                val carPath = carRoute(from, to)
+                if (carPath == null) {
+                    clean += from to to
+                    continue
+                }
+                if (!avoidedIndex.anySees(carPath)) {
+                    clean += from to to
+                    continue
+                }
 
                 // The car would pass a camera getting to this pin. Put one in
                 // just past where its path and ours part company.
@@ -113,9 +133,9 @@ object WaypointRefiner {
                 inserted = true
                 break
             }
-            if (!inserted) return current
+            if (!inserted) break
         }
-        return current
+        return WaypointExtractor.spaceOut(current)
     }
 
     /**

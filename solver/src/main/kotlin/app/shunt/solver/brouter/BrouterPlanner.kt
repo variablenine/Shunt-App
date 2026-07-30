@@ -136,6 +136,12 @@ class BrouterPlanner(
 
         val fastest = routes.first()
         val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
+        // One grid, reused for every option and every waypoint check below.
+        // Asking each camera to walk the whole route in turn is cameras ×
+        // points, which on a cross-state trip is tens of millions of distance
+        // calculations per option.
+        val index = CameraIndex(visions)
+        val byLocation = cameras.associateBy { it.location }
         onProgress(0.9f, "Checking the car will follow the detour")
         val options = routes.map { r ->
             PlannedRoute(
@@ -145,14 +151,13 @@ class BrouterPlanner(
                 // they must also stop it cutting back through what we avoided.
                 waypoints = withStops(
                     stops = points.drop(1).dropLast(1),
-                    shaping = pinsTheCarWillFollow(r.polyline, fastest.polyline, visions),
+                    shaping = pinsTheCarWillFollow(r.polyline, fastest.polyline, visions, index),
                     polyline = r.polyline,
                 ),
                 // A camera is "passed" if the route enters its field of view.
-                passedCameras = cameras.filter {
-                    CameraVision(it.location, it.directionDegrees).seesRoute(r.polyline)
-                },
-                nearbyCameras = cameras.filter { near(it, r.polyline) },
+                passedCameras = index.seeing(r.polyline).mapNotNull { byLocation[it.location] },
+                nearbyCameras = index.within(r.polyline, NEARBY_CAMERA_METERS)
+                    .mapNotNull { byLocation[it.location] },
                 distanceMeters = r.distanceMeters,
                 estimatedSeconds = r.estimatedSeconds,
                 exposureMeters = r.exposureMeters,
@@ -177,6 +182,7 @@ class BrouterPlanner(
         chosen: List<GeoPoint>,
         fastest: List<GeoPoint>,
         visions: List<CameraVision>,
+        index: CameraIndex,
     ): List<GeoPoint> {
         val candidates = WaypointExtractor.extract(
             chosen = chosen,
@@ -188,6 +194,7 @@ class BrouterPlanner(
                 chosen = chosen,
                 pins = candidates,
                 avoid = visions,
+                index = index,
                 carRoute = { from, to -> carPathBetween(from, to) },
             )
         }.getOrDefault(candidates)
@@ -200,12 +207,6 @@ class BrouterPlanner(
             ?.firstOrNull()
             ?.polyline
             ?.takeIf { it.size >= 2 }
-
-    /** Within sight-of-the-road distance of the line, for the map's context layer. */
-    private fun near(camera: Camera, polyline: List<GeoPoint>): Boolean =
-        polyline.size >= 2 &&
-            app.shunt.solver.geo.pointToPolyline(camera.location, polyline)
-                .distanceMeters <= NEARBY_CAMERA_METERS
 
     /** The area the given routes actually cover, padded by the standard margin. */
     private fun routeBbox(routes: List<BrouterRoute>): BoundingBox =

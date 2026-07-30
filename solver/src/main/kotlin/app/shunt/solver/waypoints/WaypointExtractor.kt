@@ -3,6 +3,7 @@ package app.shunt.solver.waypoints
 import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
+import app.shunt.solver.geo.PolylineIndex
 import app.shunt.solver.geo.pointToPolyline
 import app.shunt.solver.geo.pointToSegmentMeters
 
@@ -53,6 +54,14 @@ object WaypointExtractor {
     /** Chosen-route points farther than this from the fastest route count as divergent. */
     const val DIVERGENCE_THRESHOLD_METERS = 50.0
 
+    /**
+     * Pins closer together than this are pointless. The car cannot meaningfully
+     * deviate inside a few hundred metres, so a second pin there constrains
+     * nothing — it just costs another command and clutters the map, which is
+     * what the dense clusters along the route were.
+     */
+    const val MIN_PIN_SPACING_METERS = 800.0
+
     fun extract(
         chosen: List<GeoPoint>,
         fastest: List<GeoPoint>,
@@ -64,7 +73,20 @@ object WaypointExtractor {
 
         val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
         val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints)
-        return pinned.map { chosen[it] }
+        return spaceOut(pinned.map { chosen[it] })
+    }
+
+    /**
+     * Drop pins that sit on top of one another. Keeps the first of each cluster
+     * — the earliest is the one that actually forces the turn.
+     */
+    internal fun spaceOut(pins: List<GeoPoint>): List<GeoPoint> {
+        val kept = mutableListOf<GeoPoint>()
+        for (pin in pins) {
+            val last = kept.lastOrNull()
+            if (last == null || haversineMeters(last, pin) >= MIN_PIN_SPACING_METERS) kept += pin
+        }
+        return kept
     }
 
     /** Indices of the most divergent point of each stretch off the fastest route. */
@@ -88,8 +110,13 @@ object WaypointExtractor {
             }
         }
 
+        // Indexed: this used to compare every point of one route against every
+        // segment of the other, which on two forty-thousand-point lines is over
+        // a billion distance calculations and was the single slowest thing in a
+        // long plan.
+        val fastestIndex = PolylineIndex(fastest)
         for (i in chosen.indices) {
-            val d = pointToPolyline(chosen[i], fastest).distanceMeters
+            val d = fastestIndex.distanceMeters(chosen[i])
             if (d > thresholdMeters) {
                 if (runStart < 0) runStart = i
                 if (d > peakDistance) { peakDistance = d; peakIndex = i }
