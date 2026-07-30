@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
                 PlanScreen(
                     state = state,
                     cameraViewportFetcher = container.viewportCameras,
+                    chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,
                     vehicleSettings = VehicleSettingsUi(
                         token = credentials.token,
                         vin = credentials.vin,
@@ -132,6 +133,9 @@ class MainActivity : ComponentActivity() {
                         onSaveHome = { vm.onSaveFavorite(FavoriteSlot.HOME, it) },
                         onSaveWork = { vm.onSaveFavorite(FavoriteSlot.WORK, it) },
                         onMapLongPress = vm::onMapLongPress,
+                        onChargeFirst = vm::onChargeFirst,
+                        onChargeAlternative = vm::onChargeAlternative,
+                        onRecentSelected = vm::onRecentSelected,
                     ),
                 )
             }

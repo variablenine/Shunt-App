@@ -61,8 +61,42 @@ fun interface CameraGateway {
     suspend fun refresh(around: GeoPoint): Freshness
 }
 
+/** What the connected car reports about how far it can still go. */
+data class RangeReading(val estimatedRangeMiles: Double, val batteryPercent: Int?)
+
+/**
+ * Reads the car's remaining range without commanding it. Null when no car is
+ * connected or it couldn't be read — which must produce no range claim at all,
+ * rather than an optimistic guess.
+ */
+fun interface VehicleRangeReader {
+    suspend fun read(): RangeReading?
+}
+
+/**
+ * Finds a charging stop to slot in before a route that outruns the battery.
+ * Null when nothing suitable is on the way.
+ */
+fun interface ChargeStopFinder {
+    /** Reachable sites in preferred order; empty when none could be suggested. */
+    suspend fun onRoute(route: List<GeoPoint>, reachableMeters: Double): List<Destination>
+}
+
 /** Persists the Home/Work favorites. */
 interface FavoritesStore {
     fun load(): Favorites
     fun save(favorites: Favorites)
+}
+
+/**
+ * Places recently routed to, most recent first. This app is used on the same
+ * handful of trips, and typing a destination into a keyless geocoder is the
+ * slowest part of setting off — so what you went to last time is usually the
+ * best thing to offer before a single key is pressed.
+ */
+interface RecentPlacesStore {
+    fun load(): List<Destination>
+
+    /** Record a place as just used, moving it to the front if already present. */
+    fun record(destination: Destination)
 }

@@ -53,10 +53,15 @@ class NominatimSearch(
             http.newCall(Request.Builder().url(url).header("User-Agent", userAgent).build())
                 .execute().use { resp ->
                     val text = resp.body?.string().orEmpty()
+                    // Being throttled is not a broken search. Throwing here made
+                    // the UI announce "search couldn't be reached" — while the
+                    // typeahead's own results were sitting right there — so a
+                    // burst of typing looked like the whole feature had failed.
+                    if (resp.code in THROTTLED_CODES) return@use null
                     if (!resp.isSuccessful) throw IOException("Nominatim HTTP ${resp.code}: ${text.take(200)}")
                     text
                 }
-        }
+        } ?: return emptyList()
         return parse(body)
     }
 
@@ -107,6 +112,9 @@ class NominatimSearch(
     companion object {
         /** Nominatim's policy requires an identifying User-Agent. */
         const val USER_AGENT = "Shunt/1.0 (+https://github.com/variablenine/Shunt-App)"
+
+        /** Rate-limited / over capacity: no answer this time, not a failure. */
+        val THROTTLED_CODES = setOf(429, 503)
 
         /** Roughly ±1° around the user — a bias box, results outside still rank. */
         private fun viewboxAround(at: GeoPoint): String =

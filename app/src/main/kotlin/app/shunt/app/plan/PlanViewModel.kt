@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.PlanOutcome
 import app.shunt.solver.brouter.PlannedRoute
+import app.shunt.solver.charging.RangeCheck
+import app.shunt.solver.charging.RangeEstimate
 import app.shunt.tesla.PushResult
 import app.shunt.tesla.VehicleNavClient
 import kotlinx.coroutines.CoroutineScope
@@ -30,15 +32,26 @@ class PlanViewModel(
     private val cameras: CameraGateway,
     private val favoritesStore: FavoritesStore,
     private val vehicle: VehicleNavClient,
+    /** Places routed to before; offered when the search box is empty. */
+    private val recentPlaces: RecentPlacesStore? = null,
     /** Names a long-pressed map point; absent, such points get coordinates. */
     private val placeNamer: PlaceNamer? = null,
+    /** Reads the car's remaining range; absent, no range warning is shown. */
+    private val rangeReader: VehicleRangeReader? = null,
+    /** Finds a charging stop on the way; absent, the offer isn't made. */
+    private val chargeStopFinder: ChargeStopFinder? = null,
     private val scope: CoroutineScope? = null,
     private val searchDebounceMillis: Long = 350,
 ) : ViewModel() {
 
     private val workScope: CoroutineScope get() = scope ?: viewModelScope
 
-    private val _state = MutableStateFlow(PlanUiState(favorites = favoritesStore.load()))
+    private val _state = MutableStateFlow(
+        PlanUiState(
+            favorites = favoritesStore.load(),
+            recents = recentPlaces?.load().orEmpty(),
+        ),
+    )
     val state: StateFlow<PlanUiState> = _state.asStateFlow()
 
     private var searchJob: Job? = null
@@ -129,8 +142,17 @@ class PlanViewModel(
         }
     }
 
+    /** Route to a place picked from the recents list. */
+    fun onRecentSelected(index: Int) {
+        _state.value.recents.getOrNull(index)?.let { planTo(it) }
+    }
+
     private fun planTo(destination: Destination) {
         searchJob?.cancel()
+        // Recorded on the attempt, not on arrival: what you tried to go to is
+        // what you are likely to want offered again, even if the plan failed.
+        recentPlaces?.record(destination)
+        _state.update { it.copy(recents = recentPlaces?.load().orEmpty()) }
         _state.update { it.copy(phase = Phase.Solving(destination), suggestions = emptyList()) }
         workScope.launch { runPlan(destination) }
     }
@@ -162,8 +184,15 @@ class PlanViewModel(
             }
         }.getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
         when (outcome) {
-            is PlanOutcome.Routes ->
-                _state.update { it.copy(phase = Phase.Solved(destination, outcome.options)) }
+            is PlanOutcome.Routes -> {
+                _state.update {
+                    it.copy(
+                        phase = Phase.Solved(destination, outcome.options),
+                        chargeStopSearchFailed = false,
+                    )
+                }
+                checkRange()
+            }
             is PlanOutcome.NeedsDownload ->
                 if (canDownload) {
                     downloadThenPlan(destination, origin)
@@ -201,7 +230,97 @@ class PlanViewModel(
         val solved = _state.value.phase as? Phase.Solved ?: return
         if (index in solved.options.indices) {
             _state.update { it.copy(phase = solved.copy(selected = index)) }
+            // The whole point of the warning is that options differ in length,
+            // so it has to follow the option actually selected.
+            _state.update { it.copy(rangeCheck = rangeCheckFor(it.phase)) }
         }
+    }
+
+    /**
+     * The car's remaining range, read once per plan and kept so switching
+     * between route options doesn't re-query the vehicle.
+     */
+    private var lastRangeReading: RangeReading? = null
+
+    /**
+     * Compare the route on the chooser with what the battery can actually
+     * cover. A read failure leaves [PlanUiState.rangeCheck] null: saying
+     * nothing is correct here, and an optimistic guess is the one thing that
+     * could actually strand someone.
+     */
+    private suspend fun checkRange() {
+        val reader = rangeReader ?: return
+        lastRangeReading = runCatching { reader.read() }.getOrNull()
+        _state.update { it.copy(rangeCheck = rangeCheckFor(it.phase)) }
+    }
+
+    private fun rangeCheckFor(phase: Phase): RangeCheck? {
+        val solved = phase as? Phase.Solved ?: return null
+        val reading = lastRangeReading ?: return null
+        return RangeEstimate.of(
+            routeMeters = solved.chosen.distanceMeters,
+            shortestOptionMeters = solved.options.minOf { it.distanceMeters },
+            estimatedRangeMiles = reading.estimatedRangeMiles,
+            batteryPercent = reading.batteryPercent,
+        )
+    }
+
+    /**
+     * Add a charging stop before the trip, from the range warning's button.
+     * It goes in as an ordinary first stop and the trip is re-planned around
+     * it, so the leg to the charger gets the same camera avoidance as the rest.
+     */
+    fun onChargeFirst() {
+        val finder = chargeStopFinder ?: return
+        val solved = _state.value.phase as? Phase.Solved ?: return
+        val check = _state.value.rangeCheck ?: return
+        if (_state.value.findingChargeStop) return
+
+        _state.update { it.copy(findingChargeStop = true, chargeStopSearchFailed = false) }
+        workScope.launch {
+            val chargers = runCatching {
+                finder.onRoute(
+                    solved.chosen.polyline,
+                    // usableMeters is already weather/highway derated and has
+                    // an arrival reserve removed. Applying another percentage
+                    // here rejected safe rural chargers that were still inside
+                    // the range displayed immediately above this button.
+                    check.usableMeters,
+                )
+            }.getOrNull().orEmpty()
+            val charger = chargers.firstOrNull()
+            if (charger == null) {
+                _state.update { it.copy(findingChargeStop = false, chargeStopSearchFailed = true) }
+                return@launch
+            }
+            _state.update {
+                it.copy(
+                    // Charge first, then everything the trip already had.
+                    stops = listOf(charger) + it.stops,
+                    chargeStopAlternatives = chargers.drop(1).take(MAX_CHARGE_ALTERNATIVES),
+                    findingChargeStop = false,
+                    phase = Phase.Solving(solved.destination),
+                )
+            }
+            runPlan(solved.destination)
+        }
+    }
+
+    /** Use an explicitly selected alternative returned by the last charger lookup. */
+    fun onChargeAlternative(index: Int) {
+        val charger = _state.value.chargeStopAlternatives.getOrNull(index) ?: return
+        val solved = _state.value.phase as? Phase.Solved ?: return
+        _state.update {
+            it.copy(
+                // The alternatives belong to the automatically inserted first
+                // charger, so choosing one replaces it rather than creating a
+                // two-charger trip.
+                stops = listOf(charger) + it.stops.drop(1),
+                chargeStopAlternatives = emptyList(),
+                phase = Phase.Solving(solved.destination),
+            )
+        }
+        workScope.launch { runPlan(solved.destination) }
     }
 
     /** Retry the offline-map download after a failure (the only NeedTile button). */
@@ -235,7 +354,11 @@ class PlanViewModel(
                 when (result) {
                     is PushResult.Success -> it.copy(phase = Phase.Driving(solved.destination, plan))
                     is PushResult.DestinationOnly -> it.copy(
-                        phase = Phase.Driving(solved.destination, plan, destinationOnly = true),
+                        phase = Phase.Driving(
+                            solved.destination,
+                            plan.copy(destinationOnly = true),
+                            destinationOnly = true,
+                        ),
                     )
                     is PushResult.Failed -> it.copy(
                         phase = Phase.PushFailed(solved.destination, option, result.reason, result.retryable),
@@ -248,14 +371,14 @@ class PlanViewModel(
     /** Cancel the drive (user tapped cancel). The activity stops the service. */
     fun onStopDrive() {
         if (_state.value.phase is Phase.Driving) {
-            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList()) }
+            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false) }
         }
     }
 
     /** The monitor reported arrival; leave the driving phase. */
     fun onArrived() {
         if (_state.value.phase is Phase.Driving) {
-            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList()) }
+            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false) }
         }
     }
 
@@ -278,7 +401,7 @@ class PlanViewModel(
 
     /** Back to browsing (dismiss the chooser / clear an error). */
     fun onDismissResult() {
-        _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList()) }
+        _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false) }
     }
 
     /**
@@ -304,5 +427,6 @@ class PlanViewModel(
 
         /** Fallback search bias when no location is known (US geographic center). */
         val DEFAULT_BIAS = GeoPoint(39.8283, -98.5795)
+        private const val MAX_CHARGE_ALTERNATIVES = 3
     }
 }

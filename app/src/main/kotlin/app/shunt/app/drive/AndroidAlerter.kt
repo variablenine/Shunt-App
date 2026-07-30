@@ -103,6 +103,45 @@ class AndroidAlerter(private val context: Context) : Alerter {
                 "Next up: your destination."
             },
         )
+        is Alert.ChargeStopAhead -> Triple(
+            CHARGING_NOTIF,
+            "Your car added a charging stop",
+            "It's going to ${alert.name} first. Shunt has planned that leg too — " +
+                if (alert.camerasOnLeg == 0) {
+                    "it's camera-free."
+                } else {
+                    "it passes ${alert.camerasOnLeg} camera${if (alert.camerasOnLeg == 1) "" else "s"}."
+                },
+        )
+        is Alert.ReachedChargeStop -> Triple(
+            CHARGING_NOTIF,
+            "Charging stop reached",
+            "You're at ${alert.name}. Shunt keeps watching and will route the rest " +
+                "of the trip once your car plans it.",
+        )
+        is Alert.ResumingToDestination -> Triple(
+            CHARGING_NOTIF,
+            "Back on the way",
+            if (alert.camerasOnLeg == 0) {
+                "Routed on to your destination — camera-free."
+            } else {
+                "Routed on to your destination. It passes ${alert.camerasOnLeg} " +
+                    "camera${if (alert.camerasOnLeg == 1) "" else "s"}."
+            },
+        )
+        is Alert.ChargeStopUnroutable -> Triple(
+            CHARGING_NOTIF,
+            "No camera avoidance to the charger",
+            "Your car is detouring to ${alert.name} and Shunt couldn't route that " +
+                "leg. It's driving there its own way — cameras on the way are " +
+                "unknown. Drive as if unprotected.",
+        )
+        is Alert.ChargingUpdateFailed -> Triple(
+            CHARGING_NOTIF,
+            "Charging route update failed",
+            "Shunt could not verify or restore the car's destination (${alert.reason}). " +
+                "Check the route on the car before continuing.",
+        )
         Alert.Arrived -> Triple(ARRIVED_NOTIF, "Arrived", "You've reached your destination.")
     }
 
@@ -147,5 +186,8 @@ class AndroidAlerter(private val context: Context) : Alerter {
 
         /** Route-adherence updates share an id so each replaces the last. */
         const val OFF_ROUTE_NOTIF = 1003
+
+        /** Charging-leg updates likewise replace each other. */
+        const val CHARGING_NOTIF = 1004
     }
 }

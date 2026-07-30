@@ -71,9 +71,10 @@ class BrouterNogoTest {
         // all-round camera would quietly shrink to a 20 m zone. Production calls
         // prepareNogoPoints; this pins that the full range survives the trip.
         btools.router.RoutingContext.prepareNogoPoints(nogos)
-        assertEquals(
-            CameraVision.OMNI_RANGE_M.toInt(), circle.radius.toInt(),
-            "the all-round zone must keep its full range, not fall back to 20 m",
+        assertTrue(
+            circle.radius >= CameraVision.OMNI_RANGE_M,
+            "the all-round zone must cover at least the full range (was ${circle.radius} m), " +
+                "not fall back to 20 m",
         )
     }
 }

@@ -18,6 +18,12 @@ data class PlannedRoute(
     val exposureMeters: Int,
     /** Extra travel time vs. the fastest option (0 for the fastest). */
     val addedSecondsVsFastest: Int,
+    /**
+     * Every camera was treated as impassable and no route came back. This is
+     * diagnostic rather than proof that a camera is unavoidable: an endpoint
+     * inside a nogo or an engine failure can produce the same result.
+     */
+    val hardAvoidanceFailed: Boolean = false,
 ) {
     val camerasPassed: Int get() = passedCameras.size
 }
@@ -144,6 +150,7 @@ class BrouterPlanner(
                 estimatedSeconds = r.estimatedSeconds,
                 exposureMeters = r.exposureMeters,
                 addedSecondsVsFastest = r.estimatedSeconds - fastest.estimatedSeconds,
+                hardAvoidanceFailed = r.hardAvoidanceFailed,
             )
         }
         return PlanOutcome.Routes(options)

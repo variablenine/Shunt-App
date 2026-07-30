@@ -210,8 +210,9 @@ Shunt is built to keep working when the signal drops on a rural drive:
   route touches, capped at 5 concurrent, and disk-cached by version so they
   aren't refetched; a single `OkHttpClient` pools connections.
 - **No analytics, no telemetry, no account.** The only outbound traffic is to
-  Photon (keyless search), the DeFlock CDN (cameras), the BRouter CDN (one-time
-  offline tile downloads), and (via the Part B client) the user's own vehicle
+  Photon and Nominatim (keyless search), the DeFlock CDN (cameras), the BRouter
+  CDN (one-time offline tile downloads), Overpass (keyless OpenStreetMap, for
+  Tesla charging sites), and (via the Part B client) the user's own vehicle
   service. Routing and monitoring run entirely on the phone.
 
 > **APK size note:** the debug APK is large (~100 MB) because it bundles the

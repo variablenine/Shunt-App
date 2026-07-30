@@ -4,6 +4,7 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.Freshness
+import app.shunt.solver.charging.RangeCheck
 import app.shunt.solver.search.Suggestion
 
 /** A place the user can route to: a search result or a saved favorite. */
@@ -33,6 +34,13 @@ data class DrivePlan(
      * waypoint as a stop); real stops must not be — the driver wants to stop.
      */
     val stopPoints: Set<GeoPoint> = emptySet(),
+    /**
+     * The car took only the destination, not the shaped chain. That is also the
+     * only mode in which reading its active route means anything — with a full
+     * chain pushed it reports our own waypoints back at us — so it gates the
+     * charging-stop watch.
+     */
+    val destinationOnly: Boolean = false,
 )
 
 /**
@@ -54,7 +62,20 @@ data class PlanUiState(
     /** Destination search couldn't be reached (offline / service error). */
     val searchFailed: Boolean = false,
     val favorites: Favorites = Favorites(),
+    /** Places routed to before, newest first; shown when the query is empty. */
+    val recents: List<Destination> = emptyList(),
     val cameraDataFreshness: Freshness? = null,
+    /**
+     * How the route on the chooser compares with the car's remaining range.
+     * Null whenever no claim can be made: no car connected, or unreadable.
+     */
+    val rangeCheck: RangeCheck? = null,
+    /** A charging stop is being looked for (the "charge on the way" tap). */
+    val findingChargeStop: Boolean = false,
+    /** The last charging-stop search came back with nothing usable. */
+    val chargeStopSearchFailed: Boolean = false,
+    /** Other reachable sites from the last lookup, for explicit manual choice. */
+    val chargeStopAlternatives: List<Destination> = emptyList(),
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

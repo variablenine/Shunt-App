@@ -66,6 +66,8 @@ class PlanViewModelTest {
         vehicle: app.shunt.tesla.VehicleNavClient = FakeVehicleNavClient(),
         favoritesStore: FavoritesStore = InMemoryFavorites(),
         placeNamer: PlaceNamer? = null,
+        rangeReader: VehicleRangeReader? = null,
+        chargeStopFinder: ChargeStopFinder? = null,
     ) = PlanViewModel(
         search = { _, _ -> suggestions },
         planner = planner,
@@ -75,8 +77,35 @@ class PlanViewModelTest {
         favoritesStore = favoritesStore,
         vehicle = vehicle,
         placeNamer = placeNamer,
+        rangeReader = rangeReader,
+        chargeStopFinder = chargeStopFinder,
         scope = scope,
     )
+
+    @Test
+    fun `charger lookup uses the displayed usable range without a second haircut`() = runTest {
+        var reachable = 0.0
+        val long = fastest.copy(distanceMeters = 300_000)
+        val charger = Destination("Charging site", GeoPoint(39.7, -97.9))
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("Destination", dest, "place")),
+            outcome = routes(long),
+            rangeReader = VehicleRangeReader { RangeReading(180.0, 50) },
+            chargeStopFinder = ChargeStopFinder { _, meters ->
+                reachable = meters
+                listOf(charger)
+            },
+        )
+        model.onQueryChange("Destination"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        val usable = requireNotNull(model.state.value.rangeCheck).usableMeters
+
+        model.onChargeFirst(); advanceUntilIdle()
+
+        assertEquals(usable, reachable, 0.01)
+        assertEquals(charger, model.state.value.stops.first())
+    }
 
     @Test
     fun `onOpen warms camera data and records freshness`() = runTest {

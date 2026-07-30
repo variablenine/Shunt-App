@@ -19,6 +19,9 @@ import app.shunt.solver.brouter.BrouterRouter
 import app.shunt.solver.brouter.BrouterTileSource
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
+import app.shunt.solver.charging.CHARGER_CORRIDOR_METERS
+import app.shunt.solver.charging.SuperchargerSource
+import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
@@ -97,6 +100,9 @@ class AppContainer(context: Context) {
 
     private val tessieAccount = TessieAccountClient(http)
 
+    /** Keyless OSM/Overpass source for Tesla charging sites. */
+    private val superchargers = SuperchargerSource(http)
+
     /**
      * Verify a token by listing its vehicles. Read-only — it sends no command,
      * so checking can never make the car do something.
@@ -172,6 +178,7 @@ class AppContainer(context: Context) {
     }
 
     val favoritesStore = SharedPrefsFavoritesStore(appContext)
+    val recentPlacesStore = SharedPrefsRecentPlacesStore(appContext)
     private val locationProvider: LocationProvider =
         AndroidLocationProvider(appContext, favoritesStore)
 
@@ -225,8 +232,38 @@ class AppContainer(context: Context) {
         },
         favoritesStore = favoritesStore,
         vehicle = vehicleNavClient,
+        recentPlaces = recentPlacesStore,
         placeNamer = { point -> nominatimSearch.reverse(point)?.title },
+        // A camera-avoiding detour can outrun a battery the direct route would
+        // have been fine on, and the car's own planner never sees that route —
+        // so the check has to happen here, before the driver sets off.
+        rangeReader = { readVehicleRange() },
+        chargeStopFinder = { route, reachable -> findChargeStop(route, reachable) },
     )
+
+    /** The car's remaining range, or null when no car is connected / readable. */
+    private suspend fun readVehicleRange(): app.shunt.app.plan.RangeReading? {
+        val credentials = effectiveCredentials()
+        if (!credentials.isConfigured) return null
+        val state = tessieAccount.activeRoute(credentials.token, credentials.vin) ?: return null
+        val miles = state.estimatedRangeMiles ?: return null
+        return app.shunt.app.plan.RangeReading(miles, state.batteryLevel)
+    }
+
+    /**
+     * A Tesla charging site on the way, far enough along the route to be worth
+     * stopping at but still comfortably reachable. Searched within a corridor
+     * around the route so the answer is somewhere you were driving anyway.
+     */
+    private suspend fun findChargeStop(
+        route: List<app.shunt.core.GeoPoint>,
+        reachableMeters: Double,
+    ): List<app.shunt.app.plan.Destination> {
+        if (route.size < 2) return emptyList()
+        val candidates = superchargers.alongRoute(route, CHARGER_CORRIDOR_METERS)
+        return rankChargeStops(route, candidates, reachableMeters, CHARGER_CORRIDOR_METERS)
+            .map { app.shunt.app.plan.Destination(it.name, it.location) }
+    }
 
     /**
      * A fresh camera-aware plan from [from] to [destination], for the drive
@@ -238,12 +275,26 @@ class AppContainer(context: Context) {
     suspend fun replanFrom(
         from: app.shunt.core.GeoPoint,
         destination: app.shunt.app.plan.Destination,
+    ): DrivePlan? = planLeg(from, emptyList(), destination)
+
+    /**
+     * A camera-aware plan from [from] through [via] to [destination]. Used both
+     * to recover from leaving the route and to route the legs around a charging
+     * stop the car inserted. Null means no route could be produced — including
+     * when camera data couldn't be vetted, which must never be reported as a
+     * clean route.
+     */
+    suspend fun planLeg(
+        from: app.shunt.core.GeoPoint,
+        via: List<app.shunt.core.GeoPoint>,
+        destination: app.shunt.app.plan.Destination,
     ): DrivePlan? {
-        val outcome = runCatching { brouterPlanner.plan(from, destination.location) }.getOrNull()
+        val points = listOf(from) + via + destination.location
+        val outcome = runCatching { brouterPlanner.plan(points) }.getOrNull()
         val chosen = (outcome as? app.shunt.solver.brouter.PlanOutcome.Routes)
             ?.options
             // Prefer the camera-free option when the detour exists; that is the
-            // whole point of re-planning after leaving the route.
+            // whole point of re-planning mid-drive.
             ?.minByOrNull { it.camerasPassed }
             ?: return null
         return DrivePlan(
@@ -251,6 +302,24 @@ class AppContainer(context: Context) {
             chain = chosen.waypoints + destination.location,
             cameras = chosen.passedCameras,
             polyline = chosen.polyline,
+            stopPoints = via.toSet(),
+            destinationOnly = true,
+        )
+    }
+
+    /**
+     * Watches for charging stops the car inserts by itself, or null when that
+     * can't mean anything: no credentials (nothing to read), or a car that took
+     * the full shaped chain (its active route just echoes our own waypoints).
+     */
+    fun chargeStopCoordinator(plan: DrivePlan): app.shunt.app.drive.ChargeStopCoordinator? {
+        if (!plan.destinationOnly) return null
+        val credentials = effectiveCredentials()
+        if (!credentials.isConfigured) return null
+        return app.shunt.app.drive.ChargeStopCoordinator(
+            vehicle = vehicleNavClient,
+            readActiveRoute = { tessieAccount.activeRoute(credentials.token, credentials.vin) },
+            planLeg = { from, via, to -> planLeg(from, via, to) },
         )
     }
 
@@ -286,6 +355,7 @@ class AppContainer(context: Context) {
 
         /** Routing tiles unused for this long are pruned (~6 months). */
         const val TILE_TTL_DAYS = 183L
+
     }
 }
 

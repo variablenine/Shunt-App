@@ -23,14 +23,33 @@ class PhotonSearchTest {
     }
 
     @Test
-    fun `an all-distant result set keeps Photon's relevance order`() {
+    fun `distant results are ordered nearest-first too`() {
+        val user = GeoPoint(39.0, -98.0)
+        // Photon ranks by OSM importance, so a long-distance search fills up
+        // with famous namesakes in no useful order. Nothing here is local, but
+        // the reachable one should still lead.
+        val photonOrder = listOf(
+            at("Springfield, Massachusetts", 42.10, -72.59),
+            at("Springfield, Missouri", 37.21, -93.29),
+        )
+        val ranked = PhotonSearch.rankByProximity(photonOrder, user)
+        assertEquals("Springfield, Missouri", ranked.first().title)
+    }
+
+    @Test
+    fun `nearby results are ordered nearest-first, relevance breaking ties`() {
         val user = GeoPoint(39.0, -98.0)
         val photonOrder = listOf(
-            at("Portland, Oregon", 45.52, -122.68),
-            at("Portland, Maine", 43.66, -70.26),
+            at("Far Cafe", 39.6, -98.0), // ~67 km
+            at("Near Cafe", 39.05, -98.0), // ~6 km
+            // Same distance band as Near Cafe: Photon's order must survive.
+            at("Also Near Cafe", 39.06, -98.0),
         )
-        // No local match to promote — order is untouched.
-        assertEquals(photonOrder, PhotonSearch.rankByProximity(photonOrder, user))
+        val ranked = PhotonSearch.rankByProximity(photonOrder, user)
+        assertEquals(
+            listOf("Near Cafe", "Also Near Cafe", "Far Cafe"),
+            ranked.map { it.title },
+        )
     }
 
     private fun fixture(name: String): String =

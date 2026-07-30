@@ -135,6 +135,38 @@ sealed interface Alert {
         override val severity get() = Severity.URGENT
     }
 
+    /**
+     * The car inserted a charging stop of its own and Shunt is now driving a
+     * camera-aware route to it. Worth saying out loud: the trip the driver
+     * asked for has quietly grown a leg they didn't plan.
+     */
+    data class ChargeStopAhead(val name: String, val camerasOnLeg: Int) : Alert {
+        override val severity get() = Severity.WARNING
+    }
+
+    /** Reached the car's charging stop; the trip continues after charging. */
+    data class ReachedChargeStop(val name: String) : Alert {
+        override val severity get() = Severity.INFO
+    }
+
+    /** Charging done (or no longer needed) — back on the way to the destination. */
+    data class ResumingToDestination(val camerasOnLeg: Int) : Alert {
+        override val severity get() = Severity.WARNING
+    }
+
+    /**
+     * The car is detouring to a charger we could not plan a route to, so it is
+     * driving there its own way with no camera avoidance at all.
+     */
+    data class ChargeStopUnroutable(val name: String) : Alert {
+        override val severity get() = Severity.URGENT
+    }
+
+    /** Shunt could not verify or restore the car's target during a charging probe. */
+    data class ChargingUpdateFailed(val reason: String, val retryable: Boolean) : Alert {
+        override val severity get() = Severity.URGENT
+    }
+
     /** advanceTo failed mid-drive — the car may still stop at the passed waypoint. */
     data class AdvanceFailed(
         val remaining: List<GeoPoint>,
@@ -159,6 +191,12 @@ fun interface Alerter {
 /** Coarse drive lifecycle for the UI to reflect. */
 sealed interface DriveStatus {
     data object Idle : DriveStatus
-    data class Driving(val destinationTitle: String) : DriveStatus
+
+    /**
+     * [chargingVia] names the charging stop the car inserted on its own, when
+     * it has — the trip is still to [destinationTitle], just not directly.
+     */
+    data class Driving(val destinationTitle: String, val chargingVia: String? = null) : DriveStatus
+
     data object Arrived : DriveStatus
 }
