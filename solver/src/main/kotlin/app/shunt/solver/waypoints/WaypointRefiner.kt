@@ -38,8 +38,14 @@ import app.shunt.solver.geo.pointToPolylineProgress
  */
 object WaypointRefiner {
 
-    /** Give up after this many insertions; each one costs a routing pass. */
-    const val MAX_PASSES = 40
+    /**
+     * Runaway guard only, not a budget. Termination comes from the geometry:
+     * every pin is a point on the route, each insertion strictly shortens the
+     * stretch it splits, and a stretch shorter than [PAST_FORK_METERS] cannot
+     * hold one — so a route of finite length admits finitely many pins. This
+     * just bounds the routing calls if some pathological line defeats that.
+     */
+    const val MAX_PASSES = 500
 
     /**
      * How far our route must be from the car's own path to count as having
@@ -65,7 +71,7 @@ object WaypointRefiner {
         chosen: List<GeoPoint>,
         pins: List<GeoPoint>,
         avoid: List<CameraVision>,
-        maxPins: Int = WaypointExtractor.MAX_WAYPOINTS,
+        maxPins: Int = WaypointExtractor.NO_LIMIT,
         carRoute: suspend (from: GeoPoint, to: GeoPoint) -> List<GeoPoint>?,
     ): List<GeoPoint> {
         if (chosen.size < 2 || avoid.isEmpty()) return pins
@@ -96,7 +102,7 @@ object WaypointRefiner {
 
                 // The car would pass a camera getting to this pin. Put one in
                 // just past where its path and ours part company.
-                if (current.size >= maxPins) return current
+                if (maxPins != WaypointExtractor.NO_LIMIT && current.size >= maxPins) return current
                 val pin = pinPastFork(chosen, carPath, from, to)
                 if (pin == null || pin in current) {
                     // Nowhere left to put one on this stretch.
