@@ -136,6 +136,12 @@ class AndroidAlerter(private val context: Context) : Alerter {
                 "leg. It's driving there its own way — cameras on the way are " +
                 "unknown. Drive as if unprotected.",
         )
+        is Alert.ChargingUpdateFailed -> Triple(
+            CHARGING_NOTIF,
+            "Charging route update failed",
+            "Shunt could not verify or restore the car's destination (${alert.reason}). " +
+                "Check the route on the car before continuing.",
+        )
         Alert.Arrived -> Triple(ARRIVED_NOTIF, "Arrived", "You've reached your destination.")
     }
 

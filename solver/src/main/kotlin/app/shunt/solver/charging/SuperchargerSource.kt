@@ -11,6 +11,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.Locale
 
 /** A Tesla charging site from OpenStreetMap. */
 data class Supercharger(val id: Long, val name: String, val location: GeoPoint)
@@ -96,7 +97,10 @@ class SuperchargerSource(
          */
         fun corridorQuery(route: List<GeoPoint>, corridorMeters: Double): String {
             val line = sampleAlong(route, CORRIDOR_SAMPLE_METERS)
-                .joinToString(",") { "${"%.5f".format(it.lat)},${"%.5f".format(it.lon)}" }
+                .joinToString(",") {
+                    "${String.format(Locale.US, "%.5f", it.lat)}," +
+                        String.format(Locale.US, "%.5f", it.lon)
+                }
             val around = "around:${corridorMeters.toInt()},$line"
             return "[out:json][timeout:60];" +
                 """nwr["amenity"="charging_station"]($around);""" +
@@ -192,7 +196,7 @@ const val CHARGER_CORRIDOR_METERS = 40_000.0
  * without the widest corridor automatically winning.
  *
  * [reachableMeters] is how far the car can go before it must be plugged in —
- * already derated, see [RangeEstimate.REACHABLE_FRACTION].
+ * already real-world derated and reserve-adjusted by the caller.
  */
 fun chooseChargeStop(
     route: List<GeoPoint>,
@@ -200,24 +204,26 @@ fun chooseChargeStop(
     reachableMeters: Double,
     corridorMeters: Double = CHARGER_CORRIDOR_METERS,
 ): Supercharger? {
-    if (route.size < 2 || candidates.isEmpty()) return null
+    return rankChargeStops(route, candidates, reachableMeters, corridorMeters).firstOrNull()
+}
 
-    var best: Supercharger? = null
-    var bestScore = -Double.MAX_VALUE
-
-    for (candidate in candidates) {
+/** All suitable reachable sites, ranked best-first for automatic or manual selection. */
+fun rankChargeStops(
+    route: List<GeoPoint>,
+    candidates: List<Supercharger>,
+    reachableMeters: Double,
+    corridorMeters: Double = CHARGER_CORRIDOR_METERS,
+): List<Supercharger> {
+    if (route.size < 2 || candidates.isEmpty()) return emptyList()
+    return candidates.mapNotNull { candidate ->
         val progress = pointToPolylineProgress(candidate.location, route)
-        if (progress.distanceMeters > corridorMeters) continue
+        if (progress.distanceMeters > corridorMeters) return@mapNotNull null
         // Getting there costs the drive along the route plus the hop off it.
-        if (progress.alongMeters + progress.distanceMeters > reachableMeters) continue
+        if (progress.alongMeters + progress.distanceMeters > reachableMeters) return@mapNotNull null
 
         val score = progress.alongMeters - DETOUR_COST * progress.distanceMeters
-        if (score > bestScore) {
-            best = candidate
-            bestScore = score
-        }
-    }
-    return best
+        candidate to score
+    }.sortedByDescending { it.second }.map { it.first }
 }
 
 /** Leaving the route is a round trip, so an excursion costs twice its length. */

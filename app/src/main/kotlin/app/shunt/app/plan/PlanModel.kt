@@ -74,6 +74,8 @@ data class PlanUiState(
     val findingChargeStop: Boolean = false,
     /** The last charging-stop search came back with nothing usable. */
     val chargeStopSearchFailed: Boolean = false,
+    /** Other reachable sites from the last lookup, for explicit manual choice. */
+    val chargeStopAlternatives: List<Destination> = emptyList(),
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

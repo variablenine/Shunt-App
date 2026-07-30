@@ -38,6 +38,9 @@ sealed interface LegChange {
      * in force — which the driver has to be told, loudly.
      */
     data class Unroutable(val stop: ChargeStop) : LegChange
+
+    /** A probe or steering restore failed; the car's actual target is uncertain. */
+    data class VehicleUpdateFailed(val reason: String, val retryable: Boolean) : LegChange
 }
 
 /**
@@ -153,7 +156,9 @@ class ChargeStopCoordinator(
             // touch the leg.
             val sent = runCatching { vehicle.pushRoute(listOf(destination.location)) }
                 .getOrElse { PushResult.Failed("re-assert threw", retryable = true) }
-            if (sent is PushResult.Failed) return LegChange.None
+            if (sent is PushResult.Failed) {
+                return LegChange.VehicleUpdateFailed(sent.reason, sent.retryable)
+            }
             pause(settleMillis)
         }
 
@@ -220,7 +225,11 @@ class ChargeStopCoordinator(
      */
     private suspend fun unchanged(reasserted: Boolean, steeringChain: List<GeoPoint>): LegChange {
         if (reasserted && steeringChain.isNotEmpty()) {
-            runCatching { vehicle.advanceTo(steeringChain) }
+            val restored = runCatching { vehicle.advanceTo(steeringChain) }
+                .getOrElse { PushResult.Failed("steering restore threw", retryable = true) }
+            if (restored is PushResult.Failed) {
+                return LegChange.VehicleUpdateFailed(restored.reason, restored.retryable)
+            }
         }
         return LegChange.None
     }

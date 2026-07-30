@@ -12,6 +12,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.util.Locale
 
 class SuperchargerSourceTest {
 
@@ -89,6 +90,18 @@ class SuperchargerSourceTest {
         val query = SuperchargerSource.corridorQuery(route, 40_000.0)
         assertTrue("around:40000" in query, "must ask for a corridor: $query")
         assertTrue("charging_station" in query)
+    }
+
+    @Test
+    fun `corridor coordinates never use the device decimal separator`() {
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.GERMANY)
+            val query = SuperchargerSource.corridorQuery(route, 40_000.0)
+            assertTrue("39.00000,-98.50000" in query, "query must remain Overpass-formatted: $query")
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 
     @Test

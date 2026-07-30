@@ -78,7 +78,8 @@ fun interface VehicleRangeReader {
  * Null when nothing suitable is on the way.
  */
 fun interface ChargeStopFinder {
-    suspend fun onRoute(route: List<GeoPoint>, reachableMeters: Double): Destination?
+    /** Reachable sites in preferred order; empty when none could be suggested. */
+    suspend fun onRoute(route: List<GeoPoint>, reachableMeters: Double): List<Destination>
 }
 
 /** Persists the Home/Work favorites. */
