@@ -41,6 +41,17 @@ data class DrivePlan(
      * charging-stop watch.
      */
     val destinationOnly: Boolean = false,
+    /**
+     * Steer the car pin by pin rather than handing it the destination.
+     *
+     * A car that only accepts one destination cannot be given a shape, so the
+     * only way to make it follow one is to point it at the next pin and move
+     * the pin as it goes. That is what makes the avoidance reach the car at
+     * all — but it also means the car is aiming at somewhere a few miles away
+     * and will not plan charging for the real trip, so it is only used when the
+     * trip clearly doesn't need a charge.
+     */
+    val steerByWaypoints: Boolean = false,
 )
 
 /**

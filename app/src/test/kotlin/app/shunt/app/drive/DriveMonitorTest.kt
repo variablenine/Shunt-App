@@ -121,6 +121,76 @@ class DriveMonitorTest {
         assertEquals(DriveStatus.Idle, statuses.last())
     }
 
+    // ---- Steering a single-destination car pin by pin ---------------------
+
+    @Test
+    fun `steering sends the car the next waypoint, not the rest of the route`() = runTest {
+        // The car takes one destination, so handing it the remaining chain hands
+        // it the far end and loses the shape. Only the next pin goes out — and
+        // as each is approached, the next one after it.
+        val fake = FakeVehicleNavClient()
+        val monitor = DriveMonitor(fake, RecordingAlerter())
+
+        monitor.run(
+            plan().copy(destinationOnly = true, steerByWaypoints = true),
+            flowOf(*approach.map { fix(it) }.toTypedArray()),
+        )
+
+        val advances = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+        assertEquals(listOf(listOf(w2), listOf(dest)), advances.map { it.waypoints })
+    }
+
+    @Test
+    fun `steering carries onto a route that replaces the one being steered`() = runTest {
+        // A re-planned leg is planned the ordinary way and knows nothing about
+        // how this car is being driven; the monitor holds that.
+        val vehicle = FakeVehicleNavClient()
+        val pinned = listOf(GeoPoint(33.2, -96.97), dest)
+        val published = mutableListOf<DrivePlan>()
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+            onPlanChanged = { published += it },
+        ).run(
+            routedPlan().copy(destinationOnly = true, steerByWaypoints = true),
+            flowOf(*departure().toTypedArray()),
+        )
+
+        assertEquals(
+            listOf(listOf(pinned.first())),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+            "only the new route's first pin should have been sent",
+        )
+        assertTrue(
+            published.single().steerByWaypoints,
+            "the screen must be told the replacement is being steered too",
+        )
+    }
+
+    @Test
+    fun `a steered car is re-aimed even when the new route needs no shaping`() = runTest {
+        // The usual rule — don't disturb a car that would drive this road anyway
+        // — doesn't hold here: the car is aimed at a pin on the route just left.
+        val vehicle = FakeVehicleNavClient()
+        val plain = listOf(dest)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+        ).run(
+            DrivePlan(Destination("Home", dest), plain, emptyList(), routeLine, steerByWaypoints = true),
+            flowOf(*departure().toTypedArray()),
+        )
+
+        assertEquals(
+            listOf(plain),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+        )
+    }
+
     // ---- Leaving the planned route --------------------------------------
 
     /** Straight eastbound line; the plan's polyline for adherence checks. */

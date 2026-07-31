@@ -7,6 +7,7 @@ import app.shunt.solver.brouter.RouteChoice
 import app.shunt.solver.brouter.TileId
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.Freshness
+import app.shunt.solver.charging.RangeCheck
 import app.shunt.solver.search.Suggestion
 import app.shunt.tesla.FakeVehicleNavClient
 import app.shunt.tesla.PushResult
@@ -304,6 +305,80 @@ class PlanViewModelTest {
         assertEquals(2, call.waypoints.size)
         assertEquals(dest, call.waypoints.last())
         assertEquals(call.waypoints, driving.plan.chain)
+    }
+
+    @Test
+    fun `a car that takes only a destination is aimed at the first waypoint`() = runTest {
+        // The car collapsed the chain to its last point — the destination — so
+        // the shape was lost. Point it at the first pin instead: that is the
+        // only way the avoidance reaches a single-destination car at all.
+        val fake = FakeVehicleNavClient()
+        fake.enqueueResult(PushResult.DestinationOnly("one destination only"))
+        val model = vm(this, suggestions = listOf(Suggestion("Dest", dest, "place")), vehicle = fake)
+        model.onQueryChange("Dest"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+
+        val driving = assertIs<Phase.Driving>(model.state.value.phase)
+        assertTrue(driving.plan.steerByWaypoints, "the monitor must know to steer pin by pin")
+        val pushes = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>()
+        assertEquals(listOf(fastest.waypoints.first()), pushes.last().waypoints)
+    }
+
+    @Test
+    fun `a car known to take only a destination is never sent the destination again`() = runTest {
+        // Sending the whole chain first collapses to the destination, so the car
+        // spends the next few seconds navigating the unshaped route — and
+        // planning charging for it — before being redirected. Once we know what
+        // this car does, go straight to the pin.
+        val fake = FakeVehicleNavClient()
+        fake.enqueueResult(PushResult.DestinationOnly("one destination only"))
+        val store = InMemoryFavorites(Favorites(home = Destination("Home", dest)))
+        val model = vm(this, vehicle = fake, favoritesStore = store)
+        model.onFavoriteSelected(FavoriteSlot.HOME); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+
+        model.onStopDrive()
+        fake.reset()
+        fake.enqueueResult(PushResult.DestinationOnly("one destination only"))
+        model.onFavoriteSelected(FavoriteSlot.HOME); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+
+        val pushes = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>()
+        assertEquals(
+            listOf(listOf(fastest.waypoints.first())),
+            pushes.map { it.waypoints },
+            "the second trip should have gone straight to the first pin",
+        )
+        assertTrue(assertIs<Phase.Driving>(model.state.value.phase).plan.steerByWaypoints)
+    }
+
+    @Test
+    fun `a trip that will not make it on this charge keeps the destination in the car`() = runTest {
+        // Steering points the car a few miles up the road, and a car aiming
+        // there plans no charging for the real trip. On a trip that needs a
+        // charge, knowing where the charger is beats holding the shape.
+        val fake = FakeVehicleNavClient()
+        fake.enqueueResult(PushResult.DestinationOnly("one destination only"))
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("Dest", dest, "place")),
+            outcome = routes(fastest.copy(distanceMeters = 300_000)),
+            vehicle = fake,
+            rangeReader = VehicleRangeReader { RangeReading(100.0, 40) },
+        )
+        model.onQueryChange("Dest"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        assertEquals(RangeCheck.Level.SHORT, model.state.value.rangeCheck?.level)
+
+        model.onGo(); advanceUntilIdle()
+
+        val driving = assertIs<Phase.Driving>(model.state.value.phase)
+        assertTrue(!driving.plan.steerByWaypoints, "a trip needing a charge must not be steered")
+        assertTrue(driving.plan.destinationOnly, "the car still holds the destination")
+        val pushes = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>()
+        assertEquals(listOf(dest), pushes.single().waypoints.takeLast(1))
+        assertEquals(1, pushes.size, "no second push should have redirected it")
     }
 
     @Test

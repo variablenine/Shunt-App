@@ -60,6 +60,13 @@ class PlanViewModel(
 
     private var searchJob: Job? = null
 
+    /**
+     * The last push found a car that takes only a single destination. Remembered
+     * so the next trip can be aimed at its first pin directly, without the car
+     * first being sent to the destination and redirected a moment later.
+     */
+    private var carTakesDestinationOnly = false
+
     /** Call once when the planning screen opens: warm camera data, no background work. */
     fun onOpen() {
         workScope.launch {
@@ -438,15 +445,15 @@ class PlanViewModel(
         val plan = drivePlanFor(option, solved.destination)
         _state.update { it.copy(phase = Phase.Pushing(solved.destination, option)) }
         workScope.launch {
-            val result = runCatching { vehicle.pushRoute(plan.chain) }
-                .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
+            val (result, steering) = pushForDriving(plan)
+
             _state.update {
                 when (result) {
                     is PushResult.Success -> it.copy(phase = Phase.Driving(solved.destination, plan))
                     is PushResult.DestinationOnly -> it.copy(
                         phase = Phase.Driving(
                             solved.destination,
-                            plan.copy(destinationOnly = true),
+                            plan.copy(destinationOnly = true, steerByWaypoints = steering),
                             destinationOnly = true,
                         ),
                     )
@@ -457,6 +464,59 @@ class PlanViewModel(
             }
         }
     }
+
+    /**
+     * Get [plan] to the car, and say whether it ended up being steered pin by
+     * pin rather than sent to the destination.
+     *
+     * A car that takes only one destination can still be made to follow the
+     * route — by being pointed at the next pin instead, and having that pin
+     * moved along as the drive goes (the monitor takes over from there). Not on
+     * a trip that needs charging, though: a car aiming a few miles up the road
+     * plans no charging for the real trip, and being told where the charger is
+     * matters more than the shape of the road to it.
+     */
+    private suspend fun pushForDriving(plan: DrivePlan): Pair<PushResult, Boolean> {
+        val canSteer = plan.chain.size > 1 && tripHasRangeToSpare()
+
+        // Known single-destination car: aim it at the first pin straight away.
+        // Sending the whole chain first would collapse to the destination, and
+        // the car would start navigating the unshaped route — and plan charging
+        // for it — in the seconds before being redirected.
+        if (canSteer && carTakesDestinationOnly) {
+            val aimed = pushOrFailure(listOf(plan.chain.first()))
+            if (aimed is PushResult.DestinationOnly) return aimed to true
+            // It took a chain command after all (or wouldn't take anything):
+            // forget what we thought and let the full push settle it.
+            carTakesDestinationOnly = false
+        }
+
+        val result = pushOrFailure(plan.chain)
+        if (result is PushResult.DestinationOnly) carTakesDestinationOnly = true
+        val steering = result is PushResult.DestinationOnly && canSteer && aimAtFirstWaypoint(plan)
+        return result to steering
+    }
+
+    private suspend fun pushOrFailure(chain: List<GeoPoint>): PushResult =
+        runCatching { vehicle.pushRoute(chain) }
+            .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
+
+    /**
+     * True when the trip clearly doesn't need a charging stop, so the car can
+     * be steered pin by pin. Unknown range counts as "to spare": with no car
+     * connected there is no charging to plan around, and steering the route is
+     * the whole point of the app.
+     */
+    private fun tripHasRangeToSpare(): Boolean =
+        _state.value.rangeCheck?.level != RangeCheck.Level.SHORT
+
+    /**
+     * Point the car at the first shaping pin. Returns whether it landed — if it
+     * didn't, the car still holds the destination and must keep being treated
+     * that way, rather than the monitor assuming a steer that never happened.
+     */
+    private suspend fun aimAtFirstWaypoint(plan: DrivePlan): Boolean =
+        pushOrFailure(listOf(plan.chain.first())) !is PushResult.Failed
 
     /** Cancel the drive (user tapped cancel). The activity stops the service. */
     fun onStopDrive() {

@@ -41,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.shunt.app.plan.Destination
@@ -190,6 +191,9 @@ private fun SearchAndFavorites(
                 StopsList(state.stops, actions.onRemoveStop)
                 Spacer(Modifier.height(8.dp))
             }
+            // Recents belong to the search box, not to the map screen: they only
+            // appear once it's actually tapped, so an idle screen stays a map.
+            var searchFocused by remember { mutableStateOf(false) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = state.query,
@@ -197,7 +201,9 @@ private fun SearchAndFavorites(
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     placeholder = { Text("Where to?") },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { searchFocused = it.isFocused },
                 )
                 if (onOpenVehicleSettings != null) {
                     IconButton(onClick = onOpenVehicleSettings) {
@@ -229,10 +235,10 @@ private fun SearchAndFavorites(
                 // Distinguish "no such place in the map data" from a silent blank,
                 // so an unmatched query reads as a result, not a broken search.
                 SearchStatus("No matching places found. Try a fuller name or a nearby town.")
-            } else if (state.recents.isNotEmpty()) {
-                // Nothing typed yet: offer where you went last. Typing into a
-                // keyless geocoder is the slowest part of setting off, and this
-                // app is used on the same handful of trips.
+            } else if (searchFocused && state.recents.isNotEmpty()) {
+                // Search box tapped, nothing typed yet: offer where you went
+                // last. Typing into a keyless geocoder is the slowest part of
+                // setting off, and this app is used on the same handful of trips.
                 RecentPlaces(state.recents, actions.onRecentSelected)
             }
 

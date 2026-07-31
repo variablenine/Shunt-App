@@ -337,11 +337,15 @@ class AppContainer(context: Context) {
 
     /**
      * Watches for charging stops the car inserts by itself, or null when that
-     * can't mean anything: no credentials (nothing to read), or a car that took
-     * the full shaped chain (its active route just echoes our own waypoints).
+     * can't mean anything: no credentials (nothing to read), a car that took
+     * the full shaped chain (its active route just echoes our own waypoints),
+     * or a trip being steered pin by pin — the car is aimed a few miles up the
+     * road rather than at the destination, so anything it says about charging
+     * is about that pin and not about the trip. Steering is only chosen when
+     * the trip has range to spare, so there is nothing to watch for.
      */
     fun chargeStopCoordinator(plan: DrivePlan): app.shunt.app.drive.ChargeStopCoordinator? {
-        if (!plan.destinationOnly) return null
+        if (!plan.destinationOnly || plan.steerByWaypoints) return null
         val credentials = effectiveCredentials()
         if (!credentials.isConfigured) return null
         return app.shunt.app.drive.ChargeStopCoordinator(

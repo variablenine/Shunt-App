@@ -555,7 +555,38 @@ private fun DrivingContent(phase: Phase.Driving, chargingVia: String?, onCancel:
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (phase.destinationOnly) {
+    if (phase.plan.steerByWaypoints) {
+        // The car takes one destination, so it is being walked along the route
+        // a pin at a time. The car's own screen will name somewhere a few miles
+        // away rather than the destination — that is the mechanism working, and
+        // the driver has to know it before it worries them.
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    "Guiding your car waypoint by waypoint",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Your car only accepts one destination at a time, so Shunt sends it " +
+                        "the next point on the camera-avoiding route and moves that point " +
+                        "along as you drive. Your car will show somewhere nearby rather " +
+                        "than ${destination.title} until the last leg — that's expected. " +
+                        "It won't plan charging for the whole trip while it's being guided " +
+                        "this way, so watch your range.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+    } else if (phase.destinationOnly) {
         // The car took the destination but not the shaped route, so it is
         // navigating its own way — which may go past cameras this route
         // avoided. Say so plainly; the phone alerts still follow OUR route.
