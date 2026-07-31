@@ -184,6 +184,83 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `a camera-free replacement route is not pushed at the car`() = runTest {
+        // Straying off an already camera-free route should update what the app
+        // shows and leave the car alone. Re-sending the destination it already
+        // holds interrupts the navigation on its screen and tells it nothing.
+        val vehicle = FakeVehicleNavClient()
+        val plain = listOf(dest) // no shaping pins: the car's own road is fine
+        // The route being left is unpinned too, so the car is already aimed at
+        // the destination and there is nothing to correct.
+        val unpinned = DrivePlan(Destination("Home", dest), plain, emptyList(), routeLine)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { from -> DrivePlan(Destination("Home", dest), plain, emptyList(), listOf(from, dest)) },
+        ).run(unpinned, flowOf(*departure().toTypedArray()))
+
+        assertTrue(
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().isEmpty(),
+            "nothing needed steering, so the car should have been left alone",
+        )
+    }
+
+    @Test
+    fun `coming off a pinned route restores the destination the car is missing`() = runTest {
+        // The car is still aimed at a shaping pin that no longer exists. Even
+        // though the replacement needs no steering, the stale pin has to go.
+        val vehicle = FakeVehicleNavClient()
+        val plain = listOf(dest)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(
+            listOf(plain),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+            "the destination must be restored over the abandoned pin",
+        )
+    }
+
+    @Test
+    fun `a replacement route that needs steering is still pushed`() = runTest {
+        val vehicle = FakeVehicleNavClient()
+        val pinned = listOf(GeoPoint(33.2, -96.97), dest)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(
+            listOf(pinned),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+        )
+    }
+
+    @Test
+    fun `the route in force is published so the screen can follow it`() = runTest {
+        // Without this a re-plan is invisible: the monitor drives the new line
+        // while the map still shows the one that was abandoned.
+        val fresh = DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
+        val published = mutableListOf<DrivePlan>()
+
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { fresh },
+            onPlanChanged = { published += it },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(listOf(fresh), published, "the new route must reach the screen")
+    }
+
+    @Test
     fun `a failed re-plan says plainly that nothing is protecting you`() = runTest {
         val alerter = RecordingAlerter()
         DriveMonitor(

@@ -54,6 +54,7 @@ class DriveMonitorService : Service() {
             return START_NOT_STICKY
         }
 
+        container.liveDrivePlan.value = plan
         val monitor = DriveMonitor(
             vehicle = container.vehicleNavClient,
             alerter = AndroidAlerter(this),
@@ -68,6 +69,9 @@ class DriveMonitorService : Service() {
             // does, route that leg too rather than letting it drive there
             // unvetted. Null on cars that took the full shaped chain.
             charging = container.chargeStopCoordinator(plan),
+            // Republish the route in force so the map draws what is being
+            // driven, not the line that was abandoned.
+            onPlanChanged = { container.liveDrivePlan.value = it },
         )
         monitorJob?.cancel()
         monitorJob = scope.launch {

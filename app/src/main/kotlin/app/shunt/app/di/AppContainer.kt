@@ -192,6 +192,14 @@ class AppContainer(context: Context) {
     val driveStatus = MutableStateFlow<DriveStatus>(DriveStatus.Idle)
 
     /**
+     * The route actually in force, republished whenever the monitor replaces it
+     * — leaving the planned road, or a charging leg. The screen follows this
+     * rather than the plan handed over at Go, which stops going stale the
+     * moment anything re-plans.
+     */
+    val liveDrivePlan = MutableStateFlow<DrivePlan?>(null)
+
+    /**
      * Every known camera in a map viewport, for the DeFlock-style display.
      * Reuses the same cached DeFlock source the router draws on, so panning the
      * map is cheap once tiles are warm.

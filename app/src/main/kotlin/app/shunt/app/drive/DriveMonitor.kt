@@ -36,6 +36,12 @@ class DriveMonitor(
      * route, one destination, no reads of the vehicle's state.
      */
     private val charging: ChargeStopCoordinator? = null,
+    /**
+     * Called whenever the route in force changes, so the screen can draw what
+     * is actually being driven. Without it a re-plan is invisible: the monitor
+     * follows the new line while the map still shows the abandoned one.
+     */
+    private val onPlanChanged: (DrivePlan) -> Unit = {},
 ) {
     suspend fun run(plan: DrivePlan, locations: Flow<LocationUpdate>) {
         var current = plan
@@ -127,12 +133,14 @@ class DriveMonitor(
             alerter.alert(Alert.ChargeStopAhead(change.stop.name, change.plan.cameras.size))
             onStatus(DriveStatus.Driving(finalDestination.title, chargingVia = change.stop.name))
             push(change.plan.chain)
+            onPlanChanged(change.plan)
             change.plan
         }
         is LegChange.ToDestination -> {
             alerter.alert(Alert.ResumingToDestination(change.plan.cameras.size))
             onStatus(DriveStatus.Driving(finalDestination.title))
             push(change.plan.chain)
+            onPlanChanged(change.plan)
             change.plan
         }
         is LegChange.Unroutable -> {
@@ -163,11 +171,20 @@ class DriveMonitor(
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
             return null
         }
-        // Hand the car the new chain. A push failure is loud but doesn't discard
-        // the plan: our own camera warnings still follow the new route, which is
-        // the part that matters when the vehicle isn't cooperating.
-        push(fresh.chain)
+        // Only bother the car when the new route actually needs steering.
+        //
+        // A route with no shaping pins is one the car would drive anyway, so
+        // pushing it says nothing it doesn't already know — on a single-
+        // destination car it re-sends the same destination, which interrupts
+        // the navigation on screen for no gain. The exception is coming *off* a
+        // pinned route: the car is still aimed at a pin that no longer exists,
+        // so the destination has to be restored.
+        val needsSteering = fresh.chain.size > 1
+        val holdsStalePin = previous.chain.size > 1
+        if (needsSteering || holdsStalePin) push(fresh.chain)
+
         alerter.alert(Alert.Replanned(fresh.cameras.size))
+        onPlanChanged(fresh)
         return fresh
     }
 

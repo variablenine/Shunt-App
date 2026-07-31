@@ -465,6 +465,18 @@ class PlanViewModel(
         }
     }
 
+    /**
+     * The monitor put a different route in force — off-route recovery, or a
+     * charging leg. Swap it into the driving phase so the map and the sheet
+     * describe the road actually being driven.
+     */
+    fun onRouteReplanned(plan: DrivePlan) {
+        _state.update { state ->
+            val driving = state.phase as? Phase.Driving ?: return@update state
+            state.copy(phase = driving.copy(plan = plan))
+        }
+    }
+
     /** The monitor reported arrival; leave the driving phase. */
     fun onArrived() {
         if (_state.value.phase is Phase.Driving) {

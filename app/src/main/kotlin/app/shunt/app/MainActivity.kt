@@ -97,6 +97,14 @@ class MainActivity : ComponentActivity() {
                     onDispose { if (isDriving) DriveMonitorService.stop(context) }
                 }
 
+                // Follow the route the monitor is actually driving: it replaces
+                // it on off-route recovery and on charging legs, and without
+                // this the map keeps showing the abandoned one.
+                val livePlan by container.liveDrivePlan.collectAsStateWithLifecycle()
+                LaunchedEffect(livePlan) {
+                    livePlan?.let { vm.onRouteReplanned(it) }
+                }
+
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
                         vm.onArrived()
