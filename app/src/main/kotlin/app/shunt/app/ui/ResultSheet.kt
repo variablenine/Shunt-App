@@ -268,7 +268,9 @@ private fun RangeWarning(
                 Text(
                     when {
                         check.detourIsTheProblem -> "This detour outruns your battery"
+                        short && check.hasChargingStops -> "Still short, even with the charging stop"
                         short -> "Not enough range for this trip"
+                        check.hasChargingStops -> "Tight between charges"
                         else -> "This will be tight on range"
                     },
                     style = MaterialTheme.typography.titleMedium,
@@ -279,15 +281,25 @@ private fun RangeWarning(
             Spacer(Modifier.height(6.dp))
             Text(
                 buildString {
-                    append("This route is ${formatKm(check.routeMeters)}")
-                    check.batteryPercent?.let { append(" and you're at $it%") }
-                    append(". Allowing for real-world driving that's about ")
-                    append("${formatKm(check.usableMeters.toInt())} of usable range")
-                    if (check.detourIsTheProblem) {
-                        append(" — the shortest option (${formatKm(check.shortestOptionMeters)}) ")
-                        append("would make it, but the camera-avoiding one won't")
+                    if (check.hasChargingStops) {
+                        // With a charging stop the total stopped being the
+                        // question: what matters is whether each leg fits.
+                        append("Split by ${check.legMeters.size - 1} charging stop")
+                        if (check.legMeters.size > 2) append("s")
+                        append(", the longest leg is ${formatKm(check.legMeters.max())}")
+                        append(" against about ${formatKm(check.chargedUsableMeters.toInt())}")
+                        append(" of usable range from a charge.")
+                    } else {
+                        append("This route is ${formatKm(check.routeMeters)}")
+                        check.batteryPercent?.let { append(" and you're at $it%") }
+                        append(". Allowing for real-world driving that's about ")
+                        append("${formatKm(check.usableMeters.toInt())} of usable range")
+                        if (check.detourIsTheProblem) {
+                            append(" — the shortest option (${formatKm(check.shortestOptionMeters)}) ")
+                            append("would make it, but the camera-avoiding one won't")
+                        }
+                        append(".")
                     }
-                    append(".")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = onColor,
@@ -295,8 +307,13 @@ private fun RangeWarning(
             if (short) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Your car plans charging for the direct route, so it may not " +
-                        "add a stop for this one. Charge before you go.",
+                    if (check.hasChargingStops) {
+                        "Even split like this a leg runs past what one charge covers. " +
+                            "Add another stop, or start with more in the battery."
+                    } else {
+                        "Your car plans charging for the direct route, so it may not " +
+                            "add a stop for this one. Charge before you go."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = onColor,
                 )
@@ -311,7 +328,10 @@ private fun RangeWarning(
                         Spacer(Modifier.width(10.dp))
                         Text("Finding a charger on the way…")
                     } else {
-                        Text("Add a charging stop on the way")
+                        Text(
+                            if (check.hasChargingStops) "Add another charging stop"
+                            else "Add a charging stop on the way",
+                        )
                     }
                 }
                 if (searchFailed) {

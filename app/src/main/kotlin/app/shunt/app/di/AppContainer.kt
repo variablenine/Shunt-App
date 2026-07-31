@@ -244,6 +244,7 @@ class AppContainer(context: Context) {
         // so the check has to happen here, before the driver sets off.
         rangeReader = { readVehicleRange() },
         chargeStopFinder = { route, reachable -> findChargeStop(route, reachable) },
+        chargerListing = { route -> listChargers(route) },
     )
 
     /** The car's remaining range, or null when no car is connected / readable. */
@@ -310,6 +311,20 @@ class AppContainer(context: Context) {
             stopPoints = via.toSet(),
             destinationOnly = true,
         )
+    }
+
+    /**
+     * Every Tesla charging site near the route, reachable or not. The map shows
+     * these so a driver can overrule the automatic pick — which rests on a
+     * derate, a reserve and a guess at what a stop puts back, and will
+     * sometimes be wrong in a way only the person driving can see.
+     */
+    private suspend fun listChargers(
+        route: List<app.shunt.core.GeoPoint>,
+    ): List<app.shunt.app.plan.Destination> {
+        if (route.size < 2) return emptyList()
+        return superchargers.alongRoute(route, CHARGER_CORRIDOR_METERS)
+            .map { app.shunt.app.plan.Destination(it.name, it.location) }
     }
 
     /**

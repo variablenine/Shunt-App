@@ -82,6 +82,16 @@ fun interface ChargeStopFinder {
     suspend fun onRoute(route: List<GeoPoint>, reachableMeters: Double): List<Destination>
 }
 
+/**
+ * Every charging site near a route, reachable or not — what the map offers when
+ * the automatic pick gets it wrong or finds nothing. That pick rests on a
+ * derate, a reserve and a guess at what a stop puts back, so there has to be a
+ * way for the person driving to overrule it.
+ */
+fun interface ChargerListing {
+    suspend fun alongRoute(route: List<GeoPoint>): List<Destination>
+}
+
 /** Persists the Home/Work favorites. */
 interface FavoritesStore {
     fun load(): Favorites

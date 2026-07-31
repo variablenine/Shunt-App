@@ -76,6 +76,14 @@ data class PlanUiState(
     val chargeStopSearchFailed: Boolean = false,
     /** Other reachable sites from the last lookup, for explicit manual choice. */
     val chargeStopAlternatives: List<Destination> = emptyList(),
+    /**
+     * Which of [stops] are charging stops rather than places the driver asked
+     * for. The range check needs to know: a leg starting from a charger has a
+     * charge to work with, one starting from a coffee stop does not.
+     */
+    val chargeStops: Set<GeoPoint> = emptySet(),
+    /** Charging sites near the planned route, for picking one off the map. */
+    val chargersOnRoute: List<Destination> = emptyList(),
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

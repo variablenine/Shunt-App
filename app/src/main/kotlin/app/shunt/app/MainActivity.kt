@@ -136,6 +136,7 @@ class MainActivity : ComponentActivity() {
                         onChargeFirst = vm::onChargeFirst,
                         onChargeAlternative = vm::onChargeAlternative,
                         onRecentSelected = vm::onRecentSelected,
+                        onChargerPicked = vm::onChargerPicked,
                     ),
                 )
             }

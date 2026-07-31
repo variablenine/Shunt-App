@@ -82,6 +82,7 @@ class PlanActions(
     val onChargeFirst: () -> Unit,
     val onChargeAlternative: (Int) -> Unit,
     val onRecentSelected: (Int) -> Unit,
+    val onChargerPicked: (GeoPoint) -> Unit,
 )
 
 @Composable
@@ -105,6 +106,10 @@ fun PlanScreen(
             passedCameras = overlay.passedCameras,
             steeringWaypoints = overlay.waypoints,
             routeCameras = overlay.nearbyCameras,
+            chargers = state.chargersOnRoute.mapIndexed { index, place ->
+                MapCharger(index.toLong(), place.location.lat, place.location.lon, place.title)
+            },
+            onChargerSelected = { actions.onChargerPicked(it.let { c -> GeoPoint(c.lat, c.lon) }) },
             modifier = Modifier.fillMaxSize(),
             cameraFetcher = cameraViewportFetcher,
             // Only while browsing: a long press mid-drive would abandon the trip.

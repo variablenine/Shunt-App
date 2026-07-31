@@ -82,6 +82,16 @@ data class MapCamera(
     val subtitle: String?,
 )
 
+/**
+ * A charging site the user can tap to put on the trip.
+ *
+ * The automatic pick uses range arithmetic that is only as good as the numbers
+ * behind it — a derate, a reserve, a guess at what a stop puts back. When it
+ * picks nothing, or picks somewhere the driver knows is a bad idea, being able
+ * to point at one on the map is the fallback that always works.
+ */
+data class MapCharger(val id: Long, val lat: Double, val lon: Double, val title: String)
+
 /** Plain dark background style used when no basemap URL is configured or it fails to load. */
 private const val BLANK_STYLE =
     """{"version":8,"sources":{},"layers":[{"id":"bg","type":"background","paint":{"background-color":"#161826"}}]}"""
@@ -98,6 +108,8 @@ private const val CONE_LAYER = "camera-cones-fill"
 // The subset of cameras the chosen route passes near — drawn brighter, on top.
 private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
+private const val CHARGER_SOURCE = "route-chargers"
+private const val CHARGER_LAYER = "route-charger-dots"
 private const val NEARBY_SOURCE = "route-nearby-cameras"
 private const val NEARBY_LAYER = "route-nearby-camera-dots"
 private const val WAYPOINT_SOURCE = "route-waypoints"
@@ -136,6 +148,10 @@ fun RouteMap(
      * zooming in and panning along the whole line.
      */
     routeCameras: List<GeoPoint> = emptyList(),
+    /** Charging sites along the route, tappable to add one as a stop. */
+    chargers: List<MapCharger> = emptyList(),
+    /** Called with the charger the user tapped. */
+    onChargerSelected: ((MapCharger) -> Unit)? = null,
     modifier: Modifier = Modifier,
     showLocation: Boolean = true,
     cameraFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
@@ -159,6 +175,9 @@ fun RouteMap(
     // The map listeners are registered once; this keeps them pointing at the
     // current callback instead of the one captured on first composition.
     val longPress = rememberUpdatedState(onLongPress)
+    // Read inside the map's click listener, which outlives this composition.
+    val chargerState = rememberUpdatedState(chargers)
+    val onChargerTap = rememberUpdatedState(onChargerSelected)
     // Which route we've already framed, so we fit once per route and don't
     // fight the user's panning afterward.
     val fitKey = remember { mutableStateOf<Int?>(null) }
@@ -188,10 +207,24 @@ fun RouteMap(
                 map.addOnCameraIdleListener {
                     requestedBounds = runCatching { map.visibleBounds() }.getOrNull()
                 }
-                // Tap a camera dot to see its details.
+                // Tap a charger to add it, or a camera dot to see its details.
+                // Chargers are tested first: they are the smaller, deliberate
+                // target, and a camera dot underneath must not steal the tap.
                 map.addOnMapClickListener { latLng ->
+                    val pt: PointF = runCatching { map.projection.toScreenLocation(latLng) }
+                        .getOrNull() ?: return@addOnMapClickListener false
+
+                    val chargerHit = runCatching {
+                        map.queryRenderedFeatures(pt, CHARGER_LAYER)
+                            .firstNotNullOfOrNull { f -> f.getNumberProperty("chargerId")?.toLong() }
+                    }.getOrNull()
+                    val charger = chargerHit?.let { id -> chargerState.value.firstOrNull { it.id == id } }
+                    if (charger != null) {
+                        onChargerTap.value?.invoke(charger)
+                        return@addOnMapClickListener true
+                    }
+
                     val hit = runCatching {
-                        val pt: PointF = map.projection.toScreenLocation(latLng)
                         map.queryRenderedFeatures(pt, CAMERA_LAYER, PASSED_LAYER)
                             .firstNotNullOfOrNull { f ->
                                 f.getNumberProperty("cameraId")?.toLong()
@@ -250,6 +283,7 @@ fun RouteMap(
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
             renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints, routeCameras)
+            renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey) }
         }
@@ -404,6 +438,31 @@ private fun renderRoute(
                 PropertyFactory.circleColor("#ff5a4d"),
                 PropertyFactory.circleRadius(7f),
                 PropertyFactory.circleStrokeColor("#ffffff"),
+                PropertyFactory.circleStrokeWidth(2f),
+            ),
+        )
+    }
+}
+
+/** Draw the charging sites on offer, as a target big enough to hit while driving. */
+private fun renderChargers(style: Style, chargers: List<MapCharger>) {
+    val features = FeatureCollection.fromFeatures(
+        chargers.map { charger ->
+            Feature.fromGeometry(Point.fromLngLat(charger.lon, charger.lat)).apply {
+                addNumberProperty("chargerId", charger.id)
+            }
+        },
+    )
+    val source = style.getSourceAs<GeoJsonSource>(CHARGER_SOURCE)
+    if (source != null) {
+        source.setGeoJson(features)
+    } else {
+        style.addSource(GeoJsonSource(CHARGER_SOURCE, features))
+        style.addLayer(
+            CircleLayer(CHARGER_LAYER, CHARGER_SOURCE).withProperties(
+                PropertyFactory.circleColor("#35d07f"),
+                PropertyFactory.circleRadius(8f),
+                PropertyFactory.circleStrokeColor("#0b3d24"),
                 PropertyFactory.circleStrokeWidth(2f),
             ),
         )
