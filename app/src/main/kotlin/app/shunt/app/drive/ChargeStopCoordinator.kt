@@ -83,7 +83,12 @@ class ChargeStopCoordinator(
     /** Reads what the car says it's navigating to. Read-only; never wakes it. */
     private val readActiveRoute: suspend () -> ActiveRoute?,
     /** Plans a camera-aware leg, or null when none could be produced. */
-    private val planLeg: suspend (from: GeoPoint, via: List<GeoPoint>, to: Destination) -> DrivePlan?,
+    private val planLeg: suspend (
+        from: GeoPoint,
+        via: List<GeoPoint>,
+        to: Destination,
+        headingDegrees: Double?,
+    ) -> DrivePlan?,
     private val window: ProbeWindow = ProbeWindow(),
     /** How long to let the car settle on a route after re-asserting the destination. */
     private val settleMillis: Long = 8_000,
@@ -147,6 +152,8 @@ class ChargeStopCoordinator(
         destination: Destination,
         remainingStops: List<GeoPoint>,
         steeringChain: List<GeoPoint>,
+        /** The bearing we're travelling on, so a new leg can't start with a U-turn. */
+        headingDegrees: Double? = null,
     ): LegChange {
         lastProbeAt = nowMillis()
         val reasserted = !carHoldsFinalDestination
@@ -173,7 +180,7 @@ class ChargeStopCoordinator(
                 // The car dropped the charging stop (or has finished charging):
                 // the rest of the trip is a straight run to the destination.
                 is Leg.ToChargeStop, is Leg.ParkedAt ->
-                    resumeToDestination(from, remainingStops, destination)
+                    resumeToDestination(from, remainingStops, destination, headingDegrees)
             }
 
             is ChargeProbe.StopInserted -> {
@@ -182,7 +189,7 @@ class ChargeStopCoordinator(
                     // Same charger, same leg — confirmed, put the car back on it.
                     unchanged(reasserted, steeringChain)
                 } else {
-                    startChargeLeg(from, probe.stop)
+                    startChargeLeg(from, probe.stop, headingDegrees)
                 }
             }
         }
@@ -197,9 +204,13 @@ class ChargeStopCoordinator(
         lastProbeAt = nowMillis() - window.parkedIntervalMillis
     }
 
-    private suspend fun startChargeLeg(from: GeoPoint, stop: ChargeStop): LegChange {
+    private suspend fun startChargeLeg(
+        from: GeoPoint,
+        stop: ChargeStop,
+        headingDegrees: Double?,
+    ): LegChange {
         val destination = Destination(stop.name, stop.at)
-        val plan = runCatching { planLeg(from, emptyList(), destination) }.getOrNull()
+        val plan = runCatching { planLeg(from, emptyList(), destination, headingDegrees) }.getOrNull()
             ?: return LegChange.Unroutable(stop)
         leg = Leg.ToChargeStop(stop)
         return LegChange.ToChargeStop(stop, plan)
@@ -209,8 +220,9 @@ class ChargeStopCoordinator(
         from: GeoPoint,
         remainingStops: List<GeoPoint>,
         destination: Destination,
+        headingDegrees: Double?,
     ): LegChange {
-        val plan = runCatching { planLeg(from, remainingStops, destination) }.getOrNull()
+        val plan = runCatching { planLeg(from, remainingStops, destination, headingDegrees) }.getOrNull()
             // Keep the leg as it was: claiming a route we haven't got would be
             // worse than leaving the car pointed at the destination it has.
             ?: return LegChange.None

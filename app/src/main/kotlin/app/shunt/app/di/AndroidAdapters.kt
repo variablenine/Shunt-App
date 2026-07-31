@@ -108,9 +108,25 @@ class AndroidLocationProvider(
 ) : LocationProvider {
 
     override suspend fun currentOrigin(): GeoPoint? =
-        lastKnownLocation() ?: favorites.load().home?.location
+        lastKnownFix()?.let { runCatching { GeoPoint(it.latitude, it.longitude) }.getOrNull() }
+            ?: favorites.load().home?.location
 
-    private fun lastKnownLocation(): GeoPoint? {
+    /**
+     * The bearing we're travelling on, or null unless the fix says we are
+     * genuinely under way. A parked car's last bearing is whatever direction it
+     * happened to stop facing — routing from it would forbid the road behind
+     * for no reason — and a stale fix says nothing about now.
+     */
+    override suspend fun currentHeading(): Double? {
+        val fix = lastKnownFix() ?: return null
+        if (!fix.hasBearing()) return null
+        if (!fix.hasSpeed() || fix.speed < MOVING_METERS_PER_SEC) return null
+        val age = System.currentTimeMillis() - fix.time
+        if (age > MAX_FIX_AGE_MILLIS) return null
+        return fix.bearing.toDouble()
+    }
+
+    private fun lastKnownFix(): android.location.Location? {
         val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
@@ -124,6 +140,13 @@ class AndroidLocationProvider(
                 runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
             }
             .maxByOrNull { it.time }
-            ?.let { runCatching { GeoPoint(it.latitude, it.longitude) }.getOrNull() }
+    }
+
+    private companion object {
+        /** At or above this the car is under way, so its heading means something. */
+        const val MOVING_METERS_PER_SEC = 2.0f
+
+        /** Older than this and "which way am I pointing" is anyone's guess. */
+        const val MAX_FIX_AGE_MILLIS = 30_000L
     }
 }

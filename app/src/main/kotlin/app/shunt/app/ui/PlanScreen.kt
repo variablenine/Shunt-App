@@ -41,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.shunt.app.plan.Destination
@@ -62,6 +63,8 @@ data class VehicleSettingsUi(
     val onClear: () -> Unit,
     val onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
     val onReadCarState: (suspend (token: String, vin: String) -> CarNavState?)? = null,
+    /** Finds out which navigation commands this car obeys. Redirects its nav. */
+    val onProbeNav: (suspend (token: String, vin: String, onLine: (NavProbeLine) -> Unit) -> Unit)? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -82,6 +85,7 @@ class PlanActions(
     val onChargeFirst: () -> Unit,
     val onChargeAlternative: (Int) -> Unit,
     val onRecentSelected: (Int) -> Unit,
+    val onChargerPicked: (GeoPoint) -> Unit,
 )
 
 @Composable
@@ -104,6 +108,11 @@ fun PlanScreen(
             routePolyline = overlay.polyline,
             passedCameras = overlay.passedCameras,
             steeringWaypoints = overlay.waypoints,
+            routeCameras = overlay.nearbyCameras,
+            chargers = state.chargersOnRoute.mapIndexed { index, place ->
+                MapCharger(index.toLong(), place.location.lat, place.location.lon, place.title)
+            },
+            onChargerSelected = { actions.onChargerPicked(it.let { c -> GeoPoint(c.lat, c.lon) }) },
             modifier = Modifier.fillMaxSize(),
             cameraFetcher = cameraViewportFetcher,
             // Only while browsing: a long press mid-drive would abandon the trip.
@@ -133,6 +142,7 @@ fun PlanScreen(
                 onClear = vehicleSettings.onClear,
                 onTestConnection = vehicleSettings.onTestConnection,
                 onReadCarState = vehicleSettings.onReadCarState,
+                onProbeNav = vehicleSettings.onProbeNav,
                 onDismiss = { showVehicleSettings = false },
             )
         }
@@ -184,6 +194,9 @@ private fun SearchAndFavorites(
                 StopsList(state.stops, actions.onRemoveStop)
                 Spacer(Modifier.height(8.dp))
             }
+            // Recents belong to the search box, not to the map screen: they only
+            // appear once it's actually tapped, so an idle screen stays a map.
+            var searchFocused by remember { mutableStateOf(false) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = state.query,
@@ -191,7 +204,9 @@ private fun SearchAndFavorites(
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     placeholder = { Text("Where to?") },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { searchFocused = it.isFocused },
                 )
                 if (onOpenVehicleSettings != null) {
                     IconButton(onClick = onOpenVehicleSettings) {
@@ -223,10 +238,10 @@ private fun SearchAndFavorites(
                 // Distinguish "no such place in the map data" from a silent blank,
                 // so an unmatched query reads as a result, not a broken search.
                 SearchStatus("No matching places found. Try a fuller name or a nearby town.")
-            } else if (state.recents.isNotEmpty()) {
-                // Nothing typed yet: offer where you went last. Typing into a
-                // keyless geocoder is the slowest part of setting off, and this
-                // app is used on the same handful of trips.
+            } else if (searchFocused && state.recents.isNotEmpty()) {
+                // Search box tapped, nothing typed yet: offer where you went
+                // last. Typing into a keyless geocoder is the slowest part of
+                // setting off, and this app is used on the same handful of trips.
                 RecentPlaces(state.recents, actions.onRecentSelected)
             }
 
@@ -370,6 +385,8 @@ private data class RouteOverlay(
     val passedCameras: List<GeoPoint> = emptyList(),
     /** The waypoints the car will be steered through. */
     val waypoints: List<GeoPoint> = emptyList(),
+    /** Cameras near the route, drawn at any zoom so the avoidance is visible. */
+    val nearbyCameras: List<GeoPoint> = emptyList(),
 )
 
 private fun routeOverlay(phase: Phase): RouteOverlay {
@@ -384,6 +401,7 @@ private fun routeOverlay(phase: Phase): RouteOverlay {
             option.polyline,
             option.passedCameras.map { it.location },
             option.waypoints,
+            option.nearbyCameras.map { it.location },
         )
     }
     // The driving phase carries a prebuilt plan (polyline + cameras + chain).

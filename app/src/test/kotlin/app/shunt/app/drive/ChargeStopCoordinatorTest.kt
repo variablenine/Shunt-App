@@ -45,7 +45,8 @@ class ChargeStopCoordinatorTest {
         vehicle: FakeVehicleNavClient,
         clock: Clock = Clock(),
         reads: MutableList<ActiveRoute?>,
-        planLeg: suspend (GeoPoint, List<GeoPoint>, Destination) -> DrivePlan? = { _, _, to -> planFor(to) },
+        planLeg: suspend (GeoPoint, List<GeoPoint>, Destination, Double?) -> DrivePlan? =
+            { _, _, to, _ -> planFor(to) },
     ) = ChargeStopCoordinator(
         vehicle = vehicle,
         readActiveRoute = { reads.removeFirstOrNull() },
@@ -86,7 +87,7 @@ class ChargeStopCoordinatorTest {
     @Test
     fun `a charging stop we cannot route to is reported, not silently accepted`() = runTest {
         val reads = mutableListOf<ActiveRoute?>(navigatingTo(charger))
-        val subject = coordinator(FakeVehicleNavClient(), reads = reads, planLeg = { _, _, _ -> null })
+        val subject = coordinator(FakeVehicleNavClient(), reads = reads, planLeg = { _, _, _, _ -> null })
 
         val change = assertIs<LegChange.Unroutable>(subject.check(here, destination, emptyList(), emptyList()))
 
@@ -176,7 +177,7 @@ class ChargeStopCoordinatorTest {
         val subject = coordinator(
             FakeVehicleNavClient(),
             reads = reads,
-            planLeg = { _, via, to -> sawVia = via; planFor(to) },
+            planLeg = { _, via, to, _ -> sawVia = via; planFor(to) },
         )
         subject.check(here, destination, emptyList(), emptyList())
 

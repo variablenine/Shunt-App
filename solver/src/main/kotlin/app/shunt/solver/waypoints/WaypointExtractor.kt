@@ -3,6 +3,7 @@ package app.shunt.solver.waypoints
 import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
+import app.shunt.solver.geo.PolylineIndex
 import app.shunt.solver.geo.pointToPolyline
 import app.shunt.solver.geo.pointToSegmentMeters
 
@@ -27,34 +28,65 @@ import app.shunt.solver.geo.pointToSegmentMeters
  *     hardest away from that shortcut, and re-check. This spends the limited
  *     waypoint budget where it actually prevents exposure.
  *
- * The budget itself is a real constraint: the vehicle API takes a bounded chain,
- * and the fallback path sends one rate-limited command per waypoint. [MAX_WAYPOINTS]
- * is deliberately conservative. **The vehicle's true limit is unverified** — it
- * needs testing against a real car.
+ * There is no fixed budget: a route gets as many pins as it needs. See
+ * [NO_LIMIT] for why a cap did more harm than good, and what bounds the count
+ * instead. Callers may still pass an explicit cap.
  */
 object WaypointExtractor {
     /**
-     * Upper bound on intermediate waypoints. Conservative: the exact number the
-     * vehicle accepts is not yet confirmed on real hardware, and the fallback
-     * path costs one rate-limited command each.
+     * No fixed budget: a route gets the pins it needs and no more.
+     *
+     * There used to be a cap of 8, on the theory that the vehicle takes a
+     * bounded chain. It doesn't work that way — a car that requires signed
+     * commands accepts one destination at a time, so pins go out one by one as
+     * the drive progresses and the only cost is a rate-limited command each,
+     * spread over hours. Meanwhile a cap does real harm: it is spent on
+     * whichever stretches happen to be checked first and starves the rest of
+     * the trip, so a long route ends up unpinned exactly where it matters.
+     *
+     * What bounds the count instead is the route itself. A pin is always an
+     * actual point on the line, every insertion strictly shortens the stretch
+     * it splits, and a stretch too short to hold one is left alone — so the
+     * process runs out of places to put pins long before it runs out of route.
      */
-    const val MAX_WAYPOINTS = 8
+    const val NO_LIMIT = Int.MAX_VALUE
 
     /** Chosen-route points farther than this from the fastest route count as divergent. */
     const val DIVERGENCE_THRESHOLD_METERS = 50.0
+
+    /**
+     * Pins closer together than this are pointless. The car cannot meaningfully
+     * deviate inside a few hundred metres, so a second pin there constrains
+     * nothing — it just costs another command and clutters the map, which is
+     * what the dense clusters along the route were.
+     */
+    const val MIN_PIN_SPACING_METERS = 800.0
 
     fun extract(
         chosen: List<GeoPoint>,
         fastest: List<GeoPoint>,
         avoid: List<CameraVision> = emptyList(),
-        maxWaypoints: Int = MAX_WAYPOINTS,
+        maxWaypoints: Int = NO_LIMIT,
         thresholdMeters: Double = DIVERGENCE_THRESHOLD_METERS,
     ): List<GeoPoint> {
         if (chosen.size < 2 || fastest.size < 2) return emptyList()
 
         val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
         val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints)
-        return pinned.map { chosen[it] }
+        return spaceOut(pinned.map { chosen[it] })
+    }
+
+    /**
+     * Drop pins that sit on top of one another. Keeps the first of each cluster
+     * — the earliest is the one that actually forces the turn.
+     */
+    internal fun spaceOut(pins: List<GeoPoint>): List<GeoPoint> {
+        val kept = mutableListOf<GeoPoint>()
+        for (pin in pins) {
+            val last = kept.lastOrNull()
+            if (last == null || haversineMeters(last, pin) >= MIN_PIN_SPACING_METERS) kept += pin
+        }
+        return kept
     }
 
     /** Indices of the most divergent point of each stretch off the fastest route. */
@@ -78,8 +110,13 @@ object WaypointExtractor {
             }
         }
 
+        // Indexed: this used to compare every point of one route against every
+        // segment of the other, which on two forty-thousand-point lines is over
+        // a billion distance calculations and was the single slowest thing in a
+        // long plan.
+        val fastestIndex = PolylineIndex(fastest)
         for (i in chosen.indices) {
-            val d = pointToPolyline(chosen[i], fastest).distanceMeters
+            val d = fastestIndex.distanceMeters(chosen[i])
             if (d > thresholdMeters) {
                 if (runStart < 0) runStart = i
                 if (d > peakDistance) { peakDistance = d; peakIndex = i }
@@ -92,7 +129,7 @@ object WaypointExtractor {
 
         return runs
             .sortedByDescending { it.lengthMeters }
-            .take(maxWaypoints)
+            .let { if (maxWaypoints == NO_LIMIT) it else it.take(maxWaypoints) }
             .map { it.peakIndex }
             .sorted() // restore route order
     }
@@ -120,7 +157,9 @@ object WaypointExtractor {
         // first and last shortcuts.
         val pins = (listOf(0) + shape + listOf(chosen.lastIndex)).distinct().toMutableList()
 
-        var budget = maxWaypoints - shape.size
+        // Unlimited means "as many as the shortcuts demand"; the loop still ends
+        // when there is no shortcut left to close.
+        var budget = if (maxWaypoints == NO_LIMIT) Int.MAX_VALUE else maxWaypoints - shape.size
         var madeProgress = true
         while (budget > 0 && madeProgress) {
             madeProgress = false

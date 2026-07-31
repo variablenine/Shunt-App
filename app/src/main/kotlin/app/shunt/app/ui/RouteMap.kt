@@ -82,6 +82,16 @@ data class MapCamera(
     val subtitle: String?,
 )
 
+/**
+ * A charging site the user can tap to put on the trip.
+ *
+ * The automatic pick uses range arithmetic that is only as good as the numbers
+ * behind it — a derate, a reserve, a guess at what a stop puts back. When it
+ * picks nothing, or picks somewhere the driver knows is a bad idea, being able
+ * to point at one on the map is the fallback that always works.
+ */
+data class MapCharger(val id: Long, val lat: Double, val lon: Double, val title: String)
+
 /** Plain dark background style used when no basemap URL is configured or it fails to load. */
 private const val BLANK_STYLE =
     """{"version":8,"sources":{},"layers":[{"id":"bg","type":"background","paint":{"background-color":"#161826"}}]}"""
@@ -98,11 +108,21 @@ private const val CONE_LAYER = "camera-cones-fill"
 // The subset of cameras the chosen route passes near — drawn brighter, on top.
 private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
+private const val CHARGER_SOURCE = "route-chargers"
+private const val CHARGER_LAYER = "route-charger-dots"
+private const val NEARBY_SOURCE = "route-nearby-cameras"
+private const val NEARBY_LAYER = "route-nearby-camera-dots"
 private const val WAYPOINT_SOURCE = "route-waypoints"
 private const val WAYPOINT_LAYER = "route-waypoint-dots"
 
-/** Above this viewport span (~44 km) we don't fetch cameras — too many, too zoomed out. */
-private const val MAX_VIEWPORT_SPAN_DEG = 0.4
+/**
+ * Above this viewport span (~330 km) we stop fetching cameras for the visible
+ * area. It used to cut off at ~44 km, which meant that zooming out far enough
+ * to see a whole trip made every camera vanish — the exact moment you most want
+ * to see what the route is dodging. The tiles are cached and shared with the
+ * router, so a wide view costs little beyond the drawing.
+ */
+private const val MAX_VIEWPORT_SPAN_DEG = 3.0
 
 /**
  * MapLibre map (never the Google Maps SDK) showing the chosen route, the
@@ -121,6 +141,17 @@ fun RouteMap(
      * the camera-avoiding line rather than its own idea of the route.
      */
     steeringWaypoints: List<GeoPoint> = emptyList(),
+    /**
+     * Every camera near the planned route, drawn whatever the zoom. Without
+     * these a camera-free route looks identical to a route with nothing around
+     * it, and there is no way to see what the detour actually bought without
+     * zooming in and panning along the whole line.
+     */
+    routeCameras: List<GeoPoint> = emptyList(),
+    /** Charging sites along the route, tappable to add one as a stop. */
+    chargers: List<MapCharger> = emptyList(),
+    /** Called with the charger the user tapped. */
+    onChargerSelected: ((MapCharger) -> Unit)? = null,
     modifier: Modifier = Modifier,
     showLocation: Boolean = true,
     cameraFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
@@ -144,6 +175,9 @@ fun RouteMap(
     // The map listeners are registered once; this keeps them pointing at the
     // current callback instead of the one captured on first composition.
     val longPress = rememberUpdatedState(onLongPress)
+    // Read inside the map's click listener, which outlives this composition.
+    val chargerState = rememberUpdatedState(chargers)
+    val onChargerTap = rememberUpdatedState(onChargerSelected)
     // Which route we've already framed, so we fit once per route and don't
     // fight the user's panning afterward.
     val fitKey = remember { mutableStateOf<Int?>(null) }
@@ -173,10 +207,24 @@ fun RouteMap(
                 map.addOnCameraIdleListener {
                     requestedBounds = runCatching { map.visibleBounds() }.getOrNull()
                 }
-                // Tap a camera dot to see its details.
+                // Tap a charger to add it, or a camera dot to see its details.
+                // Chargers are tested first: they are the smaller, deliberate
+                // target, and a camera dot underneath must not steal the tap.
                 map.addOnMapClickListener { latLng ->
+                    val pt: PointF = runCatching { map.projection.toScreenLocation(latLng) }
+                        .getOrNull() ?: return@addOnMapClickListener false
+
+                    val chargerHit = runCatching {
+                        map.queryRenderedFeatures(pt, CHARGER_LAYER)
+                            .firstNotNullOfOrNull { f -> f.getNumberProperty("chargerId")?.toLong() }
+                    }.getOrNull()
+                    val charger = chargerHit?.let { id -> chargerState.value.firstOrNull { it.id == id } }
+                    if (charger != null) {
+                        onChargerTap.value?.invoke(charger)
+                        return@addOnMapClickListener true
+                    }
+
                     val hit = runCatching {
-                        val pt: PointF = map.projection.toScreenLocation(latLng)
                         map.queryRenderedFeatures(pt, CAMERA_LAYER, PASSED_LAYER)
                             .firstNotNullOfOrNull { f ->
                                 f.getNumberProperty("cameraId")?.toLong()
@@ -234,7 +282,8 @@ fun RouteMap(
             if (showLocation && hasLocationPermission && !locationActivated.value) {
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
-            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints)
+            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints, routeCameras)
+            renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey) }
         }
@@ -314,7 +363,27 @@ private fun renderRoute(
     polyline: List<GeoPoint>,
     passed: List<GeoPoint>,
     waypoints: List<GeoPoint> = emptyList(),
+    nearby: List<GeoPoint> = emptyList(),
 ) {
+    // Cameras near the route but not on it — what the detour is avoiding. Drawn
+    // first so the passed ones and the pins sit on top.
+    val nearbyFeatures = FeatureCollection.fromFeatures(
+        nearby.map { Feature.fromGeometry(Point.fromLngLat(it.lon, it.lat)) },
+    )
+    val nearbySource = style.getSourceAs<GeoJsonSource>(NEARBY_SOURCE)
+    if (nearbySource != null) {
+        nearbySource.setGeoJson(nearbyFeatures)
+    } else {
+        style.addSource(GeoJsonSource(NEARBY_SOURCE, nearbyFeatures))
+        style.addLayer(
+            CircleLayer(NEARBY_LAYER, NEARBY_SOURCE).withProperties(
+                PropertyFactory.circleColor("#ffb020"),
+                PropertyFactory.circleRadius(4f),
+                PropertyFactory.circleOpacity(0.85f),
+            ),
+        )
+    }
+
     if (polyline.size >= 2) {
         val line = Feature.fromGeometry(
             LineString.fromLngLats(polyline.map { Point.fromLngLat(it.lon, it.lat) }),
@@ -369,6 +438,31 @@ private fun renderRoute(
                 PropertyFactory.circleColor("#ff5a4d"),
                 PropertyFactory.circleRadius(7f),
                 PropertyFactory.circleStrokeColor("#ffffff"),
+                PropertyFactory.circleStrokeWidth(2f),
+            ),
+        )
+    }
+}
+
+/** Draw the charging sites on offer, as a target big enough to hit while driving. */
+private fun renderChargers(style: Style, chargers: List<MapCharger>) {
+    val features = FeatureCollection.fromFeatures(
+        chargers.map { charger ->
+            Feature.fromGeometry(Point.fromLngLat(charger.lon, charger.lat)).apply {
+                addNumberProperty("chargerId", charger.id)
+            }
+        },
+    )
+    val source = style.getSourceAs<GeoJsonSource>(CHARGER_SOURCE)
+    if (source != null) {
+        source.setGeoJson(features)
+    } else {
+        style.addSource(GeoJsonSource(CHARGER_SOURCE, features))
+        style.addLayer(
+            CircleLayer(CHARGER_LAYER, CHARGER_SOURCE).withProperties(
+                PropertyFactory.circleColor("#35d07f"),
+                PropertyFactory.circleRadius(8f),
+                PropertyFactory.circleStrokeColor("#0b3d24"),
                 PropertyFactory.circleStrokeWidth(2f),
             ),
         )

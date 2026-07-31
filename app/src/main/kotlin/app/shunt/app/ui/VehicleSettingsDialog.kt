@@ -14,12 +14,15 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -45,6 +48,11 @@ fun VehicleSettingsDialog(
     onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
     /** Reads what the car currently thinks it's navigating to. Read-only. */
     onReadCarState: (suspend (token: String, vin: String) -> CarNavState?)? = null,
+    /**
+     * Tries every navigation channel against the car and reports which ones it
+     * actually obeys. NOT read-only — it redirects the car's navigation.
+     */
+    onProbeNav: (suspend (token: String, vin: String, onLine: (NavProbeLine) -> Unit) -> Unit)? = null,
 ) {
     var token by remember { mutableStateOf(currentToken) }
     var vin by remember { mutableStateOf(currentVin) }
@@ -54,7 +62,10 @@ fun VehicleSettingsDialog(
     var navState by remember { mutableStateOf<CarNavState?>(null) }
     var readingNav by remember { mutableStateOf(false) }
     var navRead by remember { mutableStateOf(false) }
+    var probing by remember { mutableStateOf(false) }
+    val probeLines = remember { mutableStateListOf<NavProbeLine>() }
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -153,6 +164,41 @@ fun VehicleSettingsDialog(
                         },
                     ) { Text(if (readingNav) "Reading…" else "What is my car navigating to?") }
                     if (navRead) CarNavStateText(navState)
+                }
+
+                if (onProbeNav != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Navigation command probe",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        "Sends every kind of navigation command to your car in turn and " +
+                            "reads back where it actually ends up aiming — the only way to " +
+                            "find out what this car really accepts. It WILL change what your " +
+                            "car is navigating to, several times, so run it parked. Takes " +
+                            "about a minute.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(
+                        enabled = token.isNotBlank() && vin.isNotBlank() && !probing,
+                        onClick = {
+                            probing = true
+                            probeLines.clear()
+                            scope.launch {
+                                onProbeNav(token, vin) { probeLines += it }
+                                probing = false
+                            }
+                        },
+                    ) { Text(if (probing) "Probing…" else "Probe navigation commands") }
+
+                    probeLines.forEach { NavProbeLineText(it) }
+                    if (probeLines.isNotEmpty() && !probing) {
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(reportOf(probeLines))) }) {
+                            Text("Copy report")
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(14.dp))
@@ -288,4 +334,43 @@ private fun CarNavStateText(state: CarNavState?) {
         style = MaterialTheme.typography.labelSmall,
         color = scheme.onSurfaceVariant,
     )
+}
+
+/**
+ * One channel's result from the navigation probe, flattened for display.
+ * [landed] is the only line that matters: it means the car's own state moved to
+ * the point this channel sent, which an HTTP success on its own never proves.
+ */
+data class NavProbeLine(
+    val channel: String,
+    val sent: String,
+    val verdict: String,
+    val landed: Boolean,
+    val detail: String,
+)
+
+@Composable
+private fun NavProbeLineText(line: NavProbeLine) {
+    Spacer(Modifier.height(6.dp))
+    Text(
+        "${if (line.landed) "\u2713" else "\u00d7"} ${line.channel}",
+        style = MaterialTheme.typography.labelMedium,
+        color = if (line.landed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        line.verdict,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** The whole run as plain text, for pasting somewhere it can be acted on. */
+private fun reportOf(lines: List<NavProbeLine>): String = buildString {
+    appendLine("Shunt navigation command probe")
+    for (line in lines) {
+        appendLine()
+        appendLine("${line.channel}: ${line.verdict}")
+        appendLine("  sent: ${line.sent}")
+        appendLine("  response: ${line.detail}")
+    }
 }
