@@ -60,7 +60,7 @@ class PlanViewModelTest {
         scope: kotlinx.coroutines.CoroutineScope,
         suggestions: List<Suggestion> = emptyList(),
         outcome: PlanOutcome = routes(fastest),
-        planner: RoutePlanner = RoutePlanner { _, _ -> outcome },
+        planner: RoutePlanner = RoutePlanner { _, _, _ -> outcome },
         tileDownloader: TileDownloader = TileDownloader { _, _, _ -> true },
         originValue: GeoPoint? = origin,
         freshness: Freshness = Freshness.NETWORK,
@@ -132,7 +132,7 @@ class PlanViewModelTest {
     fun `search failure surfaces instead of blanking silently`() = runTest {
         val model = PlanViewModel(
             search = { _, _ -> throw java.io.IOException("offline") },
-            planner = { _, _ -> routes(fastest) },
+            planner = { _, _, _ -> routes(fastest) },
             tileDownloader = { _, _, _ -> true },
             location = { origin },
             cameras = { Freshness.NETWORK },
@@ -183,7 +183,7 @@ class PlanViewModelTest {
 
     @Test
     fun `planning progress reaches the solving phase for the progress bar`() = runTest {
-        val planner = RoutePlanner { _, onProgress ->
+        val planner = RoutePlanner { _, onProgress, _ ->
             onProgress(0.3f, "Planning routes")
             onProgress(0.85f, "Checking the final route for cameras")
             routes(fastest)
@@ -228,7 +228,7 @@ class PlanViewModelTest {
     @Test
     fun `a missing tile is downloaded automatically, then routes without a prompt`() = runTest {
         var calls = 0
-        val planner = RoutePlanner { _, _ ->
+        val planner = RoutePlanner { _, _, _ ->
             calls++
             if (calls == 1) PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) else routes(fastest)
         }
@@ -250,7 +250,7 @@ class PlanViewModelTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            planner = { _, _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> false },
         )
         model.onQueryChange("X"); advanceUntilIdle()
@@ -267,7 +267,7 @@ class PlanViewModelTest {
         val model = vm(
             this,
             suggestions = listOf(Suggestion("X", dest, "place")),
-            planner = { _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
+            planner = { _, _, _ -> PlanOutcome.NeedsDownload(listOf(TileId(-100, 35))) },
             tileDownloader = { _, _, _ -> true },
         )
         model.onQueryChange("X"); advanceUntilIdle()
@@ -476,7 +476,7 @@ class PlanViewModelTest {
     @Test
     fun `a stop is queued without routing, then routed through in order`() = runTest {
         var plannedPoints: List<GeoPoint>? = null
-        val planner = RoutePlanner { points, _ -> plannedPoints = points; routes(fastest) }
+        val planner = RoutePlanner { points, _, _ -> plannedPoints = points; routes(fastest) }
         val stop = GeoPoint(39.6, -97.95)
         val model = vm(
             this,

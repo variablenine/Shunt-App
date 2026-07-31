@@ -186,18 +186,25 @@ class PlanViewModel(
             return
         }
         val stops = _state.value.stops.map { it.location }
+        // Planning while already rolling: the route has to leave the way the car
+        // is pointing. Null when parked, which leaves every direction open.
+        val heading = runCatching { location.currentHeading() }.getOrNull()
         val outcome = runCatching {
-            planner.plan(listOf(origin) + stops + destination.location) { progress, step ->
-                // Only advance the bar while this plan is still the live phase.
-                _state.update { state ->
-                    val solving = state.phase as? Phase.Solving
-                    if (solving?.destination == destination) {
-                        state.copy(phase = solving.copy(progress = progress, step = step))
-                    } else {
-                        state
+            planner.plan(
+                points = listOf(origin) + stops + destination.location,
+                onProgress = { progress, step ->
+                    // Only advance the bar while this plan is still the live phase.
+                    _state.update { state ->
+                        val solving = state.phase as? Phase.Solving
+                        if (solving?.destination == destination) {
+                            state.copy(phase = solving.copy(progress = progress, step = step))
+                        } else {
+                            state
+                        }
                     }
-                }
-            }
+                },
+                headingDegrees = heading,
+            )
         }.getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
         when (outcome) {
             is PlanOutcome.Routes -> {

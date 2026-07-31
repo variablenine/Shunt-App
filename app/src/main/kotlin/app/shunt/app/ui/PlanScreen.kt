@@ -63,6 +63,8 @@ data class VehicleSettingsUi(
     val onClear: () -> Unit,
     val onTestConnection: (suspend (String) -> VehicleCheckResult)? = null,
     val onReadCarState: (suspend (token: String, vin: String) -> CarNavState?)? = null,
+    /** Finds out which navigation commands this car obeys. Redirects its nav. */
+    val onProbeNav: (suspend (token: String, vin: String, onLine: (NavProbeLine) -> Unit) -> Unit)? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -140,6 +142,7 @@ fun PlanScreen(
                 onClear = vehicleSettings.onClear,
                 onTestConnection = vehicleSettings.onTestConnection,
                 onReadCarState = vehicleSettings.onReadCarState,
+                onProbeNav = vehicleSettings.onProbeNav,
                 onDismiss = { showVehicleSettings = false },
             )
         }

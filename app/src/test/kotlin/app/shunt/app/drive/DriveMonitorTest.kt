@@ -151,7 +151,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
             onPlanChanged = { published += it },
         ).run(
             routedPlan().copy(destinationOnly = true, steerByWaypoints = true),
@@ -179,7 +179,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
         ).run(
             DrivePlan(Destination("Home", dest), plain, emptyList(), routeLine, steerByWaypoints = true),
             flowOf(*departure().toTypedArray()),
@@ -233,7 +233,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = alerter,
-            replan = { from ->
+            replan = { from, _ ->
                 replannedFrom = from
                 DrivePlan(Destination("Home", dest), freshChain, emptyList(), freshChain)
             },
@@ -267,7 +267,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { from -> DrivePlan(Destination("Home", dest), plain, emptyList(), listOf(from, dest)) },
+            replan = { from, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), listOf(from, dest)) },
         ).run(unpinned, flowOf(*departure().toTypedArray()))
 
         assertTrue(
@@ -286,7 +286,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         assertEquals(
@@ -304,7 +304,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         assertEquals(
@@ -323,11 +323,46 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = RecordingAlerter(),
-            replan = { fresh },
+            replan = { _, _ -> fresh },
             onPlanChanged = { published += it },
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         assertEquals(listOf(fresh), published, "the new route must reach the screen")
+    }
+
+    @Test
+    fun `a re-plan while under way is given the direction of travel`() = runTest {
+        // The bug this prevents: a re-plan that answers "turn round and go back
+        // to the road you just left". At 60 mph that isn't a route.
+        var seenHeading: Double? = null
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { _, heading ->
+                seenHeading = heading
+                DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
+            },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(90.0, seenHeading, "the fix's own bearing must reach the router")
+    }
+
+    @Test
+    fun `a re-plan while stopped is given no direction at all`() = runTest {
+        // A parked car's last bearing is just the way it happened to come to
+        // rest; holding a new route to it would rule out the road behind.
+        var seenHeading: Double? = 123.0
+        val stopped = departure().map { it.copy(speedMetersPerSec = 0.0) }
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { _, heading ->
+                seenHeading = heading
+                DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
+            },
+        ).run(routedPlan(), flowOf(*stopped.toTypedArray()))
+
+        assertEquals(null, seenHeading, "a stationary bearing must not constrain the route")
     }
 
     @Test
@@ -336,7 +371,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = alerter,
-            replan = { null }, // e.g. camera data unavailable out here
+            replan = { _, _ -> null }, // e.g. camera data unavailable out here
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         val failed = alerter.alerts.filterIsInstance<Alert.ReplanFailed>().single()
@@ -366,7 +401,7 @@ class DriveMonitorTest {
     ) = ChargeStopCoordinator(
         vehicle = vehicle,
         readActiveRoute = { reads.removeFirstOrNull() },
-        planLeg = { _, _, to -> if (to.location == charger) chargerPlan else null },
+        planLeg = { _, _, to, _ -> if (to.location == charger) chargerPlan else null },
         // Cadence is covered in ChargeStopCoordinatorTest; here every fix is
         // due so the test is about what the monitor does with the answer.
         window = ProbeWindow(readIntervalMillis = 0, minIntervalMillis = 0),
@@ -467,7 +502,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = alerter,
-            replan = { from ->
+            replan = { from, _ ->
                 DrivePlan(Destination("Home", dest), listOf(dest), listOf(onNewRoute), listOf(from, dest))
             },
         ).run(routedPlan(), flowOf(*fixes.toTypedArray()))

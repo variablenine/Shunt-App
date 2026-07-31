@@ -126,6 +126,7 @@ class MainActivity : ComponentActivity() {
                         onClear = container.vehicleCredentials::clear,
                         onTestConnection = { token -> container.checkVehicleToken(token) },
                         onReadCarState = { t, v -> container.readCarNavState(t, v) },
+                        onProbeNav = { t, v, onLine -> container.probeNavCommands(t, v, onLine) },
                     ),
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,

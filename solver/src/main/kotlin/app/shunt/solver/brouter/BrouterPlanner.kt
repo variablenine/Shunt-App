@@ -58,7 +58,11 @@ sealed interface PlanOutcome {
  * without a real tile on disk.
  */
 class BrouterPlanner(
-    private val route: suspend (points: List<GeoPoint>, cameras: List<CameraVision>) -> List<BrouterRoute>,
+    private val route: suspend (
+        points: List<GeoPoint>,
+        cameras: List<CameraVision>,
+        headingDegrees: Double?,
+    ) -> List<BrouterRoute>,
     private val missingTiles: (BoundingBox) -> List<TileId>,
     private val camerasIn: suspend (BoundingBox) -> List<Camera>,
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
@@ -74,7 +78,8 @@ class BrouterPlanner(
         origin: GeoPoint,
         destination: GeoPoint,
         onProgress: (Float, String) -> Unit = { _, _ -> },
-    ): PlanOutcome = plan(listOf(origin, destination), onProgress)
+        headingDegrees: Double? = null,
+    ): PlanOutcome = plan(listOf(origin, destination), onProgress, headingDegrees)
 
     /**
      * Plan through [points]: origin, any intermediate stops in order, then the
@@ -85,6 +90,12 @@ class BrouterPlanner(
     suspend fun plan(
         points: List<GeoPoint>,
         onProgress: (Float, String) -> Unit = { _, _ -> },
+        /**
+         * The bearing the vehicle is travelling on, when it is moving. Routes
+         * then set off the way the car is already pointing rather than
+         * doubling back. Null when parked or unknown.
+         */
+        headingDegrees: Double? = null,
     ): PlanOutcome {
         require(points.size >= 2) { "a trip needs at least an origin and a destination" }
         val baseBbox = BoundingBox.of(points).expand(bboxMarginMeters)
@@ -110,7 +121,8 @@ class BrouterPlanner(
 
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.3f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
-            routes = runRoutes(points, cameras) ?: return PlanOutcome.Failed("Routing failed.")
+            routes = runRoutes(points, cameras, headingDegrees)
+                ?: return PlanOutcome.Failed("Routing failed.")
             if (routes.isEmpty()) return noRoute()
 
             val actual = routeBbox(routes)
@@ -202,7 +214,7 @@ class BrouterPlanner(
 
     /** How the car would drive [from] to [to]: fastest, no camera avoidance. */
     private suspend fun carPathBetween(from: GeoPoint, to: GeoPoint): List<GeoPoint>? =
-        runCatching { route(listOf(from, to), emptyList()) }
+        runCatching { route(listOf(from, to), emptyList(), null) }
             .getOrNull()
             ?.firstOrNull()
             ?.polyline
@@ -225,9 +237,10 @@ class BrouterPlanner(
     private suspend fun runRoutes(
         points: List<GeoPoint>,
         cameras: List<Camera>,
+        headingDegrees: Double? = null,
     ): List<BrouterRoute>? {
         val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
-        return runCatching { route(points, visions) }.getOrNull()
+        return runCatching { route(points, visions, headingDegrees) }.getOrNull()
     }
 
     /**

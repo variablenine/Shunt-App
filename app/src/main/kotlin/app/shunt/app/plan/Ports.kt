@@ -30,10 +30,15 @@ fun interface PlaceNamer {
  * movement rather than an unexplained wait.
  */
 fun interface RoutePlanner {
-    /** [points] is origin, any stops in order, then the destination. */
+    /**
+     * [points] is origin, any stops in order, then the destination.
+     * [headingDegrees] is the bearing the car is travelling on when it's
+     * moving, so a route can't be answered with a U-turn; null when parked.
+     */
     suspend fun plan(
         points: List<GeoPoint>,
         onProgress: (Float, String) -> Unit,
+        headingDegrees: Double?,
     ): PlanOutcome
 }
 
@@ -54,6 +59,14 @@ fun interface TileDownloader {
 fun interface LocationProvider {
     /** Best available origin, or null if none is known yet. */
     suspend fun currentOrigin(): GeoPoint?
+
+    /**
+     * The bearing the vehicle is travelling on right now, or null when it is
+     * parked or the fix carries no usable heading. Planning while rolling
+     * should set off the way the car is pointing; planning while stopped has
+     * no such constraint, and inventing one would rule out the road behind.
+     */
+    suspend fun currentHeading(): Double? = null
 }
 
 /** Warms and reports camera-data freshness for an area (called on app open). */

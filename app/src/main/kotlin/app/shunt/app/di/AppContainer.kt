@@ -77,8 +77,8 @@ class AppContainer(context: Context) {
         profileDir = brouterProfileDir,
     )
     private val brouterPlanner = BrouterPlanner(
-        route = { points, cams ->
-            withContext(Dispatchers.Default) { brouterRouter.route(points, cams) }
+        route = { points, cams, heading ->
+            withContext(Dispatchers.Default) { brouterRouter.route(points, cams, heading) }
         },
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
         camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
@@ -131,6 +131,60 @@ class AppContainer(context: Context) {
                 estimatedRangeMiles = it.estimatedRangeMiles,
             )
         }
+
+    /**
+     * Try every navigation channel against the car and report which it obeys.
+     *
+     * This is the experiment behind the whole waypoint design: Shunt steers pin
+     * by pin because the chain commands appeared unsupported, but that was only
+     * ever seen through one path. Each channel is sent for real and the car's
+     * own state read back, so the answer comes from the car rather than from
+     * inference. It redirects the car's navigation — the dialog says so.
+     *
+     * The two probe points are derived from wherever the phone is now, so
+     * nothing about anyone's regular destinations is involved.
+     */
+    suspend fun probeNavCommands(
+        token: String,
+        vin: String,
+        onLine: (app.shunt.app.ui.NavProbeLine) -> Unit,
+    ) {
+        val origin = locationProvider.currentOrigin()
+        if (origin == null) {
+            onLine(
+                app.shunt.app.ui.NavProbeLine(
+                    channel = "probe",
+                    sent = "",
+                    verdict = "No location yet — the probe needs somewhere nearby to aim at.",
+                    landed = false,
+                    detail = "",
+                ),
+            )
+            return
+        }
+        // Two points a few km out on different bearings: near enough to be sane
+        // destinations, far enough apart that the read-back can tell them apart.
+        val a = app.shunt.solver.geo.destinationPoint(origin, 45.0, PROBE_NEAR_METERS)
+        val b = app.shunt.solver.geo.destinationPoint(origin, 135.0, PROBE_FAR_METERS)
+        val probe = app.shunt.tesla.NavCapabilityProbe(
+            http = http,
+            bearerToken = token,
+            vin = vin,
+            account = tessieAccount,
+        )
+        runCatching { probe.run(a, b) { onLine(it.toLine()) } }
+            .onFailure { e ->
+                onLine(
+                    app.shunt.app.ui.NavProbeLine(
+                        channel = "probe",
+                        sent = "",
+                        verdict = "Stopped: ${e.message ?: e.toString()}",
+                        landed = false,
+                        detail = "",
+                    ),
+                )
+            }
+    }
 
     /**
      * Credentials in force: what the user entered, else anything baked in at
@@ -221,13 +275,15 @@ class AppContainer(context: Context) {
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         search = SuggestionSearch { query, at -> placeSearch.suggest(query, at) },
-        planner = RoutePlanner { points, onProgress ->
+        planner = RoutePlanner { points, onProgress, heading ->
             // The whole plan, not just the routing engine. Camera counting and
             // waypoint extraction are heavy geometry over routes tens of
             // thousands of points long, and they were running on the caller's
             // thread — which is the main one — so a long trip froze the UI and
             // tripped Android's "isn't responding" dialog.
-            withContext(Dispatchers.Default) { brouterPlanner.plan(points, onProgress) }.also { outcome ->
+            withContext(Dispatchers.Default) {
+                brouterPlanner.plan(points, onProgress, heading)
+            }.also { outcome ->
                 // Keep the tiles we actually route through fresh against eviction.
                 if (outcome is app.shunt.solver.brouter.PlanOutcome.Routes) {
                     val bbox = BoundingBox.of(points)
@@ -289,7 +345,8 @@ class AppContainer(context: Context) {
     suspend fun replanFrom(
         from: app.shunt.core.GeoPoint,
         destination: app.shunt.app.plan.Destination,
-    ): DrivePlan? = planLeg(from, emptyList(), destination)
+        headingDegrees: Double? = null,
+    ): DrivePlan? = planLeg(from, emptyList(), destination, headingDegrees)
 
     /**
      * A camera-aware plan from [from] through [via] to [destination]. Used both
@@ -302,9 +359,13 @@ class AppContainer(context: Context) {
         from: app.shunt.core.GeoPoint,
         via: List<app.shunt.core.GeoPoint>,
         destination: app.shunt.app.plan.Destination,
+        /** Bearing of travel, so a mid-drive leg can't begin with a U-turn. */
+        headingDegrees: Double? = null,
     ): DrivePlan? {
         val points = listOf(from) + via + destination.location
-        val outcome = runCatching { brouterPlanner.plan(points) }.getOrNull()
+        val outcome = runCatching {
+            brouterPlanner.plan(points, headingDegrees = headingDegrees)
+        }.getOrNull()
         val chosen = (outcome as? app.shunt.solver.brouter.PlanOutcome.Routes)
             ?.options
             // Prefer the camera-free option when the detour exists; that is the
@@ -351,7 +412,7 @@ class AppContainer(context: Context) {
         return app.shunt.app.drive.ChargeStopCoordinator(
             vehicle = vehicleNavClient,
             readActiveRoute = { tessieAccount.activeRoute(credentials.token, credentials.vin) },
-            planLeg = { from, via, to -> planLeg(from, via, to) },
+            planLeg = { from, via, to, heading -> planLeg(from, via, to, heading) },
         )
     }
 
@@ -382,6 +443,10 @@ class AppContainer(context: Context) {
     }
 
     private companion object {
+        /** How far out the navigation probe aims its two test points. */
+        const val PROBE_NEAR_METERS = 3_000.0
+        const val PROBE_FAR_METERS = 6_000.0
+
         /** Warm camera cache within this radius of the origin on app open. */
         const val CAMERA_WARM_RADIUS_METERS = 5_000.0
 
@@ -390,6 +455,16 @@ class AppContainer(context: Context) {
 
     }
 }
+
+/** A probe result flattened for the settings dialog. */
+private fun app.shunt.tesla.NavCapabilityProbe.Step.toLine(): app.shunt.app.ui.NavProbeLine =
+    app.shunt.app.ui.NavProbeLine(
+        channel = channel,
+        sent = sent,
+        verdict = verdict + (carDestinationName?.let { " (car says: $it)" } ?: ""),
+        landed = landed,
+        detail = response,
+    )
 
 /** A DeFlock/OSM camera reduced to what the map needs, with a friendly label. */
 private fun Camera.toMapCamera(): MapCamera {

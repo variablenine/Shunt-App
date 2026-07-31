@@ -29,7 +29,7 @@ class DriveMonitor(
      * when it has left the planned route, or null if it can't. Absent, leaving
      * the route is still detected and alerted — just not recovered from.
      */
-    private val replan: (suspend (from: GeoPoint) -> DrivePlan?)? = null,
+    private val replan: (suspend (from: GeoPoint, headingDegrees: Double?) -> DrivePlan?)? = null,
     /**
      * Watches for a charging stop the *car* inserts on its own and re-plans the
      * trip as legs around it. Null leaves the behaviour exactly as before: one
@@ -60,6 +60,9 @@ class DriveMonitor(
         var previous: LocationUpdate? = null
         try {
             locations.takeWhile { !arrived }.collect { update ->
+                // Worked out before `previous` moves on, so it compares this fix
+                // with the one before it rather than with itself.
+                val heading = headingOf(previous, update)
                 for (signal in engine.onLocation(update)) {
                     when (signal) {
                         is DriveSignal.ApproachingWaypoint -> advance(signal.remaining)
@@ -74,7 +77,11 @@ class DriveMonitor(
                             // force, and the driver must know that immediately
                             // rather than after a re-plan that may fail.
                             alerter.alert(Alert.OffRoute(signal.metersOffRoute, replanning = replan != null))
-                            replanFrom(signal.at, current)?.let { fresh ->
+                            // Re-plan from the direction of travel, not just the
+                            // position. Without it the answer can be "turn round"
+                            // — which on a road you've just committed to is not
+                            // an answer at all.
+                            replanFrom(signal.at, current, heading)?.let { fresh ->
                                 current = fresh
                                 engine = newEngine(fresh)
                             }
@@ -120,6 +127,7 @@ class DriveMonitor(
                     destination = finalDestination,
                     remainingStops = engine.remainingStops(),
                     steeringChain = engine.remainingChain(),
+                    headingDegrees = heading,
                 )
                 applyLeg(change, finalDestination)?.let { fresh ->
                     current = fresh
@@ -174,9 +182,13 @@ class DriveMonitor(
      * in which case the driver has already been told they're off route and is
      * additionally told that no avoidance is active.
      */
-    private suspend fun replanFrom(from: GeoPoint, previous: DrivePlan): DrivePlan? {
+    private suspend fun replanFrom(
+        from: GeoPoint,
+        previous: DrivePlan,
+        headingDegrees: Double?,
+    ): DrivePlan? {
         val doReplan = replan ?: return null
-        val planned = runCatching { doReplan(from) }.getOrNull()
+        val planned = runCatching { doReplan(from, headingDegrees) }.getOrNull()
         if (planned == null) {
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
             return null
@@ -202,6 +214,15 @@ class DriveMonitor(
         onPlanChanged(fresh)
         return fresh
     }
+
+    /**
+     * The bearing to route from: the fix's own heading while under way, null
+     * when stopped. A parked car's last heading is just the way it happened to
+     * come to rest, and holding a new route to it would rule out the road
+     * behind for no reason.
+     */
+    private fun headingOf(previous: LocationUpdate?, update: LocationUpdate): Double? =
+        if (isMoving(previous, update)) update.bearingDegrees else null
 
     /**
      * Whether the car is under way. A Tesla doesn't work out its charging stops
