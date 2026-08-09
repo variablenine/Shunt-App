@@ -73,6 +73,12 @@ class DriveMonitor(
                             ),
                         )
                         is DriveSignal.OffRoute -> {
+                            // Whether this is the one where Shunt gives up has
+                            // to be decided before the alert goes out, not
+                            // after: telling the driver "re-planning" and then
+                            // immediately handing them the car is the sort of
+                            // contradiction that gets read as a malfunction.
+                            val givingUp = !stoodDown && replan != null && tooManyReplans()
                             // Say it first and unconditionally: from here the
                             // camera avoidance is void until a new route is in
                             // force, and the driver must know that immediately
@@ -80,9 +86,10 @@ class DriveMonitor(
                             alerter.alert(
                                 Alert.OffRoute(
                                     signal.metersOffRoute,
-                                    replanning = replan != null && !stoodDown,
+                                    replanning = replan != null && !stoodDown && !givingUp,
                                 ),
                             )
+                            if (givingUp) standDown()
                             // Re-plan from the direction of travel, not just the
                             // position. Without it the answer can be "turn round"
                             // — which on a road you've just committed to is not
@@ -198,10 +205,6 @@ class DriveMonitor(
     ): DrivePlan? {
         if (stoodDown) return null
         val doReplan = replan ?: return null
-        if (tooManyReplans()) {
-            standDown()
-            return null
-        }
         val planned = runCatching { doReplan(from, headingDegrees) }.getOrNull()
         if (planned == null) {
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
