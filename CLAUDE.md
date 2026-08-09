@@ -442,9 +442,23 @@ guards now bound it rather than fix it:
   in the breakdown, because a chooser that quietly comes back short reads as
   Shunt deciding there was no camera-free route.
 
-What has *not* been tried, in descending order of expected value and risk:
-running the independent avoidance passes concurrently (BRouter thread-safety is
-unknown, and a wrong route from a data race is far worse than a slow one), and
+**On running the passes concurrently** — the biggest remaining lever, and no
+longer an unknown. Looked at properly: `btools.router.ProfileCache` is the only
+mutable static state on the routing path, its entry points are `synchronized`,
+and it carries a `profilesBusy` flag whose *only* purpose is to stop two threads
+sharing one profile context. BRouter's own design anticipates concurrent
+routing. The cache defaults to one slot, so a second concurrent pass re-parses
+the profile rather than corrupting anything; `ProfileCache.setSize(n)` removes
+even that cost.
+
+So the blocker is not correctness, it is **memory**: each engine builds its own
+`NodesCache` over the tiles, and on a cross-state trip that is large. Two
+concurrent passes on a phone is plausible; three is not obviously so. Anyone
+picking this up should cap the concurrency at two, and measure resident memory
+on a real device before going further — an OOM mid-plan is a worse failure than
+a slow plan.
+
+What else has *not* been tried, in descending order of expected value and risk:
 narrowing the corridor further (it is 60 km; tightening it risks re-introducing
 widens on exactly the long detours that made the fewest-cameras option good).
 Pin refinement is no longer the bottleneck, so doing it lazily — the

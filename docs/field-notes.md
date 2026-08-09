@@ -295,10 +295,12 @@ Two hypotheses worth separating when that breakdown arrives:
   since a camera-free route into a dense metro may not exist — and the trip is
   paying for two exhaustive searches. A failed blocked search is the worst case
   there is: it explores everything reachable before concluding nothing works.
-- **No fallback, just large numbers.** Then it is raw scale, and the levers are
-  concurrency across the independent passes (BRouter thread-safety unknown, and
-  a wrong route from a data race would be far worse than a slow one) or a
-  tighter corridor.
+- **No fallback, just large numbers.** Then it is raw scale. The lever is
+  concurrency, and its safety is now established rather than assumed — see
+  CLAUDE.md §7. BRouter's `ProfileCache` is synchronized and carries a
+  `profilesBusy` flag specifically to keep two threads off one profile context,
+  so the engine expects concurrent use. The real constraint is phone memory:
+  each engine builds its own tile cache. Cap at two and measure.
 
 **The first attempt at a budget did nothing**, and the reason is worth keeping.
 It checked the clock *between* passes — but a BRouter search is a tight CPU loop
