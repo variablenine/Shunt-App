@@ -93,6 +93,13 @@ class AndroidAlerter(private val context: Context) : Alerter {
             "Back on the route",
             "Camera avoidance applies again.",
         )
+        Alert.StoodDown -> Triple(
+            OFF_ROUTE_NOTIF,
+            "Shunt has stopped steering — the car is yours",
+            "The route and the road kept disagreeing, so Shunt is no longer " +
+                "sending anything to the car. Navigate it however you like. " +
+                "Camera warnings carry on.",
+        )
         is Alert.ReachedStop -> Triple(
             ARRIVED_NOTIF,
             "Stop reached",

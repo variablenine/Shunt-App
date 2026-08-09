@@ -213,6 +213,68 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `re-planning that turns into a fight hands the car back to the driver`() = runTest {
+        // The closed-road loop, from a real drive: the route wants a road the
+        // driver will not take, so leaving it re-plans, the re-plan is pushed,
+        // the car turns back towards that road, and the driver leaves it again.
+        // Each turn of the loop overrode what the driver had just done on the
+        // car's own screen; the only escape was cancelling navigation in the
+        // app. Shunt has to lose that argument.
+        val alerter = RecordingAlerter()
+        val vehicle = FakeVehicleNavClient()
+        var replans = 0
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = alerter,
+            // Always answers with the same line the car is already off — which
+            // is what a closure looks like from in here.
+            replan = { _, _ ->
+                replans++
+                DrivePlan(Destination("Home", dest), chain, emptyList(), routeLine)
+            },
+        ).run(
+            routedPlan(),
+            flowOf(*List(80) { fix(north(GeoPoint(33.0, -96.995), 300.0)) }.toTypedArray()),
+        )
+
+        assertEquals(
+            1,
+            alerter.alerts.count { it is Alert.StoodDown },
+            "must hand the car back, once, rather than keep re-planning",
+        )
+        assertTrue(replans <= 3, "must stop re-planning, not merely stop pushing: $replans")
+    }
+
+    @Test
+    fun `once stood down, nothing further is sent to the car`() = runTest {
+        // Standing down has to mean the car is genuinely the driver's. A monitor
+        // that stops re-planning but keeps advancing waypoints is still fighting.
+        val alerter = RecordingAlerter()
+        val vehicle = FakeVehicleNavClient()
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = alerter,
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), chain, emptyList(), routeLine) },
+        ).run(
+            routedPlan(),
+            flowOf(*List(80) { fix(north(GeoPoint(33.0, -96.995), 300.0)) }.toTypedArray()),
+        )
+
+        val stoodDownAt = alerter.alerts.indexOfFirst { it is Alert.StoodDown }
+        assertTrue(stoodDownAt >= 0, "this test is meaningless unless it stood down")
+        assertTrue(
+            alerter.alerts.drop(stoodDownAt).none { it is Alert.Replanned },
+            "no route may be put in force after handing the car back",
+        )
+        assertTrue(
+            alerter.alerts.filterIsInstance<Alert.OffRoute>().last().replanning == false,
+            "and it must stop telling the driver it is re-planning",
+        )
+    }
+
+    @Test
     fun `leaving the route warns that camera avoidance no longer applies`() = runTest {
         val alerter = RecordingAlerter()
         // No re-planner wired: detection alone must still be loud and honest.

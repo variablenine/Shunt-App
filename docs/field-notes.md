@@ -121,10 +121,39 @@ stretch* rather than the whole remaining route, and let it expire with the plan
 — a road closed this afternoon is open tomorrow, and Shunt has nowhere to
 persist that belief and no business trying.
 
-**Not yet known, and it changes the design:** what "did not cope well" was.
-A re-plan that turned the car around, a re-plan straight back onto the closed
-road, no re-plan at all, or alerting that would not stop are four different
-bugs. Worth pinning down before building.
+**What "did not cope well" actually was** (maintainer, 2026-08-09), and it is
+worse than any of the guesses above:
+
+> It kept sending the waypoint back to my car repeatedly every time it
+> rerouted, so when I tried to override it on my car it would override me
+> trying to override it, until I cancelled the navigation in the app.
+
+Plus: it kept routing back onto the closed road, and the alerts would not stop.
+
+So this is not only a routing bug. **Shunt was fighting the driver for control
+of their own car and winning.** The loop: the route wants the closed road →
+driver leaves it → off-route → re-plan → push → the car turns back toward the
+closed road → driver leaves it again. Every turn of that loop overwrote whatever
+the driver had just set on the car's own screen, and the only way out was to
+cancel navigation in the app — which is not something anyone should have to work
+out while driving.
+
+**Fixed: Shunt now stands down.** More than three re-plans in five minutes and
+it stops commanding the car entirely and says so once — no more re-plans, no
+more pushes, no waypoint advancement. Camera warnings continue, because they
+cost the car nothing and are the half of Shunt that still works when the route
+has lost the argument. It is deliberately one-way for the rest of the drive:
+Shunt cannot observe "the road stopped being closed", so there is nothing that
+should re-earn control automatically.
+
+Three is well above what an ordinary drive produces — a missed turn re-plans
+once — and well below the number of overrides it takes for a driver to notice
+they are being fought.
+
+**Still not done:** not routing back onto the abandoned stretch in the first
+place (design above), and reviewing the alert cadence, which the maintainer
+also flagged. Standing down bounds the damage from both; it does not fix
+either.
 
 ### F-4 · Long routes take minutes to plan
 *Observed: pre-2026-08 build. Partly addressed — needs re-measuring.*

@@ -229,6 +229,38 @@ will drive it *routes the leg the way the car will* (no avoidance) and checks
 whether that path enters a camera our route avoids; where it does, it puts a pin
 just past the point the two paths diverge. This is empirical on purpose.
 
+### 6.1 The driver always wins
+
+The hardest lesson from real driving, and the one most likely to be undone by a
+well-meaning change: **Shunt must never fight the driver for control of the
+car.**
+
+It did. The route wanted a road that was closed; the driver refused it; Shunt
+re-planned, pushed the new route, and the car turned back toward the closure.
+Every push overwrote what the driver had just set on the car's own screen, and
+the loop only ended when they cancelled navigation in the app.
+
+What makes this class of bug dangerous is that every individual step is
+reasonable. Detecting off-route is right. Re-planning is right. Pushing the new
+route is right. The failure is only visible from outside the loop — and from the
+driver's seat it reads as the app refusing to let go.
+
+So `DriveMonitor` **stands down**: more than `MAX_REPLANS_IN_WINDOW` re-plans
+inside `REPLAN_WINDOW_MILLIS` and it stops commanding the car altogether — no
+re-plans, no pushes, no waypoint advancement — and says so once. Camera warnings
+continue, because they cost the car nothing.
+
+Two properties worth preserving if you touch this:
+
+- **Standing down is one-way for the drive.** Shunt cannot observe the road
+  becoming passable, so nothing should silently re-earn control.
+- **It covers every path that talks to the car**, not just re-planning. A
+  monitor that stopped re-planning but kept advancing waypoints would still be
+  fighting.
+
+Anything added later that can push to the vehicle on a timer or a signal —
+charging probes included — has to respect the same flag.
+
 ### It doesn't plan charging until it's put into drive
 
 Reading at the moment Go is tapped always answers "no charging stop". The check
@@ -287,14 +319,15 @@ them, and add new observations as they come in. Detail lives in
    Still possible, and the reason to keep this open: the `share` fallback in §6
    hands the car a string it resolves itself. `docs/field-notes.md` describes
    the read-back experiment that would settle it.
-3. **A closed road was routed onto, and leaving it was handled badly.** *Half
-   done.* Re-planning now respects the direction of travel while moving — the
-   GPS bearing reaches BRouter's `startDirection`, so a re-plan can't answer
-   with a U-turn (and is null when parked, where the bearing is noise). What is
-   **not** done: nothing stops a re-plan routing straight back onto the stretch
-   the driver just abandoned, which on a closed road is a loop.
-   `docs/field-notes.md` carries the design for the missing half, and the
-   question that should be answered before building it.
+3. **A closed road was routed onto, and Shunt fought the driver over it.** The
+   route wanted a closed road, so leaving it re-planned, pushed, and turned the
+   car back — overriding what the driver had just set on the car's own screen,
+   over and over, until they cancelled navigation in the app.
+
+   **This is the most important thing on this list**, and not really a routing
+   bug. See §6.1 below. Two halves are fixed — direction of travel on a re-plan,
+   and standing down — and two are not: not routing back onto the abandoned
+   stretch, and the alert cadence. `docs/field-notes.md` has both designs.
 4. **Long routes are far too slow to plan.** A 5-hour route can take ~5 minutes.
    That is unusable in the real world, and actively dangerous where mid-drive
    re-planning is involved. *Partly addressed* — see below; needs re-measuring

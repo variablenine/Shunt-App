@@ -42,6 +42,7 @@ class DriveMonitor(
      * follows the new line while the map still shows the abandoned one.
      */
     private val onPlanChanged: (DrivePlan) -> Unit = {},
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
     /**
      * Whether the car is being steered pin by pin (see [DrivePlan.steerByWaypoints]).
@@ -76,7 +77,12 @@ class DriveMonitor(
                             // camera avoidance is void until a new route is in
                             // force, and the driver must know that immediately
                             // rather than after a re-plan that may fail.
-                            alerter.alert(Alert.OffRoute(signal.metersOffRoute, replanning = replan != null))
+                            alerter.alert(
+                                Alert.OffRoute(
+                                    signal.metersOffRoute,
+                                    replanning = replan != null && !stoodDown,
+                                ),
+                            )
                             // Re-plan from the direction of travel, not just the
                             // position. Without it the answer can be "turn round"
                             // — which on a road you've just committed to is not
@@ -109,7 +115,10 @@ class DriveMonitor(
                         }
                     }
                 }
-                if (arrived || charging == null) {
+                // Standing down has to cover the charging probe too. It re-asserts
+                // the destination to ask its question, which is exactly the kind
+                // of push the driver was fighting.
+                if (arrived || charging == null || stoodDown) {
                     previous = update
                     return@collect
                 }
@@ -187,7 +196,12 @@ class DriveMonitor(
         previous: DrivePlan,
         headingDegrees: Double?,
     ): DrivePlan? {
+        if (stoodDown) return null
         val doReplan = replan ?: return null
+        if (tooManyReplans()) {
+            standDown()
+            return null
+        }
         val planned = runCatching { doReplan(from, headingDegrees) }.getOrNull()
         if (planned == null) {
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
@@ -213,6 +227,39 @@ class DriveMonitor(
         alerter.alert(Alert.Replanned(fresh.cameras.size))
         onPlanChanged(fresh)
         return fresh
+    }
+
+    /**
+     * True once Shunt has given the car back to the driver. One-way: nothing in
+     * a drive re-earns the right to start commanding the car again, because the
+     * condition that triggered it — the road and the route disagreeing — is not
+     * something Shunt can observe getting better.
+     */
+    private var stoodDown = false
+
+    /** When each re-plan happened, newest last, trimmed to the window. */
+    private val replanTimes = ArrayDeque<Long>()
+
+    /**
+     * Whether re-planning has become a fight.
+     *
+     * Off-route, re-plan, push, the car turns back towards a road the driver is
+     * refusing, off-route again — each turn of that loop overrides whatever the
+     * driver just did on the car's own screen. Counting the turns is enough to
+     * recognise it, and does not require guessing why the road was refused.
+     */
+    private fun tooManyReplans(): Boolean {
+        val now = nowMillis()
+        replanTimes.addLast(now)
+        while (replanTimes.isNotEmpty() && now - replanTimes.first() > REPLAN_WINDOW_MILLIS) {
+            replanTimes.removeFirst()
+        }
+        return replanTimes.size > MAX_REPLANS_IN_WINDOW
+    }
+
+    private suspend fun standDown() {
+        stoodDown = true
+        alerter.alert(Alert.StoodDown)
     }
 
     /**
@@ -254,6 +301,7 @@ class DriveMonitor(
 
     /** Send a whole route to the car, alerting loudly if it doesn't land. */
     private suspend fun push(chain: List<GeoPoint>) {
+        if (stoodDown) return
         val sending = aim(chain)
         val pushed = runCatching { vehicle.pushRoute(sending) }
             .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
@@ -263,6 +311,7 @@ class DriveMonitor(
     }
 
     private suspend fun advance(remaining: List<GeoPoint>) {
+        if (stoodDown) return
         val sending = aim(remaining)
         val result = runCatching { vehicle.advanceTo(sending) }
             .getOrElse { e -> PushResult.Failed("advance threw: ${e.message}", retryable = true) }
@@ -273,6 +322,15 @@ class DriveMonitor(
     }
 
     private companion object {
+        /**
+         * How many re-plans in [REPLAN_WINDOW_MILLIS] before Shunt gives the car
+         * back. Three is comfortably more than an ordinary drive produces — a
+         * missed turn re-plans once — and well short of the number it takes for
+         * a driver to realise they are being overruled.
+         */
+        const val MAX_REPLANS_IN_WINDOW = 3
+        const val REPLAN_WINDOW_MILLIS = 5 * 60_000L
+
         /** At or above this the car is under way, so its trip planner has run. */
         const val MOVING_METERS_PER_SEC = 2.0
 

@@ -136,6 +136,26 @@ sealed interface Alert {
     }
 
     /**
+     * Shunt has stopped commanding the car and handed it back to the driver.
+     *
+     * Raised when re-planning keeps happening in quick succession, which means
+     * the route and the road disagree — a closure, a turn the car won't take,
+     * or a driver who has decided to go their own way. Whatever the cause, the
+     * loop it produces is the same: Shunt re-plans, pushes the new route, the
+     * car turns back towards a road the driver is refusing, the driver leaves
+     * it again. A driver trying to take over on the car's own screen loses that
+     * fight every time, and the only way out was to cancel navigation in the
+     * app.
+     *
+     * The driver wins. Camera warnings continue, because they cost the car
+     * nothing and are the half of Shunt that still works here; nothing further
+     * is sent to the vehicle.
+     */
+    data object StoodDown : Alert {
+        override val severity get() = Severity.URGENT
+    }
+
+    /**
      * The car inserted a charging stop of its own and Shunt is now driving a
      * camera-aware route to it. Worth saying out loud: the trip the driver
      * asked for has quietly grown a leg they didn't plan.
