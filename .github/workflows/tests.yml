@@ -1,0 +1,55 @@
+name: Unit tests
+
+# The JVM test suites — the ones that cover routing, camera geometry, waypoint
+# placement, charging, and the vehicle client. Until this existed, CI ran an
+# emulator smoke test and a release build and nothing else, so a change could
+# break every test in the project and still show a green tick.
+#
+# That matters more than usual here: work lands straight on main and the
+# resulting APK is what gets installed and driven. A red suite has to be visible
+# before the build is.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  jvm:
+    name: JVM unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # :app's unit tests need the Android SDK; :core, :solver and :tesla don't.
+      - uses: android-actions/setup-android@v3
+
+      - name: Run the unit tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :core:test :solver:test :tesla:test :app:testDebugUnitTest --no-daemon
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: |
+            core/build/reports/tests/
+            solver/build/reports/tests/
+            tesla/build/reports/tests/
+            app/build/reports/tests/
+          if-no-files-found: ignore
