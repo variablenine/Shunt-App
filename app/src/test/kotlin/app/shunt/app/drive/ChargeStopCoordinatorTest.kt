@@ -45,12 +45,14 @@ class ChargeStopCoordinatorTest {
         vehicle: FakeVehicleNavClient,
         clock: Clock = Clock(),
         reads: MutableList<ActiveRoute?>,
+        steering: Boolean = false,
         planLeg: suspend (GeoPoint, List<GeoPoint>, Destination, Double?) -> DrivePlan? =
             { _, _, to, _ -> planFor(to) },
     ) = ChargeStopCoordinator(
         vehicle = vehicle,
         readActiveRoute = { reads.removeFirstOrNull() },
         planLeg = planLeg,
+        steering = steering,
         // No real waiting: the settle delay is virtual under runTest anyway,
         // but skipping it keeps the tests about the decisions.
         pause = {},
@@ -349,5 +351,91 @@ class ChargeStopCoordinatorTest {
         )
         assertEquals(destination.location, change.plan.destination.location)
         assertEquals(Leg.ToDestination, subject.leg)
+    }
+
+    // --- Steering pin by pin ------------------------------------------------
+    //
+    // A car that takes one destination can still be made to follow a shaped
+    // route, by being aimed at the next pin and having that aim moved along. It
+    // is also the case where the car is most likely to insert a Supercharger,
+    // because these are the long trips. The two have to work at once.
+
+    private val nextPin = GeoPoint(39.05, -98.5)
+    private val steeredChain = listOf(nextPin, destination.location)
+
+    @Test
+    fun `while steering, a check re-asserts the destination instead of reading the pin`() = runTest {
+        // The bug: a steered car names the pin we gave it. Read that for free
+        // and we read back our own instruction, which says nothing about
+        // charging — so the watch looks alive and reports nothing, forever.
+        val vehicle = FakeVehicleNavClient()
+        val reads = mutableListOf<ActiveRoute?>(navigatingTo(charger, "Supercharger Anytown"))
+        val subject = coordinator(vehicle, reads = reads, steering = true)
+
+        val change = assertIs<LegChange.ToChargeStop>(
+            subject.check(here, destination, emptyList(), steeredChain),
+            "the charger the car inserted must be found while steering too",
+        )
+
+        assertEquals(charger, change.stop.at)
+        assertEquals(
+            listOf(destination.location),
+            assertIs<FakeVehicleNavClient.Call.PushRoute>(vehicle.calls().first()).waypoints,
+            "asking has to cost a re-assert — a free read would only describe the pin",
+        )
+    }
+
+    @Test
+    fun `while steering, an unchanged verdict puts the steering back`() = runTest {
+        // The re-assert points the car at the destination to ask the question.
+        // Leaving it there abandons the shaped route without saying so.
+        val vehicle = FakeVehicleNavClient()
+        val reads = mutableListOf<ActiveRoute?>(navigatingTo(destination.location))
+        val subject = coordinator(vehicle, reads = reads, steering = true)
+
+        val change = subject.check(here, destination, emptyList(), steeredChain)
+
+        assertEquals(LegChange.None, change)
+        assertEquals(
+            steeredChain,
+            assertIs<FakeVehicleNavClient.Call.AdvanceTo>(vehicle.calls().last()).waypoints,
+            "the last thing the car is told must be the steering chain, not the destination",
+        )
+    }
+
+    @Test
+    fun `a steered car that names our own pin is not a charging stop`() = runTest {
+        // Our re-assert has not landed yet, so the car still reports the pin we
+        // pushed. Treating that as an inserted charger would announce a
+        // "charging leg" to a point on the driver's own route.
+        val vehicle = FakeVehicleNavClient()
+        val reads = mutableListOf<ActiveRoute?>(navigatingTo(nextPin))
+        val subject = coordinator(vehicle, reads = reads, steering = true)
+
+        val change = subject.check(here, destination, emptyList(), steeredChain)
+
+        assertEquals(LegChange.None, change, "our own pin echoed back says nothing")
+        assertEquals(Leg.ToDestination, subject.leg)
+    }
+
+    @Test
+    fun `a steered car waits out the redirect interval, not the free-read one`() = runTest {
+        // Free reads fire every 45s because they cost nothing. While steering
+        // they cost a redirect, so they have to be rationed like one — a minute
+        // in, the un-steered car is due and the steered one must not be.
+        val clock = Clock()
+        val steered = coordinator(FakeVehicleNavClient(), clock, mutableListOf(), steering = true)
+        val holding = coordinator(FakeVehicleNavClient(), clock, mutableListOf(), steering = false)
+        clock.now += 60_000
+
+        fun due(subject: ChargeStopCoordinator) = subject.isCheckDue(
+            moving = true,
+            metersToNextWaypoint = 20_000.0,
+            metersToNearestCamera = 20_000.0,
+            offRoute = false,
+        )
+
+        assertTrue(due(holding), "a car holding the destination is asked for free and often")
+        assertTrue(!due(steered), "a steered car must not be redirected on the free-read cadence")
     }
 }

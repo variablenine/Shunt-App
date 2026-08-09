@@ -403,21 +403,31 @@ class AppContainer(context: Context) {
 
     /**
      * Watches for charging stops the car inserts by itself, or null when that
-     * can't mean anything: no credentials (nothing to read), a car that took
-     * the full shaped chain (its active route just echoes our own waypoints),
-     * or a trip being steered pin by pin — the car is aimed a few miles up the
-     * road rather than at the destination, so anything it says about charging
-     * is about that pin and not about the trip. Steering is only chosen when
-     * the trip has range to spare, so there is nothing to watch for.
+     * can't mean anything: no credentials (nothing to read), or a car that took
+     * the full shaped chain, whose active route just echoes our own waypoints.
+     *
+     * A trip being steered pin by pin used to be excluded too, on the grounds
+     * that the car is aimed a few miles up the road and so says nothing about
+     * the trip. The first half of that is true and the conclusion was not: it
+     * means the question costs a re-assert instead of being free, which
+     * [ChargeStopCoordinator] already knows how to do and already rations. What
+     * the exclusion actually bought was silence — on exactly the long trips
+     * where the car inserts a Supercharger, Shunt watched for one only when it
+     * happened not to be steering, which is to say almost never.
+     *
+     * The old reasoning leaned on steering being chosen only when the trip has
+     * range to spare. That gate treats an unknown range as plenty, and "not
+     * short" includes tight; neither is a promise the car won't stop to charge.
      */
     fun chargeStopCoordinator(plan: DrivePlan): app.shunt.app.drive.ChargeStopCoordinator? {
-        if (!plan.destinationOnly || plan.steerByWaypoints) return null
+        if (!plan.destinationOnly) return null
         val credentials = effectiveCredentials()
         if (!credentials.isConfigured) return null
         return app.shunt.app.drive.ChargeStopCoordinator(
             vehicle = vehicleNavClient,
             readActiveRoute = { tessieAccount.activeRoute(credentials.token, credentials.vin) },
             planLeg = { from, via, to, heading -> planLeg(from, via, to, heading) },
+            steering = plan.steerByWaypoints,
         )
     }
 

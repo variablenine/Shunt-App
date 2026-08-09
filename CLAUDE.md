@@ -262,11 +262,14 @@ not theory. Keep this list current — mark items fixed with the commit that fix
 them, and add new observations as they come in. Detail lives in
 [docs/field-notes.md](docs/field-notes.md).
 
-1. **Charging re-route does not fire on long trips.** Sending a long-distance
-   destination shows the route, but the car simply navigates to the final
-   destination and Shunt never notices when the car inserts a Supercharger. The
-   intended behaviour — detect the inserted charger, then navigate to it via a
-   camera-avoided leg — is not happening.
+1. **Charging re-route does not fire on long trips.** *Cause found, fix landed,
+   unconfirmed on a real drive.* Sending a long-distance destination showed the
+   route, but the car simply navigated to the final destination and Shunt never
+   noticed the inserted Supercharger. The watch was switched off entirely
+   whenever the trip was being steered pin by pin — which is most long trips.
+   See `AppContainer.chargeStopCoordinator()` and the `steering` flag on
+   `ChargeStopCoordinator`; a steered car is now probed the rationed way rather
+   than not at all.
 2. **A waypoint on the phone map can send the car somewhere else nearby.** Worse
    when the next waypoint is *behind* where the car has already driven. The
    maintainer notes this resembles the old Google-Maps-share-to-Tesla failure,

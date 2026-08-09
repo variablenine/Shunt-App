@@ -19,7 +19,8 @@ place. Describe the *shape* of the problem ("a long trip that needed charging",
 ## Open
 
 ### F-1 · Charging re-route does not fire on long trips
-*Observed: pre-2026-08 build, several long drives.*
+*Observed: pre-2026-08 build, several long drives. Cause found; fix landed,
+awaiting a real drive to confirm.*
 
 Expected: send a long destination, the car inserts a Supercharger, Shunt sees
 that, and re-navigates to the charger via a camera-avoided leg — arriving there
@@ -28,10 +29,29 @@ is a leg end, not the trip's end.
 Actual: the app shows the route, but the car just navigates to the final
 destination. Shunt never updates when the car routes through a Supercharger.
 
-Notes: `ChargeStopCoordinator` implements the intended behaviour, so the
-question is why it never runs or never concludes. `AppContainer.chargeStopCoordinator()`
-returns null in several cases; the range gate treats *unknown* range as "plenty",
-which is the wrong default for exactly the long trips where charging matters.
+**Cause.** `AppContainer.chargeStopCoordinator()` returned null whenever the
+trip was being steered pin by pin, so on those trips nothing watched for a
+charging stop at all. The reasoning was that a steered car is aimed a few miles
+up the road and so cannot answer a question about the trip. That much is true —
+but the conclusion did not follow. It means the question costs a *re-assert*
+(hand the car the destination, read, put the steering back) rather than being
+free, and the coordinator already implements and rations exactly that.
+
+It was propped up by a second assumption: that steering is only chosen when the
+trip has range to spare. The gate for that treats an *unknown* range as plenty,
+and "not short" includes tight. Neither is a promise the car won't stop to
+charge — and long trips are precisely where it will.
+
+**Fix.** The coordinator is now told whether the trip is being steered, and
+treats a steered car as one that does not hold the destination — so checks go
+down the rationed re-assert path instead of the free-read path that could only
+ever read back our own pin.
+
+Surfaced while fixing it: when the car answered "going straight to the
+destination", the coordinator returned "nothing changed" without restoring the
+steering chain — leaving the car pointed at the final destination and the shaped
+route silently abandoned. Only reachable while steering, which is why it had
+never been reachable at all.
 
 ### F-2 · A waypoint can send the car to a different nearby location
 *Observed: pre-2026-08 build.*

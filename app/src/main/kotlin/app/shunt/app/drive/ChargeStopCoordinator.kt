@@ -90,6 +90,22 @@ class ChargeStopCoordinator(
         headingDegrees: Double?,
     ) -> DrivePlan?,
     private val window: ProbeWindow = ProbeWindow(),
+    /**
+     * True when the car is being steered pin by pin rather than holding the
+     * trip's destination.
+     *
+     * It changes what a read *means*, which is why it has to be known here. A
+     * car aimed at the destination can be asked about charging for free, because
+     * anything it names other than the destination is its own insertion. A car
+     * aimed at a pin two miles up the road will name that pin, and reading it
+     * tells us nothing about the trip — so the question has to be asked the
+     * expensive way, by handing back the destination, reading, and putting the
+     * steering back.
+     *
+     * Getting this wrong is silent: the free read looks like it is working and
+     * simply never reports a charging stop.
+     */
+    private val steering: Boolean = false,
     /** How long to let the car settle on a route after re-asserting the destination. */
     private val settleMillis: Long = 8_000,
     private val pause: suspend (Long) -> Unit = { delay(it) },
@@ -115,8 +131,12 @@ class ChargeStopCoordinator(
      * True while the car is aimed at the trip's real destination, so a check
      * needs no push at all — every push collapses to a single destination, and
      * that destination is already the right one.
+     *
+     * Being steered pin by pin disqualifies it however settled the leg looks:
+     * what the car holds then is our own next pin, not the destination.
      */
-    private val carHoldsFinalDestination: Boolean get() = leg is Leg.ToDestination
+    private val carHoldsFinalDestination: Boolean
+        get() = leg is Leg.ToDestination && !steering
 
     /** The charger being driven to right now, or null when heading for the destination. */
     fun chargeStopUnderWay(): ChargeStop? = (leg as? Leg.ToChargeStop)?.stop
@@ -176,7 +196,12 @@ class ChargeStopCoordinator(
             ChargeProbe.Unknown -> unchanged(reasserted, steeringChain)
 
             ChargeProbe.DirectToDestination -> when (leg) {
-                is Leg.ToDestination -> LegChange.None
+                // Nothing to change — but if we redirected the car to find that
+                // out, it is now pointing at the destination and the shaped
+                // route has quietly been abandoned. Only reachable while
+                // steering, which is why it went unnoticed until steering could
+                // be probed at all.
+                is Leg.ToDestination -> unchanged(reasserted, steeringChain)
                 // The car dropped the charging stop (or has finished charging):
                 // the rest of the trip is a straight run to the destination.
                 is Leg.ToChargeStop, is Leg.ParkedAt ->
