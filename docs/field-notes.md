@@ -94,15 +94,37 @@ different point, it is re-resolving the string and the fix is to stop using
 `share` for shaping — not to nudge the coordinates.
 
 ### F-3 · A closed road was routed onto, and leaving it went badly
-*Observed: pre-2026-08 build.*
+*Observed: pre-2026-08 build. Half addressed.*
 
 The route used a road that was closed. Once the driver left it, the app did not
 cope well.
 
 Two separate needs fall out of this:
-- Re-planning must respect the **direction of travel** while moving. An answer
-  that begins with a U-turn is not an answer at 60 mph.
-- A road the driver cannot actually use needs to stop being offered.
+
+- **Direction of travel on a re-plan — done.** An answer that begins with a
+  U-turn is not an answer at 60 mph. The GPS fix's bearing now flows from
+  `DriveLocationUpdates` through `DriveMonitor.headingOf` (null when stopped, so
+  a parked car's noise bearing can't pin the route) into `BrouterRouter`, which
+  sets BRouter's `startDirection` with `forceUseStartDirection`. Shipped in the
+  work merged 2026-08-09.
+- **A road the driver cannot use should stop being offered — not done.** After
+  going off-route there is nothing stopping the re-plan from routing straight
+  back onto the stretch just abandoned, which on a closed road is a loop.
+
+**Design for the missing half**, so it can be picked up cold. Give
+`BrouterRouter.route` an explicit list of points to treat as impassable,
+separate from cameras (cameras are field-of-view shapes; this is a plain
+blocked circle), thread it through `BrouterPlanner.plan` and
+`AppContainer.replanFrom`, and have `DriveMonitor` pass the portion of the old
+route immediately ahead of where the driver left it. Keep it to the *abandoned
+stretch* rather than the whole remaining route, and let it expire with the plan
+— a road closed this afternoon is open tomorrow, and Shunt has nowhere to
+persist that belief and no business trying.
+
+**Not yet known, and it changes the design:** what "did not cope well" was.
+A re-plan that turned the car around, a re-plan straight back onto the closed
+road, no re-plan at all, or alerting that would not stop are four different
+bugs. Worth pinning down before building.
 
 ### F-4 · Long routes take minutes to plan
 *Observed: pre-2026-08 build. Partly addressed — needs re-measuring.*

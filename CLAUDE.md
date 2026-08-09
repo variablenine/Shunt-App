@@ -287,9 +287,14 @@ them, and add new observations as they come in. Detail lives in
    Still possible, and the reason to keep this open: the `share` fallback in §6
    hands the car a string it resolves itself. `docs/field-notes.md` describes
    the read-back experiment that would settle it.
-3. **A closed road was routed onto, and leaving it was handled badly.**
-   Re-planning must also respect the direction of travel while moving — an
-   answer that requires driving backwards is not an answer.
+3. **A closed road was routed onto, and leaving it was handled badly.** *Half
+   done.* Re-planning now respects the direction of travel while moving — the
+   GPS bearing reaches BRouter's `startDirection`, so a re-plan can't answer
+   with a U-turn (and is null when parked, where the bearing is noise). What is
+   **not** done: nothing stops a re-plan routing straight back onto the stretch
+   the driver just abandoned, which on a closed road is a loop.
+   `docs/field-notes.md` carries the design for the missing half, and the
+   question that should be answered before building it.
 4. **Long routes are far too slow to plan.** A 5-hour route can take ~5 minutes.
    That is unusable in the real world, and actively dangerous where mid-drive
    re-planning is involved. *Partly addressed* — see below; needs re-measuring
@@ -448,7 +453,8 @@ Ordered roughly by what unblocks real use.
 - **[high] Charging re-route on long trips** — §7.1.
 - **[high] Waypoint fidelity on the car** — §7.2. Getting a coarse location is
   worse than getting none, because it looks like it worked.
-- **[high] Closed roads and direction-aware re-planning** — §7.3.
+- **[high] Stop re-planning onto the road just abandoned** — §7.3. The
+  direction-of-travel half is done; this half is designed, not built.
 - **OSM coverage:** keep improving nearby-first ranking; add missing local
   places to OpenStreetMap so they become searchable for everyone.
 - **Charging fine-tuning:** the range derate (`REAL_WORLD_FRACTION`), the
