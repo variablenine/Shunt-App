@@ -66,10 +66,14 @@ Working and reasonably trusted:
   detection, escalating haptics + notifications. Works fully offline.
 - Destination search (Photon), favourites, long-press-map-to-route.
 
+Long-route planning was the blocker for real use and is now usable: measured on
+a real phone, a 470 km trip went from 12 m 46 s to 41 s. See §7.4.
+
 Working but **not proven on real vehicles**:
 
 - Everything that talks to the car. See §6 and §7 — there are known, reproduced
-  problems here from real driving.
+  problems here from real driving. Several were diagnosed and fixed in August
+  2026 but have not yet been confirmed on a drive.
 
 Not done:
 
@@ -143,6 +147,9 @@ Key files, by the question they answer:
 
 - *How is a route planned?* `solver/brouter/BrouterPlanner.kt` (orchestration),
   `solver/brouter/BrouterRouter.kt` (the engine calls and nogo shapes).
+  `RouteRequest.kt` is the seam between them — one parameter object, so adding
+  something the router needs does not change the planner's signature and every
+  fake in the suite with it.
 - *Where do the car's waypoints come from?* `solver/waypoints/WaypointExtractor.kt`
   (candidates from route shape) and `WaypointRefiner.kt` (which ones the car
   will actually honour).
@@ -150,7 +157,10 @@ Key files, by the question they answer:
   indexed by `solver/brouter/CameraIndex.kt` over `solver/geo/SpatialIndex.kt`.
 - *What happens while driving?* `app/drive/DriveMonitorEngine.kt` (pure decision
   logic), `app/drive/DriveMonitor.kt` (coordination), `DriveMonitorService.kt`
-  (the Android shell).
+  (the Android shell). `DriveMonitorBounds` holds the numbers the monitor is
+  held to, public so tests assert the same values rather than a copy.
+- *Why won't it route me back onto that road?* `RouteRequest.blocked`, filled by
+  `DriveMonitor` from `solver/geo/stretchAhead`.
 - *How does charging work?* `app/drive/ChargeStopCoordinator.kt` +
   `ChargeStops.kt`, and `solver/charging/RangeCheck.kt`.
 - *What reaches the car?* `tesla/TessieVehicleNavClient.kt`.
@@ -325,9 +335,12 @@ them, and add new observations as they come in. Detail lives in
    over and over, until they cancelled navigation in the app.
 
    **This is the most important thing on this list**, and not really a routing
-   bug. See §6.1 below. Two halves are fixed — direction of travel on a re-plan,
-   and standing down — and two are not: not routing back onto the abandoned
-   stretch, and the alert cadence. `docs/field-notes.md` has both designs.
+   bug. See §6.1. All four parts are now addressed and none is confirmed on a
+   drive: direction of travel on a re-plan, standing down, not routing back onto
+   the abandoned stretch (`RouteRequest.blocked`), and the alert repetition —
+   which turned out not to live in the alerting at all. A re-plan builds a fresh
+   `DriveMonitorEngine`, and a fresh engine had no memory of which cameras it had
+   already announced, so every camera still in range was warned about again.
 4. **Long routes are far too slow to plan.** A 5-hour route can take ~5 minutes.
    That is unusable in the real world, and actively dangerous where mid-drive
    re-planning is involved. *Partly addressed* — see below; needs re-measuring
@@ -410,9 +423,33 @@ wide as the vertices are apart. A sparse line — a re-planned leg, a straight h
 — then drops every camera in the gap. `sampleSpine` walks segments rather than
 keeping their ends, and a test holds it there.
 
-Still open, and untested because it needs a real device: whether the routing
-passes are now fast enough on a long trip, and whether pin refinement should be
-done lazily (see §10). The candidates, in
+**Measured again after those changes**, same phone: 241 km fell from 59 s to
+10 s, ~400 km from 1 m 49 s to 25 s, and ~470 km from 12 m 46 s to 41 s. No
+widen on any of them. That is the difference between unusable and usable.
+
+**Still not usable at the very top end.** A trip of roughly 700 km through dense
+metro country still ran long enough to be abandoned before it finished. Two
+guards now bound it rather than fix it:
+
+- **Every search has a real ceiling.** BRouter takes a `maxRunningTime` and
+  Shunt passed **zero** for the life of the project, which BRouter reads as *no
+  limit*. Checking the clock between passes — the obvious thing, and the first
+  thing tried — bounds nothing at all when a single pass is what runs long,
+  because a search is a tight CPU loop with no suspension point. Each pass now
+  gets whatever is left of the budget, and the value handed over is never
+  allowed to be zero.
+- **Running out removes an option, never corrupts one.** A skipped pass is named
+  in the breakdown, because a chooser that quietly comes back short reads as
+  Shunt deciding there was no camera-free route.
+
+What has *not* been tried, in descending order of expected value and risk:
+running the independent avoidance passes concurrently (BRouter thread-safety is
+unknown, and a wrong route from a data race is far worse than a slow one), and
+narrowing the corridor further (it is 60 km; tightening it risks re-introducing
+widens on exactly the long detours that made the fewest-cameras option good).
+Pin refinement is no longer the bottleneck, so doing it lazily — the
+maintainer's suggestion, and the right shape for pins specifically — is worth
+doing for *quality* on long routes rather than for speed. The candidates, in
 descending order of expected value and risk, are running the independent
 avoidance passes concurrently (BRouter thread-safety and phone memory are the
 unknowns), and narrowing the nogo set from the trip's bounding box to a corridor
@@ -535,8 +572,12 @@ Ordered roughly by what unblocks real use.
 - **[high] Charging re-route on long trips** — §7.1.
 - **[high] Waypoint fidelity on the car** — §7.2. Getting a coarse location is
   worse than getting none, because it looks like it worked.
-- **[high] Stop re-planning onto the road just abandoned** — §7.3. The
-  direction-of-travel half is done; this half is designed, not built.
+- **[high] Confirm the August 2026 vehicle fixes on a real drive.** Charging
+  re-route, waypoint fidelity, standing down, and the abandoned-road block were
+  all diagnosed from field reports and none has been seen working in a car.
+- **Pin refinement, done lazily** — compute the next few pins rather than all of
+  them. Not a speed problem any more; a quality one, since a long route's pins
+  currently share one budget between them.
 - **OSM coverage:** keep improving nearby-first ranking; add missing local
   places to OpenStreetMap so they become searchable for everyone.
 - **Charging fine-tuning:** the range derate (`REAL_WORLD_FRACTION`), the

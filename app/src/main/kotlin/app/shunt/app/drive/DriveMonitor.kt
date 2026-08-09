@@ -167,7 +167,11 @@ class DriveMonitor(
                 )
                 applyLeg(change, finalDestination)?.let { fresh ->
                     current = fresh
-                    engine = newEngine(fresh, engine)
+                    // Deliberately NOT inheriting what has already been
+                    // announced. A charging leg is a different stretch of road,
+                    // often an hour later, and a camera met again there is a new
+                    // encounter — under-warning is the worse mistake here.
+                    engine = newEngine(fresh)
                 }
             }
         } finally {
@@ -210,10 +214,16 @@ class DriveMonitor(
     }
 
     /**
-     * The engine for a route that replaces the one in force, carrying over what
-     * has already been announced. Without that hand-off every camera still in
-     * range is warned about again on each re-plan, which during the closed-road
-     * loop is what became alerts that would not stop.
+     * The engine for a route that replaces the one in force.
+     *
+     * Pass [previous] where the replacement is the *same journey re-planned* —
+     * off-route recovery — and what has already been announced carries over.
+     * Without that hand-off every camera still in range is warned about again on
+     * each re-plan, which during the closed-road loop became alerts that would
+     * not stop.
+     *
+     * Leave it out where the replacement is a genuinely new stretch of road, so
+     * a camera met again there is announced again.
      */
     private fun newEngine(plan: DrivePlan, previous: DriveMonitorEngine? = null) =
         DriveMonitorEngine(
