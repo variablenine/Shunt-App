@@ -99,7 +99,7 @@ class BrouterPlannerTest {
         val outcome = planner.plan(origin, destination)
 
         assertIs<PlanOutcome.Routes>(outcome)
-        assertTrue(seenBoxes.size > 1, "must widen the camera search to cover where the route went")
+        assertTrue(seenBoxes.isNotEmpty(), "cameras must have been looked for at all")
         assertTrue(
             routedWith > 0,
             "the final routing pass must have been given the camera that gets counted",
@@ -164,45 +164,88 @@ class BrouterPlannerTest {
     }
 
     @Test
-    fun `a camera revealed only by the final re-route is still counted`() = runTest {
-        // Regression: the refinement loop could exit on its pass cap immediately
-        // after re-routing, leaving the camera set narrower than the routes it
-        // labels. Counting against it printed "camera-free" over a route that
-        // drives straight through a camera's field of view.
+    fun `a route that leaves the corridor is re-planned against the cameras out there`() = runTest {
+        // The camera area is drawn around the direct road, which is the right
+        // shape for it — but an avoidance detour can leave that corridor
+        // entirely. When it does, the set the router was given no longer covers
+        // the route it produced, and labelling against it would print
+        // "camera-free" over a road that drives past a camera.
         //
-        // Each re-plan sends "fewest cameras" a little further north, so the loop
-        // always exits on its cap holding routes newer than the camera set. The
-        // only camera sits on that final leg — invisible to every earlier fetch.
-        val onFinalLeg = Camera(id = 7, location = GeoPoint(39.30, -98.0))
+        // So the loop widens to what the routes actually did and plans again.
+        // This is the case that has to keep working now the corridor is tight.
+        val farNorth = GeoPoint(40.8, -98.0) // ~200 km north, well outside the corridor
+        val farCamera = Camera(id = 7, location = farNorth)
         val fastLine = listOf(origin, destination)
-        var plans = 0
+        val detour = listOf(origin, farNorth, destination)
+        val boxes = mutableListOf<BoundingBox>()
 
         val planner = BrouterPlanner(
             route = { _, _, _ ->
-                plans++
-                val wander = when (plans) {
-                    1 -> GeoPoint(39.10, -98.0)
-                    2 -> GeoPoint(39.20, -98.0)
-                    else -> onFinalLeg.location // the final re-route reaches the camera
-                }
                 listOf(
                     BrouterRoute(RouteChoice.FASTEST, fastLine, 2_000, 180, 0, 0),
-                    BrouterRoute(
-                        RouteChoice.FEWEST_CAMERAS,
-                        listOf(origin, wander, destination), 90_000, 5_000, 0, 0,
-                    ),
+                    BrouterRoute(RouteChoice.FEWEST_CAMERAS, detour, 400_000, 20_000, 0, 0),
                 )
             },
             missingTiles = { emptyList() },
-            camerasIn = { bbox -> listOf(onFinalLeg).filter { bbox.contains(it.location) } },
+            camerasIn = { bbox ->
+                boxes += bbox
+                listOf(farCamera).filter { bbox.contains(it.location) }
+            },
         )
 
-        val outcome = planner.plan(origin, destination)
-        assertIs<PlanOutcome.Routes>(outcome)
-        val fewest = outcome.options.first { it.choice == RouteChoice.FEWEST_CAMERAS }
+        val outcome = assertIs<PlanOutcome.Routes>(planner.plan(origin, destination))
+
+        assertTrue(
+            boxes.size > 1,
+            "a route this far off the direct road must force a second look for cameras",
+        )
         assertEquals(
-            1, fewest.camerasPassed,
-            "the camera on the FINAL route must be counted — never labeled camera-free",
+            1,
+            outcome.options.first { it.choice == RouteChoice.FEWEST_CAMERAS }.camerasPassed,
+            "the camera on the detour must be counted — never labelled camera-free",
+        )
+    }
+
+    @Test
+    fun `a camera beside a sparse stretch of the route is still found`() = runTest {
+        // The camera area is drawn as a corridor around the route, measured from
+        // points sampled along it. A route given as a few far-apart vertices —
+        // a re-planned leg, a straight hop — must be walked, not just have its
+        // corners kept, or the gaps between them drop every camera inside.
+        //
+        // Here the only camera sits midway along a single 40 km segment, nowhere
+        // near either end of it.
+        val farEnd = destinationPoint(origin, 90.0, 40_000.0)
+        val midway = destinationPoint(origin, 90.0, 20_000.0)
+        val sparseRoute = listOf(origin, farEnd, destination) // three points, 40 km apart
+        val cameraMidSegment = Camera(id = 7, location = midway)
+
+        var routedWith = 0
+        val planner = BrouterPlanner(
+            route = { _, cams, _ ->
+                routedWith = maxOf(routedWith, cams.size)
+                listOf(BrouterRoute(RouteChoice.FASTEST, sparseRoute, 80_000, 3_600, 0, 0))
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { bbox ->
+                listOf(cameraMidSegment).filter { bbox.contains(it.location) }
+            },
+            // Tight, so the corridor filter is doing real work. At the default
+            // 60 km it would sweep the camera in whatever the sampling did, and
+            // this would prove nothing.
+            bboxMarginMeters = 100.0,
+        )
+
+        val outcome = assertIs<PlanOutcome.Routes>(planner.plan(origin, destination))
+
+        assertTrue(
+            routedWith > 0,
+            "the camera beside the middle of a long segment must reach the router",
+        )
+        assertEquals(
+            1,
+            outcome.options.single().camerasPassed,
+            "and must be counted — a gap in the sampling would silently drop it",
         )
     }
 

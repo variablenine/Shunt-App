@@ -54,7 +54,11 @@ class PlanningCostTest {
      * Records every routing pass. A refinement probe is the recognisable one: it
      * asks how the *car* would drive a leg, so it carries no cameras at all.
      */
-    private class Router(val options: List<BrouterRoute>, val carPath: (GeoPoint, GeoPoint) -> List<GeoPoint>) {
+    private class Router(
+        val trip: List<GeoPoint>,
+        val options: List<BrouterRoute>,
+        val carPath: (GeoPoint, GeoPoint) -> List<GeoPoint>,
+    ) {
         val probes = mutableListOf<Pair<GeoPoint, GeoPoint>>()
         var planningPasses = 0
 
@@ -63,10 +67,12 @@ class PlanningCostTest {
             cameras: List<CameraVision>,
             @Suppress("UNUSED_PARAMETER") heading: Double?,
         ): List<BrouterRoute> {
-            if (cameras.isEmpty() && points.size == 2) {
+            // Planning asks for the trip's own endpoints — with no cameras for
+            // the spine pass, with them for the avoidance passes. A refinement
+            // probe is the one that asks about some *other* pair of points.
+            if (points != trip) {
                 probes += points[0] to points[1]
-                val line = carPath(points[0], points[1])
-                return listOf(BrouterRoute(RouteChoice.FASTEST, line, 1_000, 60, 0, 0))
+                return listOf(BrouterRoute(RouteChoice.FASTEST, carPath(points[0], points[1]), 1_000, 60, 0, 0))
             }
             planningPasses++
             return options
@@ -96,7 +102,7 @@ class PlanningCostTest {
         // This one sits off on the loop, so the fastest route does avoid it and
         // the old code had a reason to go probing.
         val offRoadCamera = Camera(id = 2, location = GeoPoint(39.0 + north(2000.0), -98.05))
-        val router = Router(options(RouteChoice.FASTEST to fastRoad), ::carPath)
+        val router = Router(listOf(origin, destination), options(RouteChoice.FASTEST to fastRoad), ::carPath)
         val planner = BrouterPlanner(
             route = router::route,
             missingTiles = { emptyList() },
@@ -120,6 +126,7 @@ class PlanningCostTest {
         // their early pins, so the same leg was being searched once per option —
         // three full passes over the road graph for one answer.
         val router = Router(
+            listOf(origin, destination),
             options(
                 RouteChoice.FASTEST to fastRoad,
                 RouteChoice.BALANCED to detour,
@@ -152,6 +159,7 @@ class PlanningCostTest {
         // and still warned about while driving. A plan that never arrives is not.
         var clock = 0L
         val router = Router(
+            listOf(origin, destination),
             options(RouteChoice.FASTEST to fastRoad, RouteChoice.FEWEST_CAMERAS to detour),
             ::carPath,
         )
@@ -183,6 +191,7 @@ class PlanningCostTest {
         // the next optimisation at the wrong thing.
         var clock = 0L
         val router = Router(
+            listOf(origin, destination),
             options(RouteChoice.FASTEST to fastRoad, RouteChoice.FEWEST_CAMERAS to detour),
             ::carPath,
         )
@@ -201,16 +210,15 @@ class PlanningCostTest {
         val timings = outcome.timings
         assertTrue(timings != null, "the breakdown must reach the result sheet")
 
-        // The detour runs north of the straight line, so the routes leave the box
-        // the cameras were fetched for and the planner widens once and re-routes
-        // — hence two of each. That is the loop working, and the breakdown has to
-        // show its real cost rather than only the first pass.
+        // One camera fetch and two searches — the cheap spine pass plus one
+        // avoidance pass. The detour stays well inside the corridor drawn around
+        // the direct road, so nothing has to be widened or searched twice.
         val byLabel = timings.stages.associate { it.label to it.millis }
-        assertEquals(1_000L, byLabel[PlanTimings.STAGE_CAMERAS], "both camera fetches, measured apart")
+        assertEquals(500L, byLabel[PlanTimings.STAGE_CAMERAS], "one camera fetch, measured apart")
         assertEquals(
             2_000L,
             byLabel[PlanTimings.STAGE_ROUTING],
-            "both routing iterations — the stage reported as the slow one on a real phone",
+            "spine pass plus one avoidance pass — the stage reported as slow on a real phone",
         )
         assertTrue(
             byLabel.getValue(PlanTimings.STAGE_PINS) > 0,
@@ -221,14 +229,15 @@ class PlanningCostTest {
             "the routing stage is split by what each graph search was for",
         )
         assertTrue(
-            timings.routingPasses.any { "widen 2" in it.label },
-            "and a re-search after widening is labelled as one, not silently doubled up",
+            timings.routingPasses.none { "widen" in it.label },
+            "a detour inside the corridor must not force the whole graph to be searched again",
         )
     }
 
     @Test
     fun `a zero budget still yields usable routes`() = runTest {
         val router = Router(
+            listOf(origin, destination),
             options(RouteChoice.FASTEST to fastRoad, RouteChoice.FEWEST_CAMERAS to detour),
             ::carPath,
         )

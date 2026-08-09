@@ -3,6 +3,7 @@ package app.shunt.solver.brouter
 import app.shunt.core.GeoPoint
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.waypoints.WaypointExtractor
 import app.shunt.solver.waypoints.WaypointRefiner
 
@@ -131,32 +132,53 @@ class BrouterPlanner(
         val missing = missingTiles(baseBbox)
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
 
-        onProgress(0.1f, "Finding cameras nearby")
-        // Plan against a camera set that PROVABLY covers the routes being
-        // labelled, by iterating to a fixed point: route, look at where the
-        // routes actually went, and if that escapes the area we fetched
-        // cameras for, widen and route again.
-        //
-        // Getting this wrong is the "it drove past an avoidable camera" bug.
-        // A route planned against a narrow set has never been asked to avoid
-        // anything outside it, so counting it afterwards against a wider set
-        // reports a camera the avoidance was never given a chance at — and the
-        // hard-block pass still "succeeded", so nothing looks wrong.
         // Temporary instrumentation — see PlanTimings.
         val stages = mutableListOf<PlanTimings.Timed>()
         val routingPasses = mutableListOf<PlanTimings.Timed>()
         var cameraMillis = 0L
         var routingMillis = 0L
+        var startedAt: Long
 
-        var cameraBbox = baseBbox
-        var startedAt = nowMillis()
-        var cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
+        // Find the direct road first, with no cameras at all.
+        //
+        // This is the cheapest search there is — nothing to check each link
+        // against — and it buys the two things the expensive passes need: the
+        // shape the camera area should be drawn around, and a spine to measure
+        // detours against. Sizing that area from the straight origin→destination
+        // box instead meant the routes bulged out of it *every single time*, so
+        // the widen below was not a rare correction, it was guaranteed, and
+        // every trip paid for the whole search twice.
+        onProgress(0.15f, "Finding the direct route")
+        startedAt = nowMillis()
+        val direct = runRoutes(points, emptyList(), headingDegrees)
+        routingMillis += nowMillis() - startedAt
+        routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
+        var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
+            // No direct route is not fatal here — fall back to the straight line
+            // between the trip's own points, which is what this used before.
+            ?: points
+
+        onProgress(0.25f, "Finding cameras nearby")
+        // Plan against a camera set that PROVABLY covers the routes being
+        // labelled, by iterating to a fixed point: route, look at where the
+        // routes actually went, and if that escapes the area we drew cameras
+        // from, widen and route again.
+        //
+        // Getting this wrong is the "it drove past an avoidable camera" bug.
+        // A route planned against a narrow set has never been asked to avoid
+        // anything outside it, so counting it afterwards against a wider set
+        // reports a camera the avoidance was never given a chance at — and the
+        // hard-block pass still "succeeded", so nothing looks wrong. The check
+        // below is what keeps the corridor honest: it is allowed to be as tight
+        // as we like precisely because a route that leaves it is caught.
+        startedAt = nowMillis()
+        var cameras = camerasAlong(spine) ?: return cameraDataUnavailable()
         cameraMillis += nowMillis() - startedAt
         var routes: List<BrouterRoute> = emptyList()
         var covered = false
 
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
-            onProgress(0.3f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
+            onProgress(0.4f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
             startedAt = nowMillis()
             val fresh = runRoutes(points, cameras, headingDegrees)
             routingMillis += nowMillis() - startedAt
@@ -168,16 +190,17 @@ class BrouterPlanner(
             routes = fresh ?: return PlanOutcome.Failed("Routing failed.")
             if (routes.isEmpty()) return noRoute()
 
-            val actual = routeBbox(routes)
-            if (cameraBbox.contains(actual)) {
+            val escaping = routes.filterNot { withinCorridor(it.polyline, spine) }
+            if (escaping.isEmpty()) {
                 covered = true
                 break
             }
-            // The routes left the area we looked at. Widen and go again, so the
-            // next pass plans with the cameras out there in hand.
-            cameraBbox = cameraBbox.union(actual)
+            // Those routes went somewhere we hadn't drawn cameras from. Add what
+            // they actually did to the spine and go again, so the next pass
+            // plans with the cameras out there in hand.
+            spine = spine + escaping.flatMap { sampleSpine(it.polyline) }
             startedAt = nowMillis()
-            cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
+            cameras = camerasAlong(spine) ?: return cameraDataUnavailable()
             cameraMillis += nowMillis() - startedAt
         }
 
@@ -300,13 +323,85 @@ class BrouterPlanner(
         return path
     }
 
-    /** The area the given routes actually cover, padded by the standard margin. */
-    private fun routeBbox(routes: List<BrouterRoute>): BoundingBox =
-        BoundingBox.of(routes.flatMap { it.polyline }).expand(bboxMarginMeters)
+    /**
+     * Every camera close enough to the roads under consideration to matter.
+     *
+     * The set handed to the router *is* the cost of routing: each link the
+     * search expands is checked against every nogo, and on a long trip the
+     * camera-carrying passes ran about thirty times slower than the same search
+     * with none. So the difference between "cameras in the box around this trip"
+     * and "cameras near the roads this trip could plausibly use" is the
+     * difference between usable and not — a long diagonal trip's bounding box is
+     * mostly country no route would ever touch, and every camera in it was being
+     * paid for on every link.
+     *
+     * Still fetched by bounding box, because that is how camera data is tiled;
+     * the corridor is a filter on the result.
+     */
+    private suspend fun camerasAlong(spine: List<GeoPoint>): List<Camera>? {
+        val bbox = BoundingBox.of(spine).expand(bboxMarginMeters)
+        val all = runCatching { camerasIn(bbox) }.getOrNull() ?: return null
+        return all.filter { camera -> nearSpine(camera.location, spine, bboxMarginMeters + SPINE_SAMPLE_METERS) }
+    }
 
-    /** Cameras in [bbox], or null if the lookup failed (never an empty stand-in). */
-    private suspend fun fetchCameras(bbox: BoundingBox): List<Camera>? =
-        runCatching { camerasIn(bbox) }.getOrNull()
+    /**
+     * Whether every point of [line] is inside the corridor drawn around [spine].
+     *
+     * This is the guarantee that lets the corridor be tight. A camera can only
+     * affect a route it can see, which is a few hundred metres at most; so if
+     * the route stays [CORRIDOR_SAFETY_METERS] inside the corridor the cameras
+     * were drawn from, every camera that could see this route was in the set the
+     * router was given. A route that fails this has been planned against an
+     * incomplete set and must not be labelled — it goes back round the loop.
+     */
+    private fun withinCorridor(line: List<GeoPoint>, spine: List<GeoPoint>): Boolean {
+        // Cameras were taken within (margin + sample spacing) of the spine, so a
+        // route staying that far in — less the reach of a camera — cannot have
+        // one near it that the router was not given. Derived from the filter in
+        // camerasAlong rather than guessed at; the two have to move together.
+        val limit = bboxMarginMeters + SPINE_SAMPLE_METERS - CORRIDOR_SAFETY_METERS
+        if (limit <= 0) return false
+        return line.all { nearSpine(it, spine, limit) }
+    }
+
+    private fun nearSpine(p: GeoPoint, spine: List<GeoPoint>, meters: Double): Boolean =
+        spine.any { haversineMeters(it, p) <= meters }
+
+    /**
+     * The line thinned to roughly one point per [SPINE_SAMPLE_METERS].
+     *
+     * A route is tens of thousands of points and the corridor tests compare
+     * against all of them; at this spacing a few hundred stand in for the whole
+     * line, and the sample spacing is added back as slack wherever the result is
+     * used so thinning can only ever widen the corridor, never narrow it.
+     */
+    private fun sampleSpine(line: List<GeoPoint>): List<GeoPoint> {
+        if (line.size < 2) return line
+        val out = mutableListOf(line.first())
+        var since = 0.0
+        for (i in 1 until line.size) {
+            val a = line[i - 1]
+            val b = line[i]
+            val length = haversineMeters(a, b)
+            if (length <= 0.0) continue
+            // Walk the segment, not just its ends. Keeping only vertices thins a
+            // dense line correctly but leaves a sparse one — a re-planned leg, a
+            // straight hop between two far-apart points — with gaps far wider
+            // than the spacing, and everything downstream measures distance to
+            // these points. A gap there quietly drops the cameras in it, which
+            // is the "drove past an avoidable camera" bug wearing a new hat.
+            var travelled = 0.0
+            while (since + (length - travelled) >= SPINE_SAMPLE_METERS) {
+                travelled += SPINE_SAMPLE_METERS - since
+                val t = travelled / length
+                out += GeoPoint(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
+                since = 0.0
+            }
+            since += length - travelled
+        }
+        out += line.last()
+        return out
+    }
 
     private fun cameraDataUnavailable(): PlanOutcome = PlanOutcome.Failed(
         "Couldn't load camera data for this area, so Shunt can't tell you which " +
@@ -367,6 +462,20 @@ class BrouterPlanner(
 
         /** How many times to widen the camera area to cover a detouring route. */
         private const val MAX_REFINEMENT_PASSES = 4
+
+        /** One spine point per this much road. See `sampleSpine`. */
+        private const val SPINE_SAMPLE_METERS = 5_000.0
+
+        /**
+         * How far inside the corridor a route has to stay to count as covered.
+         *
+         * Comfortably more than the furthest a camera is ever treated as seeing,
+         * so "the route stayed this far inside" implies "every camera that could
+         * see it was in the set". Erring large costs an occasional extra widen;
+         * erring small silently prints a camera count the router never had the
+         * chance to act on.
+         */
+        private const val CORRIDOR_SAFETY_METERS = 3_000.0
 
         /**
          * Ceiling on the pin-refinement phase.

@@ -372,19 +372,47 @@ which pass is slow is a real phone. `PlanTimings`, its plumbing, and
 `PlanningTimeBreakdown` in `ResultSheet.kt` all come out together once long-route
 planning is fast enough that nobody is asking.
 
-The maintainer has confirmed from a real device that **"Planning routes" is the
-slow stage** — so the remaining cost is in the route-deciding passes, not in pin
-refinement. Two things to read from the breakdown:
+### What the numbers from a real phone showed
 
-- **If `(widen 2)` passes appear**, a large share of the cost is re-searching the
-  whole graph because the routes left the box cameras were fetched for. Sizing
-  the first camera box from the fastest route's actual geometry, rather than the
-  straight origin→destination box, would collapse that. Cheap and low-risk.
-- **If one pass dominates**, look at which. A `blocked` pass that fails and forces
-  the `fewest (fallback)` pass costs two searches for one option.
+Measured on a real device, three trips (241 km / 394 km / 473 km), planning in
+59 s / 1 m 49 s / 12 m 46 s. Two things came straight out of the breakdown:
 
-Still open, and untested because it needs a real device: whether the
-route-deciding passes alone are fast enough on a long trip. The candidates, in
+- **The widen fired every single time.** The camera area was sized from the
+  straight origin→destination box, and a real route always bulges outside it —
+  so re-searching the whole graph was not a rare correction, it was guaranteed,
+  and every trip paid for the entire routing phase twice.
+- **Nogos are the cost, not distance.** On the 473 km trip the `fastest` pass —
+  same graph, no cameras — took 5.1 s, while `balanced` took 2 m 25 s and
+  `blocked` 2 m 44 s. About thirty times, for carrying the camera set. And the
+  bounding box grows with the *square* of trip length, which is why the cost
+  looked exponential in distance.
+
+Both are addressed by planning the direct road first, with no cameras at all,
+and using its shape:
+
+1. That pass is the cheapest search there is, and its geometry is what the
+   camera area is now drawn around — so the guaranteed widen is gone.
+2. Cameras are filtered to a **corridor** around that spine rather than its
+   bounding box. A long diagonal trip's box is mostly country no route would
+   touch, and every camera in it was being checked against every link.
+
+**The corridor is only safe because the fixed-point loop verifies it.** A route
+that leaves the corridor has been planned against an incomplete camera set, so
+it is not labelled — the spine grows to include what the routes actually did and
+everything is planned again. `withinCorridor` derives its threshold from the
+filter in `camerasAlong`; the two must move together, and the safety margin
+exists so "the route stayed this far inside" implies "every camera that could
+see it was in the set".
+
+One trap worth knowing, because it was live for an hour: the spine is *sampled*
+along the route, and sampling that keeps only existing vertices leaves gaps as
+wide as the vertices are apart. A sparse line — a re-planned leg, a straight hop
+— then drops every camera in the gap. `sampleSpine` walks segments rather than
+keeping their ends, and a test holds it there.
+
+Still open, and untested because it needs a real device: whether the routing
+passes are now fast enough on a long trip, and whether pin refinement should be
+done lazily (see §10). The candidates, in
 descending order of expected value and risk, are running the independent
 avoidance passes concurrently (BRouter thread-safety and phone memory are the
 unknowns), and narrowing the nogo set from the trip's bounding box to a corridor
