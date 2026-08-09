@@ -204,6 +204,20 @@ option. Remove the instrumentation once this is resolved.
 
 No `widen` on any of them, and camera lookup fell to 0.0 s (cached). Usable.
 
+**On computing pins lazily** (maintainer's suggestion — only work out the next
+few rather than all of them): half of it is already true by accident, and worth
+not undoing. `WaypointRefiner.refine` rescans the chain from the start on every
+pass and stops at the first leg that needs a pin, so it resolves the trip
+front-to-back. When the budget runs out, what you have is the *early* pins —
+exactly the ones about to be driven — and the later stretches unrefined.
+
+The missing half is refining further ahead as the drive progresses. That needs
+the drive monitor to call back into refinement and push the results, which is
+the same path that fought the driver for the car, so it wants building carefully
+and confirming on a drive rather than at a desk. Note also that pins are no
+longer a speed problem (3.8–9.2 s of a 10–41 s plan) — the reason to do this now
+is *quality* on long routes, where one budget is shared across every pin.
+
 **Still not usable at the top end.** A route from the Upper Peninsula to Chicago
 still runs long enough that the maintainer closed the app rather than see it
 finish — so its breakdown has never been observed, which is the first problem to
