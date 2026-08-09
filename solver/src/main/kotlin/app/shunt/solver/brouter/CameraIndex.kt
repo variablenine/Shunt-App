@@ -79,7 +79,7 @@ class CameraIndex(private val cameras: List<CameraVision>) {
         return false
     }
 
-    private companion object {
+    internal companion object {
         /** Matches [CameraVision]'s own sampling, so the answers agree. */
         const val SAMPLE_METERS = 10.0
     }

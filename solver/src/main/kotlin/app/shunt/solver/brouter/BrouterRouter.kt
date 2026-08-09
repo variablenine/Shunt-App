@@ -115,6 +115,12 @@ class BrouterRouter(
         lastFailureDiagnostic = null
         val timings = mutableListOf<PlanTimings.Timed>()
         val startedWholeAt = nowMillis()
+        // Built once and shared by every option's labelling. Counting cameras
+        // by asking each one to walk the whole route is cameras × points, and
+        // it happens per option — on a trip into a dense metro that ran to tens
+        // of seconds *inside the budget*, which is how the hard-block pass came
+        // to be skipped for want of time it had not actually spent routing.
+        val index = CameraIndex(cameras)
         // Each of these is a full search over the road graph, which on a
         // cross-state trip is the whole cost of planning. Which one is expensive
         // decides what to do about it, so they are timed apart.
@@ -140,7 +146,7 @@ class BrouterRouter(
 
         val fastest = timed("fastest") {
             runRoute(points, cameras, Avoidance.None, headingDegrees, remaining(), blockedRoads)
-        }?.toResult(RouteChoice.FASTEST, cameras)
+        }?.toResult(RouteChoice.FASTEST, index)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) {
             lastPassTimings = timings
@@ -152,7 +158,7 @@ class BrouterRouter(
         } else {
             timed("balanced") {
                 runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees, remaining(), blockedRoads)
-            }?.toResult(RouteChoice.BALANCED, cameras)
+            }?.toResult(RouteChoice.BALANCED, index)
         }
 
         // "Fewest cameras" must mean *none* whenever a camera-free path exists at
@@ -166,7 +172,7 @@ class BrouterRouter(
         } else {
             timed("blocked") {
                 runRoute(points, cameras, Avoidance.Blocked, headingDegrees, remaining(), blockedRoads)
-            }?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+            }?.toResult(RouteChoice.FEWEST_CAMERAS, index)
         }
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
@@ -179,7 +185,7 @@ class BrouterRouter(
                 timed("fewest (fallback)") {
                     runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees, remaining(), blockedRoads)
                 }
-                    ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+                    ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
                     ?.copy(hardAvoidanceFailed = true)
             }
         lastPassTimings = timings
@@ -341,15 +347,22 @@ class BrouterRouter(
         return collector.readNogoList(spec).orEmpty()
     }
 
-    private fun RawRoute.toResult(choice: RouteChoice, cameras: List<CameraVision>): BrouterRoute =
-        BrouterRoute(
+    private fun RawRoute.toResult(choice: RouteChoice, index: CameraIndex): BrouterRoute {
+        // Only cameras close enough to see some part of this route can add to
+        // the exposure, so the rest are dropped before the metre-by-metre walk.
+        // The margin is the index's own sampling step, which is what makes this
+        // exact rather than merely close: the nearest sample to any point is
+        // within half a step, so nothing that could contribute is filtered out.
+        val nearby = index.within(polyline, CameraVision.OMNI_RANGE_M + CameraIndex.SAMPLE_METERS)
+        return BrouterRoute(
             choice = choice,
             polyline = polyline,
             distanceMeters = distanceMeters,
             estimatedSeconds = seconds,
-            distinctCamerasPassed = cameras.count { it.seesRoute(polyline) },
-            exposureMeters = CameraVision.metersSeen(polyline, cameras).toInt(),
+            distinctCamerasPassed = index.seeing(polyline).size,
+            exposureMeters = CameraVision.metersSeen(polyline, nearby).toInt(),
         )
+    }
 
     /** Record the first (fastest-attempt) failure reason and return null. */
     private fun note(reason: String): RawRoute? {

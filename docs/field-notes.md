@@ -218,6 +218,24 @@ and confirming on a drive rather than at a desk. Note also that pins are no
 longer a speed problem (3.8–9.2 s of a 10–41 s plan) — the reason to do this now
 is *quality* on long routes, where one budget is shared across every pin.
 
+**Chicago, from a real phone (2026-08-09):** 1 m 20 s, where it previously ran
+long enough to be abandoned. The budget worked, and the breakdown showed exactly
+what it cost:
+
+```
+fastest (spine)   4.9 s      blocked          (skipped — over budget)
+fastest           4.7 s      fewest (fallback)(skipped — over budget)
+balanced         42.6 s
+```
+
+So the trip completed and the driver got a route — but not a camera-free one,
+which is the app's whole point. And the passes only account for 52 s of the 80 s
+in the routing stage. **The missing ~28 s was labelling, not routing.**
+`toResult` counted cameras by asking each one to walk the whole route — cameras
+× points, once per option — and that happens *inside* the budget, so it was
+spending the hard-block pass's time without doing any routing with it. Both
+counts are indexed now, which should hand `blocked` back the room it needs.
+
 **Still not usable at the top end.** A route from the Upper Peninsula to Chicago
 still runs long enough that the maintainer closed the app rather than see it
 finish — so its breakdown has never been observed, which is the first problem to
