@@ -69,6 +69,12 @@ class BrouterPlanner(
     private val missingTiles: (BoundingBox) -> List<TileId>,
     private val camerasIn: suspend (BoundingBox) -> List<Camera>,
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
+    /**
+     * Half-width of the corridor along the direct road that cameras are taken
+     * from. Separate from [bboxMarginMeters], which only decides which map tiles
+     * a trip needs — tiles are cheap and cameras are not.
+     */
+    private val corridorMeters: Double = CAMERA_CORRIDOR_METERS,
     /** Optional on-disk/engine state summary, appended to a no-route failure. */
     private val diagnostics: () -> String? = { null },
     /**
@@ -135,6 +141,16 @@ class BrouterPlanner(
         val missing = missingTiles(baseBbox)
         if (missing.isNotEmpty()) return PlanOutcome.NeedsDownload(missing)
 
+        // One deadline for every search in this plan.
+        //
+        // The budget used to belong to a single routing *call*, and planning
+        // makes several — the spine, then one per widen of the camera area — so
+        // each got a fresh allowance and the true worst case was a multiple of
+        // the number nominally in force. Sharing it means widening the corridor
+        // costs time from the same pot rather than minting more.
+        val planDeadline = nowMillis() + (routeBudgetMillis ?: BrouterRouter.PASS_BUDGET_MILLIS)
+        fun budgetLeft(): Long = (planDeadline - nowMillis()).coerceAtLeast(1L)
+
         // Temporary instrumentation — see PlanTimings.
         val stages = mutableListOf<PlanTimings.Timed>()
         val routingPasses = mutableListOf<PlanTimings.Timed>()
@@ -153,7 +169,7 @@ class BrouterPlanner(
         // every trip paid for the whole search twice.
         onProgress(0.15f, "Finding the direct route")
         startedAt = nowMillis()
-        val direct = runRoutes(points, emptyList(), headingDegrees, blocked, routeBudgetMillis)
+        val direct = runRoutes(points, emptyList(), headingDegrees, blocked, budgetLeft())
         routingMillis += nowMillis() - startedAt
         routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
         var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
@@ -183,7 +199,7 @@ class BrouterPlanner(
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.4f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
             startedAt = nowMillis()
-            val fresh = runRoutes(points, cameras, headingDegrees, blocked, routeBudgetMillis)
+            val fresh = runRoutes(points, cameras, headingDegrees, blocked, budgetLeft())
             routingMillis += nowMillis() - startedAt
             // Label by iteration: a second one means the routes escaped the
             // camera area and the whole graph was searched again.
@@ -342,9 +358,9 @@ class BrouterPlanner(
      * the corridor is a filter on the result.
      */
     private suspend fun camerasAlong(spine: List<GeoPoint>): List<Camera>? {
-        val bbox = BoundingBox.of(spine).expand(bboxMarginMeters)
+        val bbox = BoundingBox.of(spine).expand(corridorMeters)
         val all = runCatching { camerasIn(bbox) }.getOrNull() ?: return null
-        return all.filter { camera -> nearSpine(camera.location, spine, bboxMarginMeters + SPINE_SAMPLE_METERS) }
+        return all.filter { camera -> nearSpine(camera.location, spine, corridorMeters + SPINE_SAMPLE_METERS) }
     }
 
     /**
@@ -362,7 +378,7 @@ class BrouterPlanner(
         // route staying that far in — less the reach of a camera — cannot have
         // one near it that the router was not given. Derived from the filter in
         // camerasAlong rather than guessed at; the two have to move together.
-        val limit = bboxMarginMeters + SPINE_SAMPLE_METERS - CORRIDOR_SAFETY_METERS
+        val limit = corridorMeters + SPINE_SAMPLE_METERS - CORRIDOR_SAFETY_METERS
         if (limit <= 0) return false
         return line.all { nearSpine(it, spine, limit) }
     }
@@ -468,6 +484,25 @@ class BrouterPlanner(
          * area considered has to be much wider than the direct one.
          */
         const val ROUTE_BBOX_MARGIN_METERS = 60_000.0
+
+        /**
+         * Half-width of the corridor cameras are taken from.
+         *
+         * This is the single biggest lever on planning time, because what makes
+         * routing slow is checking every expanded link against every zone. At
+         * 60 km — the old value, inherited from the tile margin — a 489 km trip
+         * drew cameras from about 59,000 km², which through this part of the
+         * country means three metro areas' worth of them, most beside roads no
+         * route would ever consider.
+         *
+         * Narrow is safe here *only* because the fixed-point loop verifies it: a
+         * route that leaves the corridor has been planned against an incomplete
+         * set, so it is never labelled — the spine grows to cover where the
+         * routes actually went and everything is planned again. Too tight
+         * therefore costs a second pass, not a wrong answer. Too wide costs
+         * every trip, every time.
+         */
+        const val CAMERA_CORRIDOR_METERS = 15_000.0
 
         /** How close to the line a camera has to be to be worth drawing as context. */
         const val NEARBY_CAMERA_METERS = 2_500.0

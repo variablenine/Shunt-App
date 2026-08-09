@@ -409,6 +409,15 @@ and using its shape:
    bounding box. A long diagonal trip's box is mostly country no route would
    touch, and every camera in it was being checked against every link.
 
+The corridor's half-width is the single biggest lever there is, and it is
+separate from the tile margin now (`CAMERA_CORRIDOR_METERS`, 15 km). It started
+at 60 km only because it inherited the tile number, and on a 489 km trip that
+drew cameras from roughly 59,000 km² — three metro areas' worth, most of it
+beside roads no route would consider. Measured on that trip: the plain fastest
+search took 4.5 s and the same search carrying the camera set took 42 s, two
+completely different search spaces at near-identical cost, which is what
+identifies the camera set rather than the search as the expense.
+
 **The corridor is only safe because the fixed-point loop verifies it.** A route
 that leaves the corridor has been planned against an incomplete camera set, so
 it is not labelled — the spine grows to include what the routes actually did and
@@ -459,8 +468,9 @@ on a real device before going further — an OOM mid-plan is a worse failure tha
 a slow plan.
 
 What else has *not* been tried, in descending order of expected value and risk:
-narrowing the corridor further (it is 60 km; tightening it risks re-introducing
-widens on exactly the long detours that made the fewest-cameras option good).
+narrowing the corridor **further** than the 15 km it is now (tightening risks
+re-introducing widens on exactly the long detours that made the fewest-cameras
+option good, though the fixed-point loop keeps that safe rather than wrong).
 Pin refinement is no longer the bottleneck, so doing it lazily — the
 maintainer's suggestion, and the right shape for pins specifically — is worth
 doing for *quality* on long routes rather than for speed. The candidates, in

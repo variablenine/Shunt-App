@@ -250,6 +250,35 @@ class BrouterPlannerTest {
     }
 
     @Test
+    fun `cameras are drawn from a corridor along the road, not the whole box around the trip`() = runTest {
+        // The single biggest lever on planning time: what makes routing slow is
+        // checking every expanded link against every zone, so the area cameras
+        // are taken from *is* the cost. A 489 km trip at the old 60 km half-width
+        // drew from about 59,000 km² — three metro areas' worth, most of it
+        // beside roads no route would consider.
+        val boxes = mutableListOf<BoundingBox>()
+        val line = listOf(origin, destinationPoint(origin, 90.0, 100_000.0))
+
+        val planner = BrouterPlanner(
+            route = { _ ->
+                listOf(BrouterRoute(RouteChoice.FASTEST, line, 100_000, 4_000, 0, 0))
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { bbox -> boxes += bbox; emptyList() },
+            corridorMeters = 5_000.0,
+        )
+
+        planner.plan(origin, line.last())
+
+        val drawn = boxes.first()
+        val tall = (drawn.maxLat - drawn.minLat) * 111_320.0
+        assertTrue(
+            tall < 30_000.0,
+            "the camera area must hug the road, not the trip's bounding box: ${tall.toInt()} m tall",
+        )
+    }
+
+    @Test
     fun `a camera data failure refuses to label rather than claiming camera-free`() = runTest {
         // Regression: a thrown camera lookup became an empty list, so every route
         // was confidently labeled "camera-free" — the worst possible failure mode.

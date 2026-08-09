@@ -127,7 +127,7 @@ private fun fold(members: List<CameraVision>): CameraCluster {
  * spread, so a wide radius would blur genuinely separate cameras into one large
  * blocked area.
  */
-internal const val CLUSTER_RADIUS_METERS = 35.0
+internal const val CLUSTER_RADIUS_METERS = 50.0
 
 /** How far two facings may differ and still describe the same view. */
 internal const val FACING_TOLERANCE_DEGREES = 12.0

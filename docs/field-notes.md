@@ -317,6 +317,24 @@ consideration.
 inside the merged polygon, and asserts the merge actually happened — otherwise
 it would pass just as well on no merging at all.
 
+**Clustering barely moved it** (42.9 → 42.2 s), which falsified the idea that
+grouping gantries would be enough. Two reasons, and the second is the real one:
+the threshold was 35 m while the observed site spans 42 m, so it mostly did not
+fire; and even fired perfectly, a handful of junctions is nothing against the
+number of cameras in the set.
+
+**The set is the number that matters.** At a 60 km half-width — inherited from
+the tile margin, never chosen for cameras — a 489 km trip drew from about
+59,000 km², which through this part of the country means three metro areas. At
+15 km it is about 15,000 km². Safe to narrow *only* because the fixed-point loop
+verifies: a route leaving the corridor is never labelled, the spine grows, and
+it plans again. Too tight costs a second pass; too wide costs every trip.
+
+Also fixed here: the budget belonged to a single routing *call*, and planning
+makes several — the spine, then one per widen — so each got a fresh allowance
+and the real worst case was a multiple of the number nominally in force. One
+deadline now covers the whole plan.
+
 **Still not usable at the top end.** A route from the Upper Peninsula to Chicago
 still runs long enough that the maintainer closed the app rather than see it
 finish — so its breakdown has never been observed, which is the first problem to
