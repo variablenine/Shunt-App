@@ -72,6 +72,33 @@ class RoutingBudgetTest {
     }
 
     @Test
+    fun `every search is given a real ceiling, never zero`() {
+        // The whole point, and the thing that was wrong: BRouter reads zero as
+        // "no limit". Shunt passed zero for the life of the project, so a budget
+        // could be in force and a single search still run for twenty minutes,
+        // because the between-passes check never gets a turn while one pass is
+        // the thing running long.
+        //
+        // Guarded here at the seam it actually goes through: whatever arithmetic
+        // the budget does, the number handed to the engine is positive.
+        assertTrue(
+            BrouterRouter.PASS_BUDGET_MILLIS > 0,
+            "a zero budget would disable BRouter's own timeout entirely",
+        )
+
+        // An exhausted budget must still yield a positive ceiling rather than
+        // wrapping round to "unlimited".
+        var now = 0L
+        val subject = router({ now += 1_000_000; now }, budget = 1L)
+        subject.route(trip, cameras)
+
+        assertTrue(
+            subject.lastPassTimings.isNotEmpty(),
+            "the fastest pass still runs, and still under a ceiling",
+        )
+    }
+
+    @Test
     fun `a generous budget leaves every pass to run`() {
         var now = 0L
         val subject = router({ now += 1; now }, budget = 75_000)

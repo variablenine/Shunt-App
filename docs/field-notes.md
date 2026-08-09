@@ -210,9 +210,25 @@ Two hypotheses worth separating when that breakdown arrives:
   a wrong route from a data race would be far worse than a slow one) or a
   tighter corridor.
 
-**Known gap:** the pass budget is a property of the router, so a mid-drive
-re-plan gets the same generous 75 s as a driver sitting at the kerb. The refine
-budget is already split that way; this should be too. If that is still slow, the remaining levers are
+**The first attempt at a budget did nothing**, and the reason is worth keeping.
+It checked the clock *between* passes — but a BRouter search is a tight CPU loop
+with no suspension point, so nothing outside it can interrupt it, and the check
+never gets a turn while a single pass is the thing running long. The maintainer
+reported planning still running well past the budget, which is exactly what that
+design produces.
+
+BRouter has its own `maxRunningTime`, tested on every node it expands, and
+Shunt was passing **zero** — which BRouter reads as *no limit*. That had been
+the value since the engine was vendored. Each pass is now given whatever is left
+of the budget, and the value handed over is never allowed to be zero, because
+zero is indistinguishable from "unlimited" at that seam.
+
+**Known gaps:** the budget covers one `route()` call, and planning makes more
+than one (the spine pass, then the avoidance passes, then a widen if the routes
+escape the corridor), so the true worst case is a small multiple of it. And the
+budget is a property of the router, so a mid-drive re-plan gets the same
+generous allowance as a driver sitting at the kerb. The refine budget is already
+split that way; this should be too. If that is still slow, the remaining levers are
 concurrency across the avoidance passes and shrinking the nogo set — see
 CLAUDE.md §7 for why the second one is dangerous.
 

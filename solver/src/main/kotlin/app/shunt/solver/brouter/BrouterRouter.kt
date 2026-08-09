@@ -54,19 +54,23 @@ class BrouterRouter(
     private val profileDir: File,
     private val profileName: String = "car-vario",
     /**
-     * How long the avoidance passes may take before the rest are abandoned.
+     * Ceiling on all the searches in one [route] call together.
      *
-     * A search is not interruptible once started, so this is checked *between*
-     * passes: it bounds the wait at roughly one pass beyond the budget rather
-     * than exactly at it. That is still the difference between a plan that
-     * arrives late and one the driver gives up on — which is what was happening
-     * on the longest trips, where planning ran so long it was never seen to
-     * finish at all.
+     * Enforced two ways, and only the second one actually bites. Between passes
+     * Shunt checks the clock and skips what is left — but a search is a tight
+     * CPU loop with no suspension point, so that check never arrives while one
+     * pass is the thing running long. What bounds it is BRouter's own
+     * `maxRunningTime`, which it tests on every node it expands; each pass is
+     * given whatever is left of this budget.
      *
-     * Skipping only ever removes an *option*. It never changes how a route that
-     * is returned was planned, and never lets one be labelled against cameras it
-     * was not given — so the honest failure here is a shorter chooser, not a
-     * wrong one.
+     * Passing zero there means *no limit*, and zero is what was passed for the
+     * life of this project, which is why planning could run for twenty minutes
+     * with a budget nominally in force.
+     *
+     * Running out only ever removes an *option*. It never changes how a route
+     * that is returned was planned, and never lets one be labelled against
+     * cameras it was not given — so the honest failure is a shorter chooser,
+     * not a wrong one.
      */
     private val passBudgetMillis: Long = PASS_BUDGET_MILLIS,
     private val nowMillis: () -> Long = System::currentTimeMillis,
@@ -99,6 +103,8 @@ class BrouterRouter(
         points: List<GeoPoint>,
         cameras: List<CameraVision>,
         headingDegrees: Double? = null,
+        /** Ceiling for every search in this call together. See [passBudgetMillis]. */
+        budgetMillis: Long = passBudgetMillis,
     ): List<BrouterRoute> {
         require(points.size >= 2) { "a route needs at least an origin and a destination" }
         lastFailureDiagnostic = null
@@ -114,10 +120,12 @@ class BrouterRouter(
             return result
         }
 
+        /** What is left of the budget for the next search over the graph. */
+        fun remaining(): Long = budgetMillis - (nowMillis() - startedWholeAt)
+
         /** True once there is no time left for another search over the graph. */
         fun outOfTime(label: String): Boolean {
-            val spent = nowMillis() - startedWholeAt
-            if (spent < passBudgetMillis) return false
+            if (remaining() > 0) return false
             // Recorded so the reason shows up wherever the breakdown does. A
             // silently missing option looks like the app deciding there wasn't
             // one, which is the opposite of what happened.
@@ -125,8 +133,9 @@ class BrouterRouter(
             return true
         }
 
-        val fastest = timed("fastest") { runRoute(points, cameras, Avoidance.None, headingDegrees) }
-            ?.toResult(RouteChoice.FASTEST, cameras)
+        val fastest = timed("fastest") {
+            runRoute(points, cameras, Avoidance.None, headingDegrees, remaining())
+        }?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) {
             lastPassTimings = timings
@@ -137,7 +146,7 @@ class BrouterRouter(
             null
         } else {
             timed("balanced") {
-                runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees)
+                runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees, remaining())
             }?.toResult(RouteChoice.BALANCED, cameras)
         }
 
@@ -150,8 +159,9 @@ class BrouterRouter(
         val blocked = if (outOfTime("blocked")) {
             null
         } else {
-            timed("blocked") { runRoute(points, cameras, Avoidance.Blocked, headingDegrees) }
-                ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+            timed("blocked") {
+                runRoute(points, cameras, Avoidance.Blocked, headingDegrees, remaining())
+            }?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
         }
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
@@ -162,7 +172,7 @@ class BrouterRouter(
                 null
             } else {
                 timed("fewest (fallback)") {
-                    runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees)
+                    runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees, remaining())
                 }
                     ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
                     ?.copy(hardAvoidanceFailed = true)
@@ -208,6 +218,20 @@ class BrouterRouter(
         cameras: List<CameraVision>,
         avoidance: Avoidance,
         headingDegrees: Double? = null,
+        /**
+         * Hard ceiling on this one search, handed to BRouter itself.
+         *
+         * This is the only thing that can actually stop a search: it is a tight
+         * CPU loop with no suspension point, so nothing outside it can interrupt
+         * it, and checking the clock *between* passes — which is all Shunt did
+         * before — bounds nothing when a single pass is the thing running long.
+         * BRouter checks this on every node it expands and throws, which
+         * [runRoute] turns into "no route at this avoidance level".
+         *
+         * Zero means no limit. That was the value being passed, which is why a
+         * budget appeared to do nothing at all.
+         */
+        timeoutMillis: Long,
     ): RawRoute? {
         return try {
             val rc = RoutingContext()
@@ -239,7 +263,7 @@ class BrouterRouter(
             }
             val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
             engine.quite = true // suppress BRouter's GPX-to-stdout dump
-            engine.doRun(0)
+            engine.doRun(timeoutMillis.coerceAtLeast(1L))
             if (engine.errorMessage != null) return note("brouter: ${engine.errorMessage}")
             val track = engine.foundTrack ?: return note("brouter: no track returned")
             val line = track.nodes.map { node ->
