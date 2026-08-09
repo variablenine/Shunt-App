@@ -335,6 +335,29 @@ makes several — the spine, then one per widen — so each got a fresh allowanc
 and the real worst case was a multiple of the number nominally in force. One
 deadline now covers the whole plan.
 
+**Root cause, finally measured rather than inferred (2026-08-09).** With network
+access to the tile CDN, the trip can be planned locally against real tiles and
+the real camera set, and the answer was not the corridor, nor clustering, nor
+concurrency. `RoutingContext.calcDistance` runs for every link the search
+expands and scanned the *entire* nogo list each time. BRouter is built for a
+handful of hand-drawn nogos; Shunt hands it thousands of cameras.
+
+Indexing that loop (`btools/router/NogoIndex.java`):
+
+| | full scan | indexed |
+|---|---|---|
+| `blocked`, 1181 nogos | 202.1 s | 12.9 s |
+| whole call, 608 nogos | 221.7 s | 28.1 s |
+
+And the thing worth knowing beyond the numbers: **a camera-free route to the
+metro destination existed the whole time.** Every "gave up — out of time" was a
+successful search being cut off, not an absence of an answer. At the 15 km
+corridor the trip now returns all three options in about 36 s, the
+fewest-cameras one passing zero cameras for roughly 11% extra distance.
+
+Verified answer-preserving by planning the same trip with and without the index
+and comparing the geometry point for point — identical fingerprint, 7.9× faster.
+
 **Still not usable at the top end.** A route from the Upper Peninsula to Chicago
 still runs long enough that the maintainer closed the app rather than see it
 finish — so its breakdown has never been observed, which is the first problem to

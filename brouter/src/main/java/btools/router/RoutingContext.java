@@ -217,6 +217,9 @@ public final class RoutingContext {
   private List<OsmNodeNamed> keepnogopoints = null;
   private OsmNodeNamed pendingEndpoint = null;
 
+  /** SHUNT CHANGE: grid over {@link #nogopoints}, rebuilt when the list changes. */
+  private NogoIndex nogoIndex = null;
+
   public Integer startDirection;
   public boolean startDirectionValid;
   public boolean forceUseStartDirection;
@@ -463,7 +466,18 @@ public final class RoutingContext {
     shortestmatch = false;
 
     if (nogopoints != null && !nogopoints.isEmpty() && d > 0.) {
-      for (int ngidx = 0; ngidx < nogopoints.size(); ngidx++) {
+      // SHUNT CHANGE (see NogoIndex): this loop runs for every link the search
+      // expands, and scanning the whole nogo list each time is O(links × nogos).
+      // Shunt makes every camera a nogo, so a metro trip carries thousands.
+      // The index narrows the loop to the ones that could possibly match; the
+      // rest would have failed the radius test below without side effects.
+      if (nogoIndex == null || nogoIndex.source != nogopoints) {
+        nogoIndex = new NogoIndex(nogopoints);
+      }
+      int[] candidates = nogoIndex.candidates(lon1, lat1, lon2, lat2);
+      int candidateCount = nogoIndex.size();
+      for (int ci = 0; ci < candidateCount; ci++) {
+        int ngidx = candidates[ci];
         OsmNodeNamed nogo = nogopoints.get(ngidx);
         double x1 = (lon1 - nogo.ilon) * dlon2m;
         double y1 = (lat1 - nogo.ilat) * dlat2m;

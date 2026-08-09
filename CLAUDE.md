@@ -134,7 +134,7 @@ rather than fail silently.
 | Module | Platform | Purpose |
 |---|---|---|
 | `:core` | Pure JVM | Shared value types (`GeoPoint`), zero dependencies |
-| `:brouter` | Pure JVM | Vendored BRouter engine (MIT), untouched `btools.*` |
+| `:brouter` | Pure JVM | Vendored BRouter engine (MIT). Upstream except `NogoIndex.java` and one loop in `RoutingContext.calcDistance` — see §7 |
 | `:solver` | Pure JVM | Camera source, BRouter router/planner, waypoints, search, charging range |
 | `:tesla` | Pure JVM | Vehicle seam: `VehicleNavClient`, fake, Tessie client, capability probe |
 | `:app` | Android | Compose UI, drive-monitor foreground service, DI (`AppContainer`) |
@@ -451,8 +451,40 @@ guards now bound it rather than fix it:
   in the breakdown, because a chooser that quietly comes back short reads as
   Shunt deciding there was no camera-free route.
 
-**On running the passes concurrently** — the biggest remaining lever, and no
-longer an unknown. Looked at properly: `btools.router.ProfileCache` is the only
+### The nogo scan, which turned out to be the whole thing
+
+Measured against real tiles and the real camera dataset (see §8), on a 490 km
+trip into dense metro:
+
+| | full scan | indexed |
+|---|---|---|
+| `blocked`, 1181 nogos | 202.1 s | 12.9 s |
+| `balanced`, 1181 nogos | 216.4 s | 13.4 s |
+| whole call, 608 nogos | 221.7 s | 28.1 s |
+
+`RoutingContext.calcDistance` is called for **every link the search expands**,
+and scanned the entire nogo list each time — O(links × nogos). That is fine for
+BRouter's normal use, where a nogo is something a user drew by hand and there
+are a handful. Shunt makes every camera a nogo, so a metro trip carries
+thousands, and this single loop was essentially all of planning time.
+`btools/router/NogoIndex.java` is a uniform grid over the nogo list, and the loop
+now visits only the nogos that could possibly match.
+
+**This is the one place `btools.*` diverges from upstream.** Keep it in mind when
+updating BRouter: the change is one new file plus about eight lines in
+`calcDistance`, both marked `SHUNT CHANGE`.
+
+It is written to be answer-preserving rather than approximately right — a nogo
+excluded by the grid would have failed the loop's own radius test without side
+effects, and candidates come back in ascending index order so the loop visits
+them exactly as before. That was **verified rather than assumed**: the same real
+trip planned with and without the index produced identical geometry, point for
+point (533.88 km, 5463 points, same fingerprint), 7.9× faster.
+
+With it, the trip that could not be planned at all now returns all three options
+in about 36 s of routing, including a genuinely camera-free route.
+
+**On running the passes concurrently** — a lever, and no longer an unknown. Looked at properly: `btools.router.ProfileCache` is the only
 mutable static state on the routing path, its entry points are `synchronized`,
 and it carries a `profilesBusy` flag whose *only* purpose is to stop two threads
 sharing one profile context. BRouter's own design anticipates concurrent
@@ -494,6 +526,35 @@ around the routes actually under consideration (which risks re-introducing the
 Unit tests make **no live network calls** — fixtures plus MockWebServer. CI also
 runs an emulator smoke test (`LaunchSmokeTest`), which is the only thing that
 catches launch crashes and Compose regressions.
+
+### Measuring planning against real data
+
+`solver/.../RealWorldPlanningBenchmark.kt` plans a real trip over real `.rd5`
+tiles and the real DeFlock dataset, and prints the same breakdown the app shows.
+It is **off unless `SHUNT_BENCH_DIR` is set**, and takes its coordinates from the
+environment rather than the repository — tiles are hundreds of megabytes, and a
+committed benchmark is exactly where someone's real travel would end up.
+
+```
+mkdir -p bench/segments
+curl -o bench/segments/W90_N40.rd5 https://brouter.de/brouter/segments4/W90_N40.rd5
+curl -o bench/cams.json 'https://cdn.deflock.me/regions/40/-100.json'
+cp app/src/main/assets/brouter/* bench/
+SHUNT_BENCH_DIR=$PWD/bench SHUNT_BENCH_FROM=lat,lon SHUNT_BENCH_TO=lat,lon \
+  ./gradlew :solver:test --tests '*RealWorldPlanningBenchmark*' -i
+```
+
+Use it before optimising anything here. Every performance decision in this
+project up to August 2026 was made from screenshots of the app's own breakdown,
+because the sandbox could not reach the tile CDN — and at least one of them was
+wrong (grouping cameras by site was expected to help and moved the number by
+0.7 s).
+
+**Watch the heap.** The Gradle test JVM defaults to `-Xmx512m`, and BRouter
+builds a `NodesCache` over tiles that are tens of megabytes each, so the
+benchmark is memory-bound in a way a phone may not be. Raise it before drawing
+conclusions, and remember the same constraint is what makes concurrent routing
+a memory question rather than a correctness one (§7).
 
 ### Testing when the Android SDK is unavailable
 
