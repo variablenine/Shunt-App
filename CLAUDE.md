@@ -280,7 +280,45 @@ them, and add new observations as they come in. Detail lives in
    answer that requires driving backwards is not an answer.
 4. **Long routes are far too slow to plan.** A 5-hour route can take ~5 minutes.
    That is unusable in the real world, and actively dangerous where mid-drive
-   re-planning is involved.
+   re-planning is involved. *Partly addressed* — see below; needs re-measuring
+   on a real phone.
+
+### Where planning time actually goes
+
+Worth knowing before optimising anything here. Planning cost is dominated by one
+thing: **how many times the whole road graph gets searched.** Each search is a
+BRouter run over a `.rd5` tile set, and on a cross-state trip that is seconds
+each. The passes are:
+
+- *Deciding the route* — bounded and small. Up to four avoidance strengths
+  (fastest, balanced, blocked, and a weighted fallback when blocked finds
+  nothing), inside a loop that widens the camera area if a route detours outside
+  it. Usually one iteration.
+- *Refining the pins* — **was unbounded.** One routing pass per candidate pin
+  per option, and a long camera-dense trip wants dozens. This is what made a
+  five-hour route take minutes.
+
+What has been done about it:
+
+- The **fastest option is never refined.** It is by definition the road the car
+  picks when left alone, so there is nothing to hold it onto.
+- **Legs are memoised across options.** The options share an origin, a
+  destination, and usually their early pins; the same leg used to be searched
+  once per option.
+- **Refinement has a time budget** (`REFINE_BUDGET_MILLIS`, 20 s; and
+  `REPLAN_REFINE_BUDGET_MILLIS`, 4 s for anything planned while moving). When it
+  runs out, planning settles for the pins it has. This is safe in a way that
+  giving up on the route would not be: pins only *steer* a car that routes
+  itself, so a route with fewer of them is still the route we planned, still
+  labelled with the cameras it passes, and still warned about while driving.
+
+Still open, and untested because it needs a real device: whether the
+route-deciding passes alone are fast enough on a long trip. The candidates, in
+descending order of expected value and risk, are running the independent
+avoidance passes concurrently (BRouter thread-safety and phone memory are the
+unknowns), and narrowing the nogo set from the trip's bounding box to a corridor
+around the routes actually under consideration (which risks re-introducing the
+"drove past an avoidable camera" bug — read §5 before trying it).
 
 ---
 

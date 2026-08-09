@@ -364,7 +364,12 @@ class AppContainer(context: Context) {
     ): DrivePlan? {
         val points = listOf(from) + via + destination.location
         val outcome = runCatching {
-            brouterPlanner.plan(points, headingDegrees = headingDegrees)
+            brouterPlanner.plan(
+                points,
+                headingDegrees = headingDegrees,
+                // Every leg planned here is planned with the car moving.
+                refineBudgetMillis = BrouterPlanner.REPLAN_REFINE_BUDGET_MILLIS,
+            )
         }.getOrNull()
         val chosen = (outcome as? app.shunt.solver.brouter.PlanOutcome.Routes)
             ?.options

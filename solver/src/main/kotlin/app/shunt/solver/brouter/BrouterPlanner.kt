@@ -68,6 +68,14 @@ class BrouterPlanner(
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
     /** Optional on-disk/engine state summary, appended to a no-route failure. */
     private val diagnostics: () -> String? = { null },
+    /**
+     * How long the pin-refinement phase may take before it settles for the pins
+     * it has. Refinement costs one routing pass per candidate per option, which
+     * is unbounded in the length and camera density of the trip; the route
+     * itself is already decided by the time it starts. See [WaypointRefiner].
+     */
+    private val refineBudgetMillis: Long = REFINE_BUDGET_MILLIS,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
     /**
      * Plan a trip. [onProgress] reports coarse 0f..1f progress with a label, so
@@ -96,6 +104,13 @@ class BrouterPlanner(
          * doubling back. Null when parked or unknown.
          */
         headingDegrees: Double? = null,
+        /**
+         * Override the pin-refinement budget for this plan. A re-plan computed
+         * at 60 mph is worth much less the longer it takes — the junction it was
+         * needed for keeps approaching — so a mid-drive caller should ask for
+         * far less than a driver sitting still will happily wait through.
+         */
+        refineBudgetMillis: Long = this.refineBudgetMillis,
     ): PlanOutcome {
         require(points.size >= 2) { "a trip needs at least an origin and a destination" }
         val baseBbox = BoundingBox.of(points).expand(bboxMarginMeters)
@@ -155,6 +170,12 @@ class BrouterPlanner(
         val index = CameraIndex(visions)
         val byLocation = cameras.associateBy { it.location }
         onProgress(0.9f, "Checking the car will follow the detour")
+        // One budget and one cache for the whole refinement phase. The options
+        // share an origin, a destination and usually their first pins, so the
+        // same leg was being routed once per option — three full passes over the
+        // road graph for one answer.
+        val deadline = nowMillis() + refineBudgetMillis
+        val carPaths = HashMap<Pair<GeoPoint, GeoPoint>, List<GeoPoint>?>()
         val options = routes.map { r ->
             PlannedRoute(
                 choice = r.choice,
@@ -163,7 +184,14 @@ class BrouterPlanner(
                 // they must also stop it cutting back through what we avoided.
                 waypoints = withStops(
                     stops = points.drop(1).dropLast(1),
-                    shaping = pinsTheCarWillFollow(r.polyline, fastest.polyline, visions, index),
+                    // The fastest option needs no shaping at all: it *is* the
+                    // road the car picks when left alone, so there is nothing to
+                    // hold it onto and every pass spent checking says so.
+                    shaping = if (r === fastest) {
+                        emptyList()
+                    } else {
+                        pinsTheCarWillFollow(r.polyline, fastest.polyline, visions, index, deadline, carPaths)
+                    },
                     polyline = r.polyline,
                 ),
                 // A camera is "passed" if the route enters its field of view.
@@ -195,6 +223,8 @@ class BrouterPlanner(
         fastest: List<GeoPoint>,
         visions: List<CameraVision>,
         index: CameraIndex,
+        deadline: Long,
+        carPaths: MutableMap<Pair<GeoPoint, GeoPoint>, List<GeoPoint>?>,
     ): List<GeoPoint> {
         val candidates = WaypointExtractor.extract(
             chosen = chosen,
@@ -207,18 +237,34 @@ class BrouterPlanner(
                 pins = candidates,
                 avoid = visions,
                 index = index,
-                carRoute = { from, to -> carPathBetween(from, to) },
+                outOfTime = { nowMillis() >= deadline },
+                carRoute = { from, to -> carPathBetween(from, to, carPaths) },
             )
         }.getOrDefault(candidates)
     }
 
-    /** How the car would drive [from] to [to]: fastest, no camera avoidance. */
-    private suspend fun carPathBetween(from: GeoPoint, to: GeoPoint): List<GeoPoint>? =
-        runCatching { route(listOf(from, to), emptyList(), null) }
+    /**
+     * How the car would drive [from] to [to]: fastest, no camera avoidance.
+     *
+     * Memoised across every option in one plan. A null answer is cached too — a
+     * leg the engine can't route stays unroutable, and re-asking costs as much
+     * as asking did.
+     */
+    private suspend fun carPathBetween(
+        from: GeoPoint,
+        to: GeoPoint,
+        carPaths: MutableMap<Pair<GeoPoint, GeoPoint>, List<GeoPoint>?>,
+    ): List<GeoPoint>? {
+        val key = from to to
+        if (carPaths.containsKey(key)) return carPaths[key]
+        val path = runCatching { route(listOf(from, to), emptyList(), null) }
             .getOrNull()
             ?.firstOrNull()
             ?.polyline
             ?.takeIf { it.size >= 2 }
+        carPaths[key] = path
+        return path
+    }
 
     /** The area the given routes actually cover, padded by the standard margin. */
     private fun routeBbox(routes: List<BrouterRoute>): BoundingBox =
@@ -287,5 +333,28 @@ class BrouterPlanner(
 
         /** How many times to widen the camera area to cover a detouring route. */
         private const val MAX_REFINEMENT_PASSES = 4
+
+        /**
+         * Ceiling on the pin-refinement phase.
+         *
+         * Planning is bounded by the routing passes it takes to *decide* the
+         * route, which is a handful. Refinement is not: it costs a pass per
+         * candidate pin per option, and a long trip through camera-dense country
+         * wants a lot of them — which is how a five-hour route came to take
+         * about five minutes to plan. Twenty seconds is far more than a normal
+         * trip needs and far less than a driver will sit through.
+         */
+        const val REFINE_BUDGET_MILLIS = 20_000L
+
+        /**
+         * The same ceiling for a plan computed while the car is moving.
+         *
+         * A driver waiting at the kerb will sit through twenty seconds; a car
+         * doing 60 mph covers half a mile in that time, and the re-plan is
+         * wanted *now* — its whole purpose is to say what to do at a junction
+         * that is getting closer while we think. Fewer pins on a route that
+         * arrives in time beats a perfectly pinned one that doesn't.
+         */
+        const val REPLAN_REFINE_BUDGET_MILLIS = 4_000L
     }
 }

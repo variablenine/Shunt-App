@@ -63,11 +63,23 @@ Two separate needs fall out of this:
 - A road the driver cannot actually use needs to stop being offered.
 
 ### F-4 · Long routes take minutes to plan
-*Observed: pre-2026-08 build.*
+*Observed: pre-2026-08 build. Partly addressed — needs re-measuring.*
 
 A route of about 5 hours took roughly 5 minutes to calculate. Unusable for real
 driving, and dangerous where mid-drive re-planning is involved, since a re-plan
 that takes minutes arrives long after the decision it was needed for.
+
+Cause found so far: pin refinement was unbounded. It costs one full pass over
+the road graph per candidate pin per option, and a long camera-dense trip wants
+dozens — while the route itself is already decided before refinement starts.
+Three fixes landed: the fastest option is no longer refined at all (it is the
+road the car picks anyway), legs are memoised across options, and refinement now
+has a time budget it settles within — 20 s parked, 4 s while moving.
+
+**Still to check on a real phone:** how long the route-deciding passes alone
+take on a long trip. If that is still slow, the remaining levers are
+concurrency across the avoidance passes and shrinking the nogo set — see
+CLAUDE.md §7 for why the second one is dangerous.
 
 ---
 

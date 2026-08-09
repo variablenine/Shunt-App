@@ -75,6 +75,19 @@ object WaypointRefiner {
         maxPins: Int = WaypointExtractor.NO_LIMIT,
         /** Shared grid; building one per call would undo the point of having it. */
         index: CameraIndex = CameraIndex(avoid),
+        /**
+         * Stop and hand back what we have. Every pin costs a full routing pass,
+         * and a long camera-dense trip can want dozens — which is how planning a
+         * five-hour route came to take minutes.
+         *
+         * Giving up early is safe in a way that giving up on the route itself
+         * would not be: pins only *steer* a car that routes itself, so a route
+         * with fewer of them is still the route we planned and still labelled
+         * with the cameras it passes, and the drive monitor still warns on
+         * approach. A plan that arrives too late to use is worth less than a
+         * slightly less firmly steered one that arrives in time.
+         */
+        outOfTime: () -> Boolean = { false },
         carRoute: suspend (from: GeoPoint, to: GeoPoint) -> List<GeoPoint>?,
     ): List<GeoPoint> {
         if (chosen.size < 2 || avoid.isEmpty()) return pins
@@ -103,12 +116,14 @@ object WaypointRefiner {
         var passes = 0
 
         while (passes++ < MAX_PASSES) {
+            if (outOfTime()) break
             val chain = listOf(chosen.first()) + current + chosen.last()
             var inserted = false
             for (i in 0 until chain.size - 1) {
                 val from = chain[i]
                 val to = chain[i + 1]
                 if (from in hopeless || (from to to) in clean) continue
+                if (outOfTime()) return WaypointExtractor.spaceOut(current)
 
                 val carPath = carRoute(from, to)
                 if (carPath == null) {
