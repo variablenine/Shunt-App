@@ -14,28 +14,52 @@ package app.shunt.solver.charging
  */
 data class RangeCheck(
     val routeMeters: Int,
-    /** Range we're willing to count on — derated and with a reserve held back. */
+    /** Range we're willing to count on leaving now — derated, reserve held back. */
     val usableMeters: Double,
     /** The shortest option offered for the same trip, for the detour comparison. */
     val shortestOptionMeters: Int,
     val batteryPercent: Int?,
+    /**
+     * The trip split at its charging stops, in order.
+     *
+     * A trip with a charging stop is not one long run, and treating it as one
+     * is why adding a stop never cleared the warning: a 400 km trip stayed
+     * "400 km against 260 km of range" even when it had become two comfortable
+     * legs. What matters is whether each leg fits, not the total.
+     */
+    val legMeters: List<Int> = listOf(routeMeters),
+    /** Range available setting off again from a charging stop. */
+    val chargedUsableMeters: Double = usableMeters,
 ) {
+    /** What each leg has to work with: the battery now, then a charge each time. */
+    fun allowanceFor(leg: Int): Double = if (leg == 0) usableMeters else chargedUsableMeters
+
+    /** Metres each leg runs past what it has, negative when it fits. */
+    val legShortfalls: List<Double>
+        get() = legMeters.mapIndexed { i, meters -> meters - allowanceFor(i) }
+
     val level: Level get() = when {
-        routeMeters > usableMeters -> Level.SHORT
-        routeMeters > usableMeters * RangeEstimate.TIGHT_FRACTION -> Level.TIGHT
+        legShortfalls.any { it > 0 } -> Level.SHORT
+        legMeters.indices.any { legMeters[it] > allowanceFor(it) * RangeEstimate.TIGHT_FRACTION } ->
+            Level.TIGHT
         else -> Level.FINE
     }
 
-    /** How far past the usable range this route runs (0 when it fits). */
-    val shortfallMeters: Double get() = (routeMeters - usableMeters).coerceAtLeast(0.0)
+    /** How far the worst leg runs past its allowance (0 when they all fit). */
+    val shortfallMeters: Double get() = (legShortfalls.maxOrNull() ?: 0.0).coerceAtLeast(0.0)
+
+    /** True once the trip has been split by at least one charging stop. */
+    val hasChargingStops: Boolean get() = legMeters.size > 1
 
     /**
      * True when the *detour* is what breaks it: the shortest option offered
      * would make it and this one won't. Worth saying separately — the answer
-     * isn't "charge", it's "this specific route costs you the trip".
+     * isn't "charge", it's "this specific route costs you the trip". Only
+     * meaningful before any charging stop is added, since after that the
+     * comparison is against a different trip.
      */
     val detourIsTheProblem: Boolean
-        get() = routeMeters > usableMeters && shortestOptionMeters <= usableMeters
+        get() = !hasChargingStops && routeMeters > usableMeters && shortestOptionMeters <= usableMeters
 
     enum class Level {
         /** Comfortably within range. */
@@ -44,7 +68,7 @@ data class RangeCheck(
         /** Makes it, but without much left — worth mentioning, not worth alarm. */
         TIGHT,
 
-        /** Won't make it on the charge in the battery. */
+        /** Won't make it: some leg runs past what the battery can cover. */
         SHORT,
     }
 }
@@ -75,6 +99,13 @@ object RangeEstimate {
      */
     const val REACHABLE_FRACTION = 0.8
 
+    /**
+     * What a road-trip charging stop actually leaves in the battery. Charging
+     * past ~80% is slow enough that nobody does it mid-trip, so planning the
+     * next leg against a full battery would promise range that won't be there.
+     */
+    const val CHARGE_TO_FRACTION = 0.8
+
     fun usableMeters(estimatedRangeMiles: Double): Double =
         (estimatedRangeMiles * METERS_PER_MILE * REAL_WORLD_FRACTION - RESERVE_METERS)
             .coerceAtLeast(0.0)
@@ -89,6 +120,8 @@ object RangeEstimate {
         shortestOptionMeters: Int,
         estimatedRangeMiles: Double?,
         batteryPercent: Int?,
+        /** Leg lengths between charging stops; empty means one unbroken run. */
+        legMeters: List<Int> = emptyList(),
     ): RangeCheck? {
         val miles = estimatedRangeMiles?.takeIf { it > 0 } ?: return null
         return RangeCheck(
@@ -96,6 +129,21 @@ object RangeEstimate {
             usableMeters = usableMeters(miles),
             shortestOptionMeters = shortestOptionMeters,
             batteryPercent = batteryPercent,
+            legMeters = legMeters.ifEmpty { listOf(routeMeters) },
+            chargedUsableMeters = chargedUsableMeters(miles, batteryPercent),
         )
+    }
+
+    /**
+     * Range to plan the leg after a charging stop against. Scales the reported
+     * remaining range back up to a full battery, then takes the fraction a
+     * road-trip charge actually reaches. Without a battery reading there is
+     * nothing to scale from, so it falls back to what's in the car now — the
+     * conservative direction.
+     */
+    fun chargedUsableMeters(estimatedRangeMiles: Double, batteryPercent: Int?): Double {
+        val percent = batteryPercent?.takeIf { it in 1..100 } ?: return usableMeters(estimatedRangeMiles)
+        val fullRated = estimatedRangeMiles / (percent / 100.0)
+        return usableMeters(fullRated * CHARGE_TO_FRACTION)
     }
 }

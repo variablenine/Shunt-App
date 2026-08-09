@@ -62,16 +62,27 @@ class BrouterRouter(
     /**
      * Route through [points] — origin, any intermediate stops in order, then the
      * destination — returning up to three options.
+     *
+     * [headingDegrees] is the compass bearing the vehicle is actually travelling
+     * on, when it is moving. Given it, the route has to set off the way the car
+     * is already pointing instead of doubling back — a re-plan that answers with
+     * a U-turn is worse than useless at 60 mph. Pass null when parked or
+     * unknown: a stationary fix's bearing is noise, and pinning the route to it
+     * would rule out the road behind for no reason.
      */
-    fun route(points: List<GeoPoint>, cameras: List<CameraVision>): List<BrouterRoute> {
+    fun route(
+        points: List<GeoPoint>,
+        cameras: List<CameraVision>,
+        headingDegrees: Double? = null,
+    ): List<BrouterRoute> {
         require(points.size >= 2) { "a route needs at least an origin and a destination" }
         lastFailureDiagnostic = null
-        val fastest = runRoute(points, cameras, Avoidance.None)
+        val fastest = runRoute(points, cameras, Avoidance.None, headingDegrees)
             ?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) return listOfNotNull(fastest)
 
-        val balanced = runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT))
+        val balanced = runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees)
             ?.toResult(RouteChoice.BALANCED, cameras)
 
         // "Fewest cameras" must mean *none* whenever a camera-free path exists at
@@ -80,14 +91,14 @@ class BrouterRouter(
         // cone costs little and gets chosen over a long back-road detour — the
         // route then passes a camera that was in fact avoidable. Blocking the
         // zones outright makes the engine find the camera-free path or none.
-        val blocked = runRoute(points, cameras, Avoidance.Blocked)
+        val blocked = runRoute(points, cameras, Avoidance.Blocked, headingDegrees)
             ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
             // hard as possible so the user still gets the best available, and
             // record that hard avoidance failed without claiming why it failed.
-            ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT))
+            ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees)
                 ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
                 ?.copy(hardAvoidanceFailed = true)
 
@@ -129,9 +140,18 @@ class BrouterRouter(
         points: List<GeoPoint>,
         cameras: List<CameraVision>,
         avoidance: Avoidance,
+        headingDegrees: Double? = null,
     ): RawRoute? {
         return try {
             val rc = RoutingContext()
+            // BRouter applies this by placing an imaginary previous position
+            // 1 km back along the bearing, so its ordinary turn costs make
+            // setting off backwards expensive. forceUseStartDirection is what
+            // makes it apply to a full route and not only a partial recalc.
+            headingDegrees?.let {
+                rc.startDirection = normalizedBearing(it)
+                rc.forceUseStartDirection = true
+            }
             // Absolute .brf path => BRouter's null-profileBaseDir branch: no global
             // system property, and lookups.dat is read from the same directory.
             rc.localFunction = File(profileDir, "$profileName.brf").absolutePath
@@ -282,6 +302,10 @@ class BrouterRouter(
             poly.calcBoundingCircle()
             return poly
         }
+
+        /** A compass bearing in 0..359, whatever the caller's sign convention. */
+        internal fun normalizedBearing(degrees: Double): Int =
+            (((degrees % 360.0) + 360.0) % 360.0).toInt()
 
         private fun lonToInt(lon: Double): Int = ((lon + 180.0) * 1_000_000.0 + 0.5).toInt()
         private fun latToInt(lat: Double): Int = ((lat + 90.0) * 1_000_000.0 + 0.5).toInt()

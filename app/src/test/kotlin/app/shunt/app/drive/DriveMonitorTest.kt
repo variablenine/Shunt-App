@@ -121,6 +121,76 @@ class DriveMonitorTest {
         assertEquals(DriveStatus.Idle, statuses.last())
     }
 
+    // ---- Steering a single-destination car pin by pin ---------------------
+
+    @Test
+    fun `steering sends the car the next waypoint, not the rest of the route`() = runTest {
+        // The car takes one destination, so handing it the remaining chain hands
+        // it the far end and loses the shape. Only the next pin goes out — and
+        // as each is approached, the next one after it.
+        val fake = FakeVehicleNavClient()
+        val monitor = DriveMonitor(fake, RecordingAlerter())
+
+        monitor.run(
+            plan().copy(destinationOnly = true, steerByWaypoints = true),
+            flowOf(*approach.map { fix(it) }.toTypedArray()),
+        )
+
+        val advances = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+        assertEquals(listOf(listOf(w2), listOf(dest)), advances.map { it.waypoints })
+    }
+
+    @Test
+    fun `steering carries onto a route that replaces the one being steered`() = runTest {
+        // A re-planned leg is planned the ordinary way and knows nothing about
+        // how this car is being driven; the monitor holds that.
+        val vehicle = FakeVehicleNavClient()
+        val pinned = listOf(GeoPoint(33.2, -96.97), dest)
+        val published = mutableListOf<DrivePlan>()
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+            onPlanChanged = { published += it },
+        ).run(
+            routedPlan().copy(destinationOnly = true, steerByWaypoints = true),
+            flowOf(*departure().toTypedArray()),
+        )
+
+        assertEquals(
+            listOf(listOf(pinned.first())),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+            "only the new route's first pin should have been sent",
+        )
+        assertTrue(
+            published.single().steerByWaypoints,
+            "the screen must be told the replacement is being steered too",
+        )
+    }
+
+    @Test
+    fun `a steered car is re-aimed even when the new route needs no shaping`() = runTest {
+        // The usual rule — don't disturb a car that would drive this road anyway
+        // — doesn't hold here: the car is aimed at a pin on the route just left.
+        val vehicle = FakeVehicleNavClient()
+        val plain = listOf(dest)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+        ).run(
+            DrivePlan(Destination("Home", dest), plain, emptyList(), routeLine, steerByWaypoints = true),
+            flowOf(*departure().toTypedArray()),
+        )
+
+        assertEquals(
+            listOf(plain),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+        )
+    }
+
     // ---- Leaving the planned route --------------------------------------
 
     /** Straight eastbound line; the plan's polyline for adherence checks. */
@@ -163,7 +233,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = alerter,
-            replan = { from ->
+            replan = { from, _ ->
                 replannedFrom = from
                 DrivePlan(Destination("Home", dest), freshChain, emptyList(), freshChain)
             },
@@ -184,12 +254,124 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `a camera-free replacement route is not pushed at the car`() = runTest {
+        // Straying off an already camera-free route should update what the app
+        // shows and leave the car alone. Re-sending the destination it already
+        // holds interrupts the navigation on its screen and tells it nothing.
+        val vehicle = FakeVehicleNavClient()
+        val plain = listOf(dest) // no shaping pins: the car's own road is fine
+        // The route being left is unpinned too, so the car is already aimed at
+        // the destination and there is nothing to correct.
+        val unpinned = DrivePlan(Destination("Home", dest), plain, emptyList(), routeLine)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { from, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), listOf(from, dest)) },
+        ).run(unpinned, flowOf(*departure().toTypedArray()))
+
+        assertTrue(
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().isEmpty(),
+            "nothing needed steering, so the car should have been left alone",
+        )
+    }
+
+    @Test
+    fun `coming off a pinned route restores the destination the car is missing`() = runTest {
+        // The car is still aimed at a shaping pin that no longer exists. Even
+        // though the replacement needs no steering, the stale pin has to go.
+        val vehicle = FakeVehicleNavClient()
+        val plain = listOf(dest)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(
+            listOf(plain),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+            "the destination must be restored over the abandoned pin",
+        )
+    }
+
+    @Test
+    fun `a replacement route that needs steering is still pushed`() = runTest {
+        val vehicle = FakeVehicleNavClient()
+        val pinned = listOf(GeoPoint(33.2, -96.97), dest)
+
+        DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            replan = { _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(
+            listOf(pinned),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.PushRoute>().map { it.waypoints },
+        )
+    }
+
+    @Test
+    fun `the route in force is published so the screen can follow it`() = runTest {
+        // Without this a re-plan is invisible: the monitor drives the new line
+        // while the map still shows the one that was abandoned.
+        val fresh = DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
+        val published = mutableListOf<DrivePlan>()
+
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { _, _ -> fresh },
+            onPlanChanged = { published += it },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(listOf(fresh), published, "the new route must reach the screen")
+    }
+
+    @Test
+    fun `a re-plan while under way is given the direction of travel`() = runTest {
+        // The bug this prevents: a re-plan that answers "turn round and go back
+        // to the road you just left". At 60 mph that isn't a route.
+        var seenHeading: Double? = null
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { _, heading ->
+                seenHeading = heading
+                DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
+            },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        assertEquals(90.0, seenHeading, "the fix's own bearing must reach the router")
+    }
+
+    @Test
+    fun `a re-plan while stopped is given no direction at all`() = runTest {
+        // A parked car's last bearing is just the way it happened to come to
+        // rest; holding a new route to it would rule out the road behind.
+        var seenHeading: Double? = 123.0
+        val stopped = departure().map { it.copy(speedMetersPerSec = 0.0) }
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { _, heading ->
+                seenHeading = heading
+                DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
+            },
+        ).run(routedPlan(), flowOf(*stopped.toTypedArray()))
+
+        assertEquals(null, seenHeading, "a stationary bearing must not constrain the route")
+    }
+
+    @Test
     fun `a failed re-plan says plainly that nothing is protecting you`() = runTest {
         val alerter = RecordingAlerter()
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = alerter,
-            replan = { null }, // e.g. camera data unavailable out here
+            replan = { _, _ -> null }, // e.g. camera data unavailable out here
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         val failed = alerter.alerts.filterIsInstance<Alert.ReplanFailed>().single()
@@ -219,7 +401,7 @@ class DriveMonitorTest {
     ) = ChargeStopCoordinator(
         vehicle = vehicle,
         readActiveRoute = { reads.removeFirstOrNull() },
-        planLeg = { _, _, to -> if (to.location == charger) chargerPlan else null },
+        planLeg = { _, _, to, _ -> if (to.location == charger) chargerPlan else null },
         // Cadence is covered in ChargeStopCoordinatorTest; here every fix is
         // due so the test is about what the monitor does with the answer.
         window = ProbeWindow(readIntervalMillis = 0, minIntervalMillis = 0),
@@ -320,7 +502,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = alerter,
-            replan = { from ->
+            replan = { from, _ ->
                 DrivePlan(Destination("Home", dest), listOf(dest), listOf(onNewRoute), listOf(from, dest))
             },
         ).run(routedPlan(), flowOf(*fixes.toTypedArray()))

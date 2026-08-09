@@ -29,15 +29,29 @@ class DriveMonitor(
      * when it has left the planned route, or null if it can't. Absent, leaving
      * the route is still detected and alerted — just not recovered from.
      */
-    private val replan: (suspend (from: GeoPoint) -> DrivePlan?)? = null,
+    private val replan: (suspend (from: GeoPoint, headingDegrees: Double?) -> DrivePlan?)? = null,
     /**
      * Watches for a charging stop the *car* inserts on its own and re-plans the
      * trip as legs around it. Null leaves the behaviour exactly as before: one
      * route, one destination, no reads of the vehicle's state.
      */
     private val charging: ChargeStopCoordinator? = null,
+    /**
+     * Called whenever the route in force changes, so the screen can draw what
+     * is actually being driven. Without it a re-plan is invisible: the monitor
+     * follows the new line while the map still shows the abandoned one.
+     */
+    private val onPlanChanged: (DrivePlan) -> Unit = {},
 ) {
+    /**
+     * Whether the car is being steered pin by pin (see [DrivePlan.steerByWaypoints]).
+     * Set from the plan this monitor was started with and carried across every
+     * route that replaces it: the car's capabilities don't change mid-trip.
+     */
+    private var steering = false
+
     suspend fun run(plan: DrivePlan, locations: Flow<LocationUpdate>) {
+        steering = plan.steerByWaypoints
         var current = plan
         var engine = newEngine(current)
         val finalDestination = plan.destination
@@ -46,6 +60,9 @@ class DriveMonitor(
         var previous: LocationUpdate? = null
         try {
             locations.takeWhile { !arrived }.collect { update ->
+                // Worked out before `previous` moves on, so it compares this fix
+                // with the one before it rather than with itself.
+                val heading = headingOf(previous, update)
                 for (signal in engine.onLocation(update)) {
                     when (signal) {
                         is DriveSignal.ApproachingWaypoint -> advance(signal.remaining)
@@ -60,7 +77,11 @@ class DriveMonitor(
                             // force, and the driver must know that immediately
                             // rather than after a re-plan that may fail.
                             alerter.alert(Alert.OffRoute(signal.metersOffRoute, replanning = replan != null))
-                            replanFrom(signal.at, current)?.let { fresh ->
+                            // Re-plan from the direction of travel, not just the
+                            // position. Without it the answer can be "turn round"
+                            // — which on a road you've just committed to is not
+                            // an answer at all.
+                            replanFrom(signal.at, current, heading)?.let { fresh ->
                                 current = fresh
                                 engine = newEngine(fresh)
                             }
@@ -106,6 +127,7 @@ class DriveMonitor(
                     destination = finalDestination,
                     remainingStops = engine.remainingStops(),
                     steeringChain = engine.remainingChain(),
+                    headingDegrees = heading,
                 )
                 applyLeg(change, finalDestination)?.let { fresh ->
                     current = fresh
@@ -124,16 +146,20 @@ class DriveMonitor(
     private suspend fun applyLeg(change: LegChange, finalDestination: Destination): DrivePlan? = when (change) {
         LegChange.None -> null
         is LegChange.ToChargeStop -> {
-            alerter.alert(Alert.ChargeStopAhead(change.stop.name, change.plan.cameras.size))
+            val plan = inForce(change.plan)
+            alerter.alert(Alert.ChargeStopAhead(change.stop.name, plan.cameras.size))
             onStatus(DriveStatus.Driving(finalDestination.title, chargingVia = change.stop.name))
-            push(change.plan.chain)
-            change.plan
+            push(plan.chain)
+            onPlanChanged(plan)
+            plan
         }
         is LegChange.ToDestination -> {
-            alerter.alert(Alert.ResumingToDestination(change.plan.cameras.size))
+            val plan = inForce(change.plan)
+            alerter.alert(Alert.ResumingToDestination(plan.cameras.size))
             onStatus(DriveStatus.Driving(finalDestination.title))
-            push(change.plan.chain)
-            change.plan
+            push(plan.chain)
+            onPlanChanged(plan)
+            plan
         }
         is LegChange.Unroutable -> {
             // The car is going there regardless; the only honest thing left is
@@ -156,20 +182,47 @@ class DriveMonitor(
      * in which case the driver has already been told they're off route and is
      * additionally told that no avoidance is active.
      */
-    private suspend fun replanFrom(from: GeoPoint, previous: DrivePlan): DrivePlan? {
+    private suspend fun replanFrom(
+        from: GeoPoint,
+        previous: DrivePlan,
+        headingDegrees: Double?,
+    ): DrivePlan? {
         val doReplan = replan ?: return null
-        val fresh = runCatching { doReplan(from) }.getOrNull()
-        if (fresh == null) {
+        val planned = runCatching { doReplan(from, headingDegrees) }.getOrNull()
+        if (planned == null) {
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
             return null
         }
-        // Hand the car the new chain. A push failure is loud but doesn't discard
-        // the plan: our own camera warnings still follow the new route, which is
-        // the part that matters when the vehicle isn't cooperating.
-        push(fresh.chain)
+        val fresh = inForce(planned)
+        // Only bother the car when the new route actually needs steering.
+        //
+        // A route with no shaping pins is one the car would drive anyway, so
+        // pushing it says nothing it doesn't already know — on a single-
+        // destination car it re-sends the same destination, which interrupts
+        // the navigation on screen for no gain. The exception is coming *off* a
+        // pinned route: the car is still aimed at a pin that no longer exists,
+        // so the destination has to be restored.
+        //
+        // Steering pin by pin is the exception to the exception: the car is
+        // aimed at a point on the route we just left, so the new head has to go
+        // out even when the new route needs no shaping of its own.
+        val needsSteering = steering || fresh.chain.size > 1
+        val holdsStalePin = previous.chain.size > 1
+        if (needsSteering || holdsStalePin) push(fresh.chain)
+
         alerter.alert(Alert.Replanned(fresh.cameras.size))
+        onPlanChanged(fresh)
         return fresh
     }
+
+    /**
+     * The bearing to route from: the fix's own heading while under way, null
+     * when stopped. A parked car's last heading is just the way it happened to
+     * come to rest, and holding a new route to it would rule out the road
+     * behind for no reason.
+     */
+    private fun headingOf(previous: LocationUpdate?, update: LocationUpdate): Double? =
+        if (isMoving(previous, update)) update.bearingDegrees else null
 
     /**
      * Whether the car is under way. A Tesla doesn't work out its charging stops
@@ -183,21 +236,39 @@ class DriveMonitor(
         return haversineMeters(from, update.point) >= MOVING_METERS_BETWEEN_FIXES
     }
 
+    /**
+     * What to actually send the car for a chain that has [chain] left in it.
+     *
+     * When steering pin by pin, the car is only ever given the *next* point:
+     * it accepts one destination, so handing it the whole tail means handing it
+     * the far end and losing the shape entirely. Sending only the head is what
+     * makes the avoidance reach the car — and the pin moves forward as each one
+     * is approached, so the car is walked along the route.
+     */
+    private fun aim(chain: List<GeoPoint>): List<GeoPoint> =
+        if (steering && chain.isNotEmpty()) listOf(chain.first()) else chain
+
+    /** Stamp the steering mode on a route that replaces the current one. */
+    private fun inForce(plan: DrivePlan): DrivePlan =
+        if (plan.steerByWaypoints == steering) plan else plan.copy(steerByWaypoints = steering)
+
     /** Send a whole route to the car, alerting loudly if it doesn't land. */
     private suspend fun push(chain: List<GeoPoint>) {
-        val pushed = runCatching { vehicle.pushRoute(chain) }
+        val sending = aim(chain)
+        val pushed = runCatching { vehicle.pushRoute(sending) }
             .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
         if (pushed is PushResult.Failed) {
-            alerter.alert(Alert.AdvanceFailed(chain, pushed.reason, pushed.retryable))
+            alerter.alert(Alert.AdvanceFailed(sending, pushed.reason, pushed.retryable))
         }
     }
 
     private suspend fun advance(remaining: List<GeoPoint>) {
-        val result = runCatching { vehicle.advanceTo(remaining) }
+        val sending = aim(remaining)
+        val result = runCatching { vehicle.advanceTo(sending) }
             .getOrElse { e -> PushResult.Failed("advance threw: ${e.message}", retryable = true) }
         if (result is PushResult.Failed) {
             // Loud: the car may still stop at the waypoint we failed to drop.
-            alerter.alert(Alert.AdvanceFailed(remaining, result.reason, result.retryable))
+            alerter.alert(Alert.AdvanceFailed(sending, result.reason, result.retryable))
         }
     }
 

@@ -44,6 +44,7 @@ class WaypointExtractorTest {
             }
             start += len + 8
         }
+        // An explicit cap is still honoured when a caller asks for one.
         val waypoints = WaypointExtractor.extract(chosen, fastest, maxWaypoints = 5)
         assertTrue(waypoints.size == 5, "expected 5, got ${waypoints.size}")
         // Route order: longitudes strictly increasing (route runs west→east).
@@ -52,10 +53,16 @@ class WaypointExtractorTest {
     }
 
     @Test
-    fun `waypoints always within cap`() {
+    fun `an entirely divergent route is pinned from its own points, in order`() {
+        // There is no fixed budget any more: what bounds the count is the route
+        // itself, since every pin is a point on it.
         val fastest = line(39.0, n = 200)
         val chosen = fastest.map { GeoPoint(it.lat + 0.02, it.lon) } // entirely divergent
-        assertTrue(WaypointExtractor.extract(chosen, fastest).size <= WaypointExtractor.MAX_WAYPOINTS)
+        val waypoints = WaypointExtractor.extract(chosen, fastest)
+
+        assertTrue(waypoints.size <= chosen.size, "more pins than the route has points")
+        assertTrue(waypoints.all { it in chosen }, "a pin must be a point on the route")
+        assertTrue(waypoints.map { it.lon } == waypoints.map { it.lon }.sorted(), "out of route order")
     }
 
     // ---- Stopping the car cutting the corner ----------------------------
@@ -150,7 +157,7 @@ class WaypointExtractorTest {
     }
 
     @Test
-    fun `the waypoint budget is never exceeded even under heavy camera pressure`() {
+    fun `heavy camera pressure terminates and pins as much as it needs`() {
         val fastest = line(39.0, n = 200)
         val chosen = fastest.mapIndexed { i, p ->
             if (i in 40..160) GeoPoint(p.lat + 0.02, p.lon) else p
@@ -158,9 +165,11 @@ class WaypointExtractorTest {
         // A dense line of cameras along the fast route: every shortcut is exposed.
         val cameras = (40..160 step 5).map { cameraAt(fastest[it]) }
         val waypoints = WaypointExtractor.extract(chosen, fastest, avoid = cameras)
-        assertTrue(
-            waypoints.size <= WaypointExtractor.MAX_WAYPOINTS,
-            "budget blown: ${waypoints.size} > ${WaypointExtractor.MAX_WAYPOINTS}",
-        )
+
+        // The point is that it ends, and that it is free to use as many pins as
+        // the shortcuts demand rather than rationing them across the route.
+        assertTrue(waypoints.size <= chosen.size, "more pins than the route has points")
+        assertTrue(waypoints.isNotEmpty(), "a route this exposed must be pinned")
+        assertTrue(waypoints.distinct().size == waypoints.size, "duplicate pins")
     }
 }
