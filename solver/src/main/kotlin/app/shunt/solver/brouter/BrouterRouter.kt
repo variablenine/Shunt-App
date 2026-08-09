@@ -53,6 +53,23 @@ class BrouterRouter(
     private val segmentDir: File,
     private val profileDir: File,
     private val profileName: String = "car-vario",
+    /**
+     * How long the avoidance passes may take before the rest are abandoned.
+     *
+     * A search is not interruptible once started, so this is checked *between*
+     * passes: it bounds the wait at roughly one pass beyond the budget rather
+     * than exactly at it. That is still the difference between a plan that
+     * arrives late and one the driver gives up on — which is what was happening
+     * on the longest trips, where planning ran so long it was never seen to
+     * finish at all.
+     *
+     * Skipping only ever removes an *option*. It never changes how a route that
+     * is returned was planned, and never lets one be labelled against cameras it
+     * was not given — so the honest failure here is a shorter chooser, not a
+     * wrong one.
+     */
+    private val passBudgetMillis: Long = PASS_BUDGET_MILLIS,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
     /** Why the last [route] found nothing, for diagnostics — null after a success. */
     @Volatile
@@ -86,6 +103,7 @@ class BrouterRouter(
         require(points.size >= 2) { "a route needs at least an origin and a destination" }
         lastFailureDiagnostic = null
         val timings = mutableListOf<PlanTimings.Timed>()
+        val startedWholeAt = nowMillis()
         // Each of these is a full search over the road graph, which on a
         // cross-state trip is the whole cost of planning. Which one is expensive
         // decides what to do about it, so they are timed apart.
@@ -96,6 +114,17 @@ class BrouterRouter(
             return result
         }
 
+        /** True once there is no time left for another search over the graph. */
+        fun outOfTime(label: String): Boolean {
+            val spent = nowMillis() - startedWholeAt
+            if (spent < passBudgetMillis) return false
+            // Recorded so the reason shows up wherever the breakdown does. A
+            // silently missing option looks like the app deciding there wasn't
+            // one, which is the opposite of what happened.
+            timings += PlanTimings.Timed("$label (skipped — over budget)", 0)
+            return true
+        }
+
         val fastest = timed("fastest") { runRoute(points, cameras, Avoidance.None, headingDegrees) }
             ?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
@@ -104,10 +133,13 @@ class BrouterRouter(
             return listOfNotNull(fastest)
         }
 
-        val balanced = timed("balanced") {
-            runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees)
+        val balanced = if (outOfTime("balanced")) {
+            null
+        } else {
+            timed("balanced") {
+                runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees)
+            }?.toResult(RouteChoice.BALANCED, cameras)
         }
-            ?.toResult(RouteChoice.BALANCED, cameras)
 
         // "Fewest cameras" must mean *none* whenever a camera-free path exists at
         // any distance. A weighted nogo can't promise that: BRouter charges
@@ -115,18 +147,26 @@ class BrouterRouter(
         // cone costs little and gets chosen over a long back-road detour — the
         // route then passes a camera that was in fact avoidable. Blocking the
         // zones outright makes the engine find the camera-free path or none.
-        val blocked = timed("blocked") { runRoute(points, cameras, Avoidance.Blocked, headingDegrees) }
-            ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+        val blocked = if (outOfTime("blocked")) {
+            null
+        } else {
+            timed("blocked") { runRoute(points, cameras, Avoidance.Blocked, headingDegrees) }
+                ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+        }
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
             // hard as possible so the user still gets the best available, and
             // record that hard avoidance failed without claiming why it failed.
-            ?: timed("fewest (fallback)") {
-                runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees)
+            ?: if (outOfTime("fewest (fallback)")) {
+                null
+            } else {
+                timed("fewest (fallback)") {
+                    runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees)
+                }
+                    ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
+                    ?.copy(hardAvoidanceFailed = true)
             }
-                ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
-                ?.copy(hardAvoidanceFailed = true)
         lastPassTimings = timings
 
         // Fastest first, then the avoidance options — but only ones that are
@@ -264,6 +304,18 @@ class BrouterRouter(
     }
 
     companion object {
+        /**
+         * How long the avoidance passes get before the rest are abandoned.
+         *
+         * Measured on a real phone: a 470 km trip spends about 30 s across all
+         * of them, so this leaves generous headroom for something longer while
+         * still bounding the trips that used to run for many minutes and never
+         * be seen to finish. A driver waiting on a route will wait a minute; at
+         * twenty they have already closed the app, which means the answer was
+         * worth nothing however good it was.
+         */
+        const val PASS_BUDGET_MILLIS = 75_000L
+
         // Nogo penalty per meter inside a camera's zone. Balanced accepts a
         // camera to save a big detour; fewest avoids hard where a path exists.
         private const val BALANCED_WEIGHT = 500.0

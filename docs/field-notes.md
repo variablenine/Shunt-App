@@ -181,8 +181,38 @@ camera box; and whether one avoidance pass dominates, in particular a `blocked`
 pass that fails and forces the `fewest (fallback)` pass — two searches for one
 option. Remove the instrumentation once this is resolved.
 
-**Still to check on a real phone:** how long the route-deciding passes alone
-take on a long trip. If that is still slow, the remaining levers are
+**Measured after the corridor change**, same phone, three trips:
+
+| Trip | Before | After | Routing stage |
+|---|---|---|---|
+| 241 km | 59.3 s | 10.4 s | 51.9 s → 6.4 s |
+| ~400 km | 1 m 49 s | 25.4 s | 93 s → 16.1 s |
+| ~470 km | 12 m 46 s | 41.0 s | 12 m 05 s → 31.8 s |
+
+No `widen` on any of them, and camera lookup fell to 0.0 s (cached). Usable.
+
+**Still not usable at the top end.** A route from the Upper Peninsula to Chicago
+still runs long enough that the maintainer closed the app rather than see it
+finish — so its breakdown has never been observed, which is the first problem to
+solve rather than the second. Planning now abandons the remaining avoidance
+passes once `BrouterRouter.PASS_BUDGET_MILLIS` is spent and names each one it
+dropped in the breakdown, so that trip should come back with *something* and,
+more importantly, with an account of where the time went.
+
+Two hypotheses worth separating when that breakdown arrives:
+
+- **`fewest (fallback)` appears.** Then the hard-block pass is failing — likely,
+  since a camera-free route into a dense metro may not exist — and the trip is
+  paying for two exhaustive searches. A failed blocked search is the worst case
+  there is: it explores everything reachable before concluding nothing works.
+- **No fallback, just large numbers.** Then it is raw scale, and the levers are
+  concurrency across the independent passes (BRouter thread-safety unknown, and
+  a wrong route from a data race would be far worse than a slow one) or a
+  tighter corridor.
+
+**Known gap:** the pass budget is a property of the router, so a mid-drive
+re-plan gets the same generous 75 s as a driver sitting at the kerb. The refine
+budget is already split that way; this should be too. If that is still slow, the remaining levers are
 concurrency across the avoidance passes and shrinking the nogo set — see
 CLAUDE.md §7 for why the second one is dangerous.
 
