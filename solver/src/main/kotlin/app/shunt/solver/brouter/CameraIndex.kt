@@ -39,6 +39,16 @@ class CameraIndex(private val cameras: List<CameraVision>) {
         return cameras.filter { it in hits }
     }
 
+    /**
+     * Whether any camera sees this single point.
+     *
+     * Used to tell, before spending a search on it, that a hard block cannot
+     * possibly succeed: a route may not begin or end inside a zone the router
+     * has been told is impassable.
+     */
+    fun anySeeing(p: GeoPoint): Boolean =
+        cameras.isNotEmpty() && index.near(p, maxRange).any { it.sees(p) }
+
     /** Whether any camera at all sees [polyline] — stops at the first one. */
     fun anySees(polyline: List<GeoPoint>): Boolean {
         if (cameras.isEmpty() || polyline.size < 2) return false

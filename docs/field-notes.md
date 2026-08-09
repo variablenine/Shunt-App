@@ -251,6 +251,36 @@ in the routing stage. **The missing ~28 s was labelling, not routing.**
 spending the hard-block pass's time without doing any routing with it. Both
 counts are indexed now, which should hand `blocked` back the room it needs.
 
+**Chicago again, after reordering (2026-08-09):**
+
+```
+fastest (spine)                    5.6 s
+fastest                            5.0 s
+blocked (no route)                41.9 s
+fewest (fallback) (no route)      27.8 s
+balanced (skipped — over budget)   0.0 s
+```
+
+Two things in that, both actionable.
+
+`fewest (fallback) (no route)` cannot be literally true. It is a *weighted*
+penalty, not a block — every road stays passable — so if `fastest` found a route
+in 5 s, the fallback has one too. It ran out of time and was mislabelled:
+BRouter catches its own timeout and reports it through `errorMessage` rather
+than letting the exception out, and the code only looked for it in the throw.
+
+And `blocked` spent 41.9 s proving something knowable in microseconds. **A hard
+block cannot begin or end inside a zone it blocks**, and in a city centre the
+destination is very often within sight of a camera. That is both the case where
+the block is guaranteed to fail *and* the case where failing is most expensive,
+because a failing block exhausts every reachable road before concluding. Those
+41.9 s are what starved the fallback.
+
+Endpoints are now checked first, which is sound rather than merely likely: the
+nogo shapes are built to *contain* what `CameraVision.sees` covers, so a point
+that is seen is certainly inside the block. A point that is not seen may still
+be, and that case runs exactly as before.
+
 **Still not usable at the top end.** A route from the Upper Peninsula to Chicago
 still runs long enough that the maintainer closed the app rather than see it
 finish — so its breakdown has never been observed, which is the first problem to

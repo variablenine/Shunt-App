@@ -184,8 +184,27 @@ class BrouterRouter(
         // nothing is the most expensive outcome there is — it exhausts every
         // road reachable before concluding — and the fallback below is what
         // rescues that case. Spending everything here would starve it.
-        val blocked = pass("blocked", Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
-            ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
+        // A hard block cannot route out of, or into, a point that is already
+        // inside one of the zones it blocks — BRouter rejects such a request
+        // outright. In a city centre the destination itself is often within
+        // sight of a camera, and that is the case where the block is both
+        // guaranteed to fail and most expensive to fail: it exhausts every
+        // reachable road before saying so. On a real trip that was 42 seconds
+        // spent proving something knowable in microseconds, and it starved the
+        // fallback that would have produced a route.
+        //
+        // Sound rather than merely likely: the nogo shapes are built to
+        // *contain* what CameraVision.sees covers, so a point that is seen is
+        // certainly inside the block. A point that is not seen may still be
+        // inside it, and that case simply runs as before.
+        val endpointInsideZone = points.any { index.anySeeing(it) }
+        val blocked = if (endpointInsideZone) {
+            timings += PlanTimings.Timed("blocked (skipped — an endpoint is inside a camera's view)", 0)
+            null
+        } else {
+            pass("blocked", Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
+                ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
+        }
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
@@ -292,7 +311,11 @@ class BrouterRouter(
             val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
             engine.quite = true // suppress BRouter's GPX-to-stdout dump
             engine.doRun(timeoutMillis.coerceAtLeast(1L))
-            if (engine.errorMessage != null) return failed("brouter: ${engine.errorMessage}")
+            // BRouter catches its own timeout and reports it here rather than
+            // throwing it out, so this is where "ran out of time" has to be told
+            // apart from "no road goes there". Getting that wrong is how a
+            // timed-out pass came to read as a proven absence of a route.
+            engine.errorMessage?.let { return failed("brouter: $it", timedOut = "timeout" in it.lowercase()) }
             val track = engine.foundTrack ?: return failed("brouter: no track returned")
             val line = track.nodes.map { node ->
                 GeoPoint(
@@ -389,10 +412,10 @@ class BrouterRouter(
         return null
     }
 
-    /** A search that produced nothing for a reason other than running out of time. */
-    private fun failed(reason: String): RunOutcome {
+    /** A search that produced nothing, and whether that was for want of time. */
+    private fun failed(reason: String, timedOut: Boolean = false): RunOutcome {
         note(reason)
-        return RunOutcome(null, timedOut = false)
+        return RunOutcome(null, timedOut)
     }
 
     companion object {

@@ -136,6 +136,49 @@ class RoutingBudgetTest {
     }
 
     @Test
+    fun `a hard block that cannot possibly succeed is not attempted`() {
+        // Observed on a real trip: 41.9 s spent proving a camera-free route into
+        // a city centre does not exist, when the destination was inside a
+        // camera's field of view — which makes the block unroutable by
+        // definition, and knowable before the search rather than after it. Those
+        // 41.9 s starved the fallback that would have produced a route.
+        var now = 0L
+        val camerasOnDestination = listOf(CameraVision(trip.last(), directionDegrees = null))
+        val subject = router({ now += 1; now }, budget = 75_000)
+
+        subject.route(RouteRequest(trip, camerasOnDestination))
+
+        val labels = subject.lastPassTimings.map { it.label }
+        val blockedLine = labels.single { it.startsWith("blocked") }
+        assertTrue(
+            "endpoint" in blockedLine,
+            "the block must say why it was not attempted, not vanish: $labels",
+        )
+        assertEquals(
+            0L,
+            subject.lastPassTimings.single { it.label == blockedLine }.millis,
+            "and must cost nothing",
+        )
+    }
+
+    @Test
+    fun `a clear endpoint still gets the hard block attempted`() {
+        // The skip has to be sound, not merely convenient: it may only fire when
+        // the block genuinely cannot work. A camera nowhere near either end is
+        // no reason to give up on a camera-free route.
+        var now = 0L
+        val farAway = listOf(CameraVision(app.shunt.core.GeoPoint(20.0, -100.0), directionDegrees = null))
+        val subject = router({ now += 1; now }, budget = 75_000)
+
+        subject.route(RouteRequest(trip, farAway))
+
+        assertTrue(
+            subject.lastPassTimings.any { it.label.startsWith("blocked") && "endpoint" !in it.label },
+            "the block must be attempted: ${subject.lastPassTimings.map { it.label }}",
+        )
+    }
+
+    @Test
     fun `a generous budget leaves every pass to run`() {
         var now = 0L
         val subject = router({ now += 1; now }, budget = 75_000)
