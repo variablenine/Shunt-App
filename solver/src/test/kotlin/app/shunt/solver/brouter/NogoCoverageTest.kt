@@ -49,6 +49,54 @@ class NogoCoverageTest {
         }
     }
 
+    /** Every point a camera anywhere can see, swept around its own location. */
+    private fun seenPointsAround(vision: CameraVision): List<GeoPoint> = buildList {
+        var bearing = 0.0
+        while (bearing < 360.0) {
+            var distance = 1.0
+            while (distance <= vision.range) {
+                val p = destinationPoint(vision.location, bearing, distance)
+                if (vision.sees(p)) add(p)
+                distance += 3.0
+            }
+            bearing += 1.0
+        }
+    }
+
+    @Test
+    fun `one shape standing in for several cameras still covers every one of them`() {
+        // Several units on one gantry become a single nogo, because the count of
+        // zones is what makes routing slow in a city. That is only allowed if
+        // the shape that replaces them blocks at least as much: a gap here is a
+        // road labelled camera-free with a camera watching it.
+        val gantry = (0 until 6).map {
+            CameraVision(
+                destinationPoint(camera, it * 55.0, 6.0 + it * 3.0),
+                directionDegrees = 90.0 + (it - 3) * 3.0,
+            )
+        }
+
+        val nogos = router.buildNogos(gantry, Double.NaN, RoutingParamCollector())
+        val polygons = nogos.filterIsInstance<OsmNogoPolygon>()
+        // Without this the test would pass just as happily on six separate
+        // shapes, proving nothing about the merge it exists to guard.
+        assertTrue(
+            polygons.size < gantry.size,
+            "the gantry must actually collapse: ${polygons.size} shapes for ${gantry.size} cameras",
+        )
+
+        for (vision in gantry) {
+            val escaped = seenPointsAround(vision).filterNot { p ->
+                val (x, y) = p.asPolygonPoint()
+                polygons.any { it.isWithin(x, y) }
+            }
+            assertTrue(
+                escaped.isEmpty(),
+                "${escaped.size} points this camera sees fell outside every blocked shape",
+            )
+        }
+    }
+
     @Test
     fun `a directional camera's whole field of view is inside the blocked sector`() {
         // Several facings, so the fan isn't only checked where it happens to

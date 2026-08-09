@@ -354,18 +354,31 @@ class BrouterRouter(
         // as an Int would silently become 0, i.e. a nogo with no effect at all.
         val weightSpec = if (weight.isNaN()) "NaN" else weight.toInt().toString()
 
-        val omni = cameras.filter { it.directionDegrees == null }
+        // One shape per *site*, not per unit. A junction routinely carries
+        // several cameras from one operator within a few metres of each other,
+        // all watching the same approach, and each was becoming its own zone —
+        // which is pure cost, since what makes routing slow here is checking
+        // every expanded link against every zone.
+        val clusters = clusterCameras(cameras)
+
+        val omni = clusters.filter { it.directionDegrees == null }
         if (omni.isNotEmpty()) {
-            val radius = (CameraVision.OMNI_RANGE_M + NOGO_MARGIN_METERS).toInt()
             val spec = omni.joinToString("|") { c ->
-                "${c.location.lon},${c.location.lat},$radius,$weightSpec"
+                val radius = (c.rangeMeters + NOGO_MARGIN_METERS).toInt()
+                "${c.center.lon},${c.center.lat},$radius,$weightSpec"
             }
             collector.readNogoList(spec)?.let { nogos.addAll(it) }
         }
 
-        for (cam in cameras) {
-            val direction = cam.directionDegrees ?: continue
-            nogos += sectorPolygon(cam.location, direction, CameraVision.DIRECTIONAL_RANGE_M, weight)
+        for (cluster in clusters) {
+            val direction = cluster.directionDegrees ?: continue
+            nogos += sectorPolygon(
+                apex = cluster.center,
+                directionDeg = direction,
+                range = cluster.rangeMeters,
+                weight = weight,
+                extraHalfAngleDegrees = cluster.extraHalfAngleDegrees,
+            )
         }
         return nogos
     }
@@ -496,6 +509,8 @@ class BrouterRouter(
             directionDeg: Double,
             range: Double,
             weight: Double,
+            /** Widening needed when this fan stands in for several cameras. */
+            extraHalfAngleDegrees: Double = 0.0,
         ): OsmNogoPolygon {
             val poly = OsmNogoPolygon(true)
             // Start the fan a little *behind* the lens rather than at it. A
@@ -505,7 +520,8 @@ class BrouterRouter(
             // pocket and only ever grows the zone.
             val back = destinationPoint(apex, directionDeg + 180.0, NOGO_MARGIN_METERS)
             poly.addVertex(lonToInt(back.lon), latToInt(back.lat))
-            val halfAngle = CameraVision.FOV_HALF_ANGLE + NOGO_ANGLE_MARGIN_DEGREES
+            val halfAngle = (CameraVision.FOV_HALF_ANGLE + NOGO_ANGLE_MARGIN_DEGREES + extraHalfAngleDegrees)
+                .coerceAtMost(180.0)
             // Push the vertices out so the chords sit outside the true arc.
             val outer = (range + NOGO_MARGIN_METERS) /
                 cos(Math.toRadians(halfAngle / SECTOR_STEPS))

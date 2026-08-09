@@ -281,6 +281,42 @@ nogo shapes are built to *contain* what `CameraVision.sees` covers, so a point
 that is seen is certainly inside the block. A point that is not seen may still
 be, and that case runs exactly as before.
 
+**Chicago, third attempt (2026-08-09).** Honest labels at last:
+
+```
+fastest (spine)                            3.5 s
+fastest                                    3.4 s
+blocked (gave up — out of time)           42.9 s
+fewest (fallback) (gave up — out of time) 28.5 s
+balanced (skipped — over budget)           0.0 s
+```
+
+The endpoint check correctly did *not* fire — the destination is far enough from
+any camera that a hard block was worth attempting. Both fewest-cameras passes
+simply ran out of time.
+
+**What the numbers say about where the time goes.** `fastest`, carrying no
+cameras, is 3.4 s. `balanced` (a finite penalty) and `blocked` (impassable) are
+both ~43 s on the same graph. Those two have completely different search spaces
+and near-identical cost, which rules out the search being the expense: what they
+share is *checking every expanded link against every zone*. **The number of
+zones is the cost.**
+
+And the camera list shows why there are so many: six Illinois State Police
+cameras inside about thirty metres, all watching one junction. Six zones
+describing one piece of road. A real ALPR site is not one camera.
+
+So cameras are now grouped into one shape per *site* before they reach the
+router. Deliberately conservative, because merging may only ever grow what is
+blocked: members must be within 35 m **and** agree on where they are looking.
+Cameras facing different ways stay separate — facing is what lets a route pass
+*behind* a camera, and merging that away would delete real roads from
+consideration.
+
+`NogoCoverageTest` sweeps every point each member can see and asserts it falls
+inside the merged polygon, and asserts the merge actually happened — otherwise
+it would pass just as well on no merging at all.
+
 **Still not usable at the top end.** A route from the Upper Peninsula to Chicago
 still runs long enough that the maintainer closed the app rather than see it
 finish — so its breakdown has never been observed, which is the first problem to
