@@ -397,6 +397,21 @@ resulting build**, once CI is green. That loop is meant to be hands-off: make
 the change, push, watch the run, send the link. If a run fails, fix it and push
 again — do not leave a red `main`.
 
+Three workflows run on a `main` push, and all three have to be green before a
+build is worth sending:
+
+| Workflow | What it proves |
+|---|---|
+| `tests.yml` | The unit suites pass (`:core`, `:solver`, `:tesla`, `:app`). |
+| `instrumented.yml` | The app launches on a real emulator — the only check that catches launch crashes and Compose regressions. |
+| `release.yml` | It builds under R8, and produces the installable APK. |
+
+`release.yml` writes a **run summary containing a direct download link** for the
+APK, so the link to send is the run's summary page. Downloading a workflow
+artifact requires being signed in to GitHub; that is GitHub's rule, and it is
+the reason a rolling pre-release would be more convenient — deliberately not
+done, because no release goes out until the app works in a car.
+
 **No releases until the app is genuinely functional in a car.** Builds ship as
 CI artifacts. When releases do start: *pre-releases* list each individual
 change; *full releases* summarize changes since the last full release.

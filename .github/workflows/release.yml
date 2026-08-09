@@ -72,10 +72,32 @@ jobs:
           echo "path=dist/shunt-${version}.apk" >> "$GITHUB_OUTPUT"
 
       - name: Upload as a build artifact (always)
+        id: upload
         uses: actions/upload-artifact@v4
         with:
           name: shunt-apk
           path: dist/*.apk
+
+      # Every main push is meant to end with an installable build the maintainer
+      # can reach in one click. Artifact links are per-run and easy to lose, so
+      # the run's own summary page carries it.
+      - name: Say where the build is
+        if: always()
+        run: |
+          {
+            echo "## Shunt build"
+            echo
+            echo "**[Download the APK](${{ steps.upload.outputs.artifact-url }})**"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA::7}\` |"
+            echo "| Branch | \`${GITHUB_REF_NAME}\` |"
+            echo "| Signing | ${{ steps.keystore.outputs.path && 'stable alpha key (updates install in place)' || 'debug key (will NOT update over a previous build)' }} |"
+            echo
+            echo "Sign-in is required to download a workflow artifact — that is a"
+            echo "GitHub rule, not a Shunt one."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Attach the APK to the release
         if: github.event_name == 'release'
