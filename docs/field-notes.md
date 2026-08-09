@@ -344,10 +344,11 @@ handful of hand-drawn nogos; Shunt hands it thousands of cameras.
 
 Indexing that loop (`btools/router/NogoIndex.java`):
 
-| | full scan | indexed |
+| 490 km trip, whole call | full scan | indexed |
 |---|---|---|
-| `blocked`, 1181 nogos | 202.1 s | 12.9 s |
-| whole call, 608 nogos | 221.7 s | 28.1 s |
+| 608 nogos (2 km corridor) | 221.7 s | 28.1 s |
+| 1181 nogos (5 km corridor) | 422.3 s | 30.2 s |
+| 2349 nogos (15 km corridor — the default) | 1036.5 s | 36.1 s |
 
 And the thing worth knowing beyond the numbers: **a camera-free route to the
 metro destination existed the whole time.** Every "gave up — out of time" was a

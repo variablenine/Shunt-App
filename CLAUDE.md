@@ -456,11 +456,15 @@ guards now bound it rather than fix it:
 Measured against real tiles and the real camera dataset (see §8), on a 490 km
 trip into dense metro:
 
-| | full scan | indexed |
+| 490 km trip | full scan | indexed |
 |---|---|---|
-| `blocked`, 1181 nogos | 202.1 s | 12.9 s |
-| `balanced`, 1181 nogos | 216.4 s | 13.4 s |
-| whole call, 608 nogos | 221.7 s | 28.1 s |
+| whole call, 608 nogos (2 km corridor) | 221.7 s | 28.1 s |
+| whole call, 1181 nogos (5 km corridor) | 422.3 s | 30.2 s |
+| whole call, 2349 nogos (15 km corridor — the default) | **1036.5 s** | **36.1 s** |
+
+Note the shape of the left column: cost grows with the nogo count, which is what
+identified this loop. The right column barely moves, which is what a spatial
+index is supposed to look like.
 
 `RoutingContext.calcDistance` is called for **every link the search expands**,
 and scanned the entire nogo list each time — O(links × nogos). That is fine for
@@ -477,9 +481,11 @@ updating BRouter: the change is one new file plus about eight lines in
 It is written to be answer-preserving rather than approximately right — a nogo
 excluded by the grid would have failed the loop's own radius test without side
 effects, and candidates come back in ascending index order so the loop visits
-them exactly as before. That was **verified rather than assumed**: the same real
-trip planned with and without the index produced identical geometry, point for
-point (533.88 km, 5463 points, same fingerprint), 7.9× faster.
+them exactly as before. That was **verified rather than assumed**, twice: the same real trip planned
+with and without the index produced identical geometry point for point
+(533.88 km, 5463 points, same fingerprint) at 608 nogos, and at the production
+15 km corridor both produced the same three options to the metre — fastest
+490.7 km / 53 cameras, balanced 531.4 km / 6, fewest 545.6 km / 0.
 
 With it, the trip that could not be planned at all now returns all three options
 in about 36 s of routing, including a genuinely camera-free route.
