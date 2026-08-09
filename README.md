@@ -230,6 +230,28 @@ Shunt is built to keep working when the signal drops on a rural drive:
 
 ## Status
 
+**Alpha — not yet released.** No versioned release has been published on
+purpose: builds go out as CI artifacts until the app is genuinely functional in
+a car. Planning, the map, and the on-phone drive alerts are working and tested;
+the vehicle side is under active repair.
+
+### Known issues from real-world driving
+
+These were seen on actual drives and are the current priorities. Details and
+subsequent findings live in [docs/field-notes.md](docs/field-notes.md).
+
+- **Long routes are too slow to plan** — a ~5-hour route can take minutes, which
+  is unusable in practice and worse for mid-drive re-planning.
+- **Charging re-route does not fire on long trips** — when the car inserts a
+  Supercharger of its own accord, Shunt does not yet notice and re-plan the leg
+  to it.
+- **A waypoint can put the car somewhere else nearby** — on a vehicle that only
+  accepts a single shared destination, the point appears to be resolved by the
+  car rather than taken verbatim.
+- **Closed roads and off-route recovery** — a re-plan must account for the
+  direction of travel, and a road the driver cannot use should stop being
+  offered.
+
 **Complete — Part A (M0–M5) and Part B.** The app plans camera-aware routes,
 pushes them to the vehicle, and monitors the drive, with the production Tessie
 client wired behind the vehicle seam.
