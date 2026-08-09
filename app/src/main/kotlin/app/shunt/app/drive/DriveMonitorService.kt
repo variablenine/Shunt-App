@@ -64,7 +64,9 @@ class DriveMonitorService : Service() {
             },
             // Leaving the route voids the camera avoidance, so recover it:
             // re-plan on-device from where the car actually is.
-            replan = { from, heading -> container.replanFrom(from, plan.destination, heading) },
+            replan = { from, heading, blocked ->
+                container.replanFrom(from, plan.destination, heading, blocked)
+            },
             // The car may add a Supercharger to the trip on its own; if it
             // does, route that leg too rather than letting it drive there
             // unvetted. Null on cars that took the full shaped chain.

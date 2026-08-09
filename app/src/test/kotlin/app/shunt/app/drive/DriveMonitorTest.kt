@@ -151,7 +151,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+            replan = { _, _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
             onPlanChanged = { published += it },
         ).run(
             routedPlan().copy(destinationOnly = true, steerByWaypoints = true),
@@ -179,7 +179,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+            replan = { _, _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
         ).run(
             DrivePlan(Destination("Home", dest), plain, emptyList(), routeLine, steerByWaypoints = true),
             flowOf(*departure().toTypedArray()),
@@ -213,6 +213,37 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `the road just abandoned is kept out of the new route`() = runTest {
+        // A closed road is invisible to Shunt — all it can see is that the
+        // driver left here and did not come back. Re-planning without saying so
+        // sends them straight back onto it, which is the loop that made the app
+        // fight the driver for the car.
+        var refused: List<GeoPoint>? = null
+
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = RecordingAlerter(),
+            replan = { _, _, blocked ->
+                refused = blocked
+                DrivePlan(Destination("Home", dest), chain, emptyList(), routeLine)
+            },
+        ).run(routedPlan(), flowOf(*departure().toTypedArray()))
+
+        val blocked = refused
+        assertTrue(blocked != null && blocked.isNotEmpty(), "the refused road must reach the planner")
+        assertTrue(
+            blocked.all { app.shunt.solver.geo.pointToPolyline(it, routeLine).distanceMeters < 200.0 },
+            "what gets blocked is the route just left, not somewhere else",
+        )
+        // Blocking everything ahead would block the trip rather than the road.
+        val spanned = app.shunt.solver.geo.haversineMeters(blocked.first(), blocked.last())
+        assertTrue(
+            spanned <= DriveMonitorBounds.ABANDONED_STRETCH_METERS + 500.0,
+            "only the stretch ahead may be blocked, not the rest of the trip: $spanned m",
+        )
+    }
+
+    @Test
     fun `re-planning that turns into a fight hands the car back to the driver`() = runTest {
         // The closed-road loop, from a real drive: the route wants a road the
         // driver will not take, so leaving it re-plans, the re-plan is pushed,
@@ -229,7 +260,7 @@ class DriveMonitorTest {
             alerter = alerter,
             // Always answers with the same line the car is already off — which
             // is what a closure looks like from in here.
-            replan = { _, _ ->
+            replan = { _, _, _ ->
                 replans++
                 DrivePlan(Destination("Home", dest), chain, emptyList(), routeLine)
             },
@@ -256,7 +287,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = alerter,
-            replan = { _, _ -> DrivePlan(Destination("Home", dest), chain, emptyList(), routeLine) },
+            replan = { _, _, _ -> DrivePlan(Destination("Home", dest), chain, emptyList(), routeLine) },
         ).run(
             routedPlan(),
             flowOf(*List(80) { fix(north(GeoPoint(33.0, -96.995), 300.0)) }.toTypedArray()),
@@ -295,7 +326,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = alerter,
-            replan = { from, _ ->
+            replan = { from, _, _ ->
                 replannedFrom = from
                 DrivePlan(Destination("Home", dest), freshChain, emptyList(), freshChain)
             },
@@ -329,7 +360,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { from, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), listOf(from, dest)) },
+            replan = { from, _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), listOf(from, dest)) },
         ).run(unpinned, flowOf(*departure().toTypedArray()))
 
         assertTrue(
@@ -348,7 +379,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
+            replan = { _, _, _ -> DrivePlan(Destination("Home", dest), plain, emptyList(), plain) },
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         assertEquals(
@@ -366,7 +397,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = vehicle,
             alerter = RecordingAlerter(),
-            replan = { _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
+            replan = { _, _, _ -> DrivePlan(Destination("Home", dest), pinned, emptyList(), pinned) },
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         assertEquals(
@@ -385,7 +416,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = RecordingAlerter(),
-            replan = { _, _ -> fresh },
+            replan = { _, _, _ -> fresh },
             onPlanChanged = { published += it },
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
@@ -400,7 +431,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = RecordingAlerter(),
-            replan = { _, heading ->
+            replan = { _, heading, _ ->
                 seenHeading = heading
                 DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
             },
@@ -418,7 +449,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = RecordingAlerter(),
-            replan = { _, heading ->
+            replan = { _, heading, _ ->
                 seenHeading = heading
                 DrivePlan(Destination("Home", dest), listOf(dest), emptyList(), listOf(dest))
             },
@@ -433,7 +464,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = alerter,
-            replan = { _, _ -> null }, // e.g. camera data unavailable out here
+            replan = { _, _, _ -> null }, // e.g. camera data unavailable out here
         ).run(routedPlan(), flowOf(*departure().toTypedArray()))
 
         val failed = alerter.alerts.filterIsInstance<Alert.ReplanFailed>().single()
@@ -564,7 +595,7 @@ class DriveMonitorTest {
         DriveMonitor(
             vehicle = FakeVehicleNavClient(),
             alerter = alerter,
-            replan = { from, _ ->
+            replan = { from, _, _ ->
                 DrivePlan(Destination("Home", dest), listOf(dest), listOf(onNewRoute), listOf(from, dest))
             },
         ).run(routedPlan(), flowOf(*fixes.toTypedArray()))

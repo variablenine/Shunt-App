@@ -197,3 +197,45 @@ fun pointToPolylineProgress(p: GeoPoint, polyline: List<GeoPoint>): PolylineProg
 
 /** Floor [value] to the nearest multiple of [step] (handles negatives correctly). */
 fun floorTo(value: Double, step: Int): Int = (floor(value / step) * step).toInt()
+
+/**
+ * Points along [polyline] covering [lengthMeters] of it starting from wherever
+ * [from] sits on it, spaced [spacingMeters] apart.
+ *
+ * This is how the road a driver has just refused gets described to the router.
+ * Shunt cannot see a closure; it can only see that the driver left the route
+ * here, so what it blocks is the stretch immediately ahead of that point — not
+ * the whole remaining route, which would block the trip itself.
+ *
+ * Spacing matters as much as length: the points become impassable circles, and
+ * gaps wider than their diameter leave a thread the router will happily use, so
+ * callers pass a spacing below twice the blocking radius.
+ */
+fun stretchAhead(
+    polyline: List<GeoPoint>,
+    from: GeoPoint,
+    lengthMeters: Double,
+    spacingMeters: Double,
+): List<GeoPoint> {
+    if (polyline.size < 2 || lengthMeters <= 0 || spacingMeters <= 0) return emptyList()
+    val startAt = pointToPolylineProgress(from, polyline).alongMeters
+    val out = mutableListOf<GeoPoint>()
+    var along = 0.0
+    var nextAt = startAt
+    for (i in 1 until polyline.size) {
+        val a = polyline[i - 1]
+        val b = polyline[i]
+        val segment = haversineMeters(a, b)
+        if (segment <= 0.0) continue
+        // Walk the segment rather than stepping vertex to vertex: a sparse line
+        // would otherwise leave gaps far wider than the spacing asked for.
+        while (nextAt <= along + segment) {
+            if (nextAt > startAt + lengthMeters) return out
+            val t = ((nextAt - along) / segment).coerceIn(0.0, 1.0)
+            out += GeoPoint(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
+            nextAt += spacingMeters
+        }
+        along += segment
+    }
+    return out
+}

@@ -107,19 +107,27 @@ Two separate needs fall out of this:
   a parked car's noise bearing can't pin the route) into `BrouterRouter`, which
   sets BRouter's `startDirection` with `forceUseStartDirection`. Shipped in the
   work merged 2026-08-09.
-- **A road the driver cannot use should stop being offered — not done.** After
-  going off-route there is nothing stopping the re-plan from routing straight
-  back onto the stretch just abandoned, which on a closed road is a loop.
+- **A road the driver cannot use should stop being offered — done.** The stretch
+  of route immediately ahead of where the driver left it is now handed to the
+  router as impassable, so the re-plan cannot put them back on it.
 
-**Design for the missing half**, so it can be picked up cold. Give
-`BrouterRouter.route` an explicit list of points to treat as impassable,
-separate from cameras (cameras are field-of-view shapes; this is a plain
-blocked circle), thread it through `BrouterPlanner.plan` and
-`AppContainer.replanFrom`, and have `DriveMonitor` pass the portion of the old
-route immediately ahead of where the driver left it. Keep it to the *abandoned
-stretch* rather than the whole remaining route, and let it expire with the plan
-— a road closed this afternoon is open tomorrow, and Shunt has nowhere to
-persist that belief and no business trying.
+**How the missing half was built.** `RouteRequest.blocked` carries points the
+router treats as impassable, separate from cameras (those are field-of-view
+shapes; these are plain circles). `DriveMonitor` fills it with `stretchAhead` of
+the route from where the driver left, 4 km at 100 m spacing — spacing under
+twice the blocking radius, because a gap between circles is a thread the router
+will happily use.
+
+Three judgement calls worth keeping:
+
+- **Only the stretch ahead**, not the whole remaining route, which would block
+  the trip rather than the road.
+- **Never persisted.** A road closed this afternoon is open tomorrow, and Shunt
+  has nowhere to keep that belief and no business trying.
+- **Dropped rather than failing.** Blocking is a heuristic and in a town it can
+  take a parallel street with it; if routing comes back empty, `BrouterPlanner`
+  retries without the block. No route is a worse answer than a route back onto a
+  road the driver refused.
 
 **What "did not cope well" actually was** (maintainer, 2026-08-09), and it is
 worse than any of the guesses above:

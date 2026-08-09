@@ -19,6 +19,24 @@ import kotlinx.coroutines.flow.takeWhile
  * scripted location [Flow] — including the failure paths that cannot be driven
  * around (advanceTo failing while approaching an unavoidable camera).
  */
+/**
+ * Numbers the monitor is held to, kept public so tests can assert against the
+ * same values rather than a copy that can drift out of step with them.
+ */
+object DriveMonitorBounds {
+    /**
+     * How much of the refused road to block, and how finely.
+     *
+     * Long enough to push the re-plan past whatever the driver would not drive,
+     * short enough that it is a road being blocked and not the trip. The spacing
+     * sits under twice BrouterRouter's blocking radius so the circles overlap —
+     * a gap is a thread the router will use, which lands the car back on the
+     * road this exists to stop offering.
+     */
+    const val ABANDONED_STRETCH_METERS = 4_000.0
+    const val ABANDONED_SPACING_METERS = 100.0
+}
+
 class DriveMonitor(
     private val vehicle: VehicleNavClient,
     private val alerter: Alerter,
@@ -29,7 +47,9 @@ class DriveMonitor(
      * when it has left the planned route, or null if it can't. Absent, leaving
      * the route is still detected and alerted — just not recovered from.
      */
-    private val replan: (suspend (from: GeoPoint, headingDegrees: Double?) -> DrivePlan?)? = null,
+    private val replan: (
+        suspend (from: GeoPoint, headingDegrees: Double?, blocked: List<GeoPoint>) -> DrivePlan?
+    )? = null,
     /**
      * Watches for a charging stop the *car* inserts on its own and re-plans the
      * trip as legs around it. Null leaves the behaviour exactly as before: one
@@ -205,7 +225,17 @@ class DriveMonitor(
     ): DrivePlan? {
         if (stoodDown) return null
         val doReplan = replan ?: return null
-        val planned = runCatching { doReplan(from, headingDegrees) }.getOrNull()
+        // Keep the new route off the stretch just abandoned. Shunt cannot see a
+        // closure — only that the driver left here — so what gets blocked is the
+        // road immediately ahead of that point, for this plan and no longer.
+        // Blocking the whole remaining route would block the trip instead.
+        val refused = app.shunt.solver.geo.stretchAhead(
+            polyline = previous.polyline,
+            from = from,
+            lengthMeters = ABANDONED_STRETCH_METERS,
+            spacingMeters = ABANDONED_SPACING_METERS,
+        )
+        val planned = runCatching { doReplan(from, headingDegrees, refused) }.getOrNull()
         if (planned == null) {
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
             return null
@@ -331,6 +361,10 @@ class DriveMonitor(
          * missed turn re-plans once — and well short of the number it takes for
          * a driver to realise they are being overruled.
          */
+        /** See [DriveMonitorBounds]. */
+        const val ABANDONED_STRETCH_METERS = DriveMonitorBounds.ABANDONED_STRETCH_METERS
+        const val ABANDONED_SPACING_METERS = DriveMonitorBounds.ABANDONED_SPACING_METERS
+
         const val MAX_REPLANS_IN_WINDOW = 3
         const val REPLAN_WINDOW_MILLIS = 5 * 60_000L
 

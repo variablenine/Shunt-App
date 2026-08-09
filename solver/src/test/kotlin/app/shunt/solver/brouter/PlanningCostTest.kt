@@ -62,11 +62,9 @@ class PlanningCostTest {
         val probes = mutableListOf<Pair<GeoPoint, GeoPoint>>()
         var planningPasses = 0
 
-        suspend fun route(
-            points: List<GeoPoint>,
-            cameras: List<CameraVision>,
-            @Suppress("UNUSED_PARAMETER") heading: Double?,
-        ): List<BrouterRoute> {
+        suspend fun route(request: RouteRequest): List<BrouterRoute> {
+            val points = request.points
+            val cameras = request.cameras
             // Planning asks for the trip's own endpoints — with no cameras for
             // the spine pass, with them for the avoidance passes. A refinement
             // probe is the one that asks about some *other* pair of points.
@@ -164,9 +162,9 @@ class PlanningCostTest {
             ::carPath,
         )
         val planner = BrouterPlanner(
-            route = { points, cameras, heading ->
+            route = { request ->
                 clock += 1_000 // every pass over the graph costs a second
-                router.route(points, cameras, heading)
+                router.route(request)
             },
             missingTiles = { emptyList() },
             camerasIn = { listOf(camera) },
@@ -196,9 +194,9 @@ class PlanningCostTest {
             ::carPath,
         )
         val planner = BrouterPlanner(
-            route = { points, cameras, heading ->
+            route = { request ->
                 clock += 1_000
-                router.route(points, cameras, heading)
+                router.route(request)
             },
             missingTiles = { emptyList() },
             camerasIn = { clock += 500; listOf(camera) },

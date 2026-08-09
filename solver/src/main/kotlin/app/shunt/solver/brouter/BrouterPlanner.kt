@@ -65,11 +65,7 @@ sealed interface PlanOutcome {
  * without a real tile on disk.
  */
 class BrouterPlanner(
-    private val route: suspend (
-        points: List<GeoPoint>,
-        cameras: List<CameraVision>,
-        headingDegrees: Double?,
-    ) -> List<BrouterRoute>,
+    private val route: suspend (RouteRequest) -> List<BrouterRoute>,
     private val missingTiles: (BoundingBox) -> List<TileId>,
     private val camerasIn: suspend (BoundingBox) -> List<Camera>,
     private val bboxMarginMeters: Double = ROUTE_BBOX_MARGIN_METERS,
@@ -125,6 +121,13 @@ class BrouterPlanner(
          * far less than a driver sitting still will happily wait through.
          */
         refineBudgetMillis: Long = this.refineBudgetMillis,
+        /**
+         * Roads the driver has refused — a closure, a turn the car will not
+         * take. Blocked on every option for this plan only; see [RouteRequest].
+         */
+        blocked: List<GeoPoint> = emptyList(),
+        /** Ceiling on each routing call, or null for the router's own default. */
+        routeBudgetMillis: Long? = null,
     ): PlanOutcome {
         require(points.size >= 2) { "a trip needs at least an origin and a destination" }
         val baseBbox = BoundingBox.of(points).expand(bboxMarginMeters)
@@ -150,7 +153,7 @@ class BrouterPlanner(
         // every trip paid for the whole search twice.
         onProgress(0.15f, "Finding the direct route")
         startedAt = nowMillis()
-        val direct = runRoutes(points, emptyList(), headingDegrees)
+        val direct = runRoutes(points, emptyList(), headingDegrees, blocked, routeBudgetMillis)
         routingMillis += nowMillis() - startedAt
         routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
         var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
@@ -180,7 +183,7 @@ class BrouterPlanner(
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.4f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
             startedAt = nowMillis()
-            val fresh = runRoutes(points, cameras, headingDegrees)
+            val fresh = runRoutes(points, cameras, headingDegrees, blocked, routeBudgetMillis)
             routingMillis += nowMillis() - startedAt
             // Label by iteration: a second one means the routes escaped the
             // camera area and the whole graph was searched again.
@@ -314,7 +317,7 @@ class BrouterPlanner(
     ): List<GeoPoint>? {
         val key = from to to
         if (carPaths.containsKey(key)) return carPaths[key]
-        val path = runCatching { route(listOf(from, to), emptyList(), null) }
+        val path = runCatching { route(RouteRequest(points = listOf(from, to))) }
             .getOrNull()
             ?.firstOrNull()
             ?.polyline
@@ -413,9 +416,18 @@ class BrouterPlanner(
         points: List<GeoPoint>,
         cameras: List<Camera>,
         headingDegrees: Double? = null,
+        blocked: List<GeoPoint> = emptyList(),
+        budgetMillis: Long? = null,
     ): List<BrouterRoute>? {
         val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
-        return runCatching { route(points, visions, headingDegrees) }.getOrNull()
+        val request = RouteRequest(points, visions, headingDegrees, blocked, budgetMillis)
+        val found = runCatching { route(request) }.getOrNull()
+        if (!found.isNullOrEmpty() || blocked.isEmpty()) return found
+        // Blocking the road just abandoned is a heuristic, and in a town it can
+        // take a parallel street with it and leave nothing at all. No route is a
+        // worse answer than a route back onto a road the driver refused, so the
+        // block is dropped rather than the trip.
+        return runCatching { route(request.copy(blocked = emptyList())) }.getOrNull()
     }
 
     /**

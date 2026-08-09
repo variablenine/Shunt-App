@@ -101,11 +101,16 @@ class BrouterRouter(
      */
     fun route(
         points: List<GeoPoint>,
-        cameras: List<CameraVision>,
+        cameras: List<CameraVision> = emptyList(),
         headingDegrees: Double? = null,
-        /** Ceiling for every search in this call together. See [passBudgetMillis]. */
-        budgetMillis: Long = passBudgetMillis,
-    ): List<BrouterRoute> {
+    ): List<BrouterRoute> = route(RouteRequest(points, cameras, headingDegrees))
+
+    fun route(request: RouteRequest): List<BrouterRoute> {
+        val points = request.points
+        val cameras = request.cameras
+        val headingDegrees = request.headingDegrees
+        val blockedRoads = request.blocked
+        val budgetMillis = request.budgetMillis ?: passBudgetMillis
         require(points.size >= 2) { "a route needs at least an origin and a destination" }
         lastFailureDiagnostic = null
         val timings = mutableListOf<PlanTimings.Timed>()
@@ -134,7 +139,7 @@ class BrouterRouter(
         }
 
         val fastest = timed("fastest") {
-            runRoute(points, cameras, Avoidance.None, headingDegrees, remaining())
+            runRoute(points, cameras, Avoidance.None, headingDegrees, remaining(), blockedRoads)
         }?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) {
@@ -146,7 +151,7 @@ class BrouterRouter(
             null
         } else {
             timed("balanced") {
-                runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees, remaining())
+                runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees, remaining(), blockedRoads)
             }?.toResult(RouteChoice.BALANCED, cameras)
         }
 
@@ -160,7 +165,7 @@ class BrouterRouter(
             null
         } else {
             timed("blocked") {
-                runRoute(points, cameras, Avoidance.Blocked, headingDegrees, remaining())
+                runRoute(points, cameras, Avoidance.Blocked, headingDegrees, remaining(), blockedRoads)
             }?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
         }
         val fewest = blocked
@@ -172,7 +177,7 @@ class BrouterRouter(
                 null
             } else {
                 timed("fewest (fallback)") {
-                    runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees, remaining())
+                    runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees, remaining(), blockedRoads)
                 }
                     ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
                     ?.copy(hardAvoidanceFailed = true)
@@ -232,6 +237,7 @@ class BrouterRouter(
          * budget appeared to do nothing at all.
          */
         timeoutMillis: Long,
+        blocked: List<GeoPoint> = emptyList(),
     ): RawRoute? {
         return try {
             val rc = RoutingContext()
@@ -252,14 +258,19 @@ class BrouterRouter(
             val waypoints = collector.getWayPointList(
                 points.joinToString("|") { "${it.lon},${it.lat}" },
             )
+            val nogos = mutableListOf<OsmNodeNamed>()
             if (avoidance != Avoidance.None && cameras.isNotEmpty()) {
                 // NaN is BRouter's "impassable"; a finite value is a per-metre penalty.
                 val weight = (avoidance as? Avoidance.Weighted)?.weight ?: Double.NaN
-                val nogos = buildNogos(cameras, weight, collector)
-                if (nogos.isNotEmpty()) {
-                    RoutingContext.prepareNogoPoints(nogos)
-                    rc.nogopoints = nogos
-                }
+                nogos += buildNogos(cameras, weight, collector)
+            }
+            // Blocked roads apply to every pass, the plain fastest one included:
+            // a road the driver has refused is refused on every option offered,
+            // not only the ones that were avoiding something anyway.
+            if (blocked.isNotEmpty()) nogos += buildBlocked(blocked, collector)
+            if (nogos.isNotEmpty()) {
+                RoutingContext.prepareNogoPoints(nogos)
+                rc.nogopoints = nogos
             }
             val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
             engine.quite = true // suppress BRouter's GPX-to-stdout dump
@@ -311,6 +322,25 @@ class BrouterRouter(
         return nogos
     }
 
+    /**
+     * Impassable circles over roads the driver cannot use.
+     *
+     * Small on purpose. Big enough to block the road it sits on, small enough
+     * not to take a parallel street with it — err large here and a re-plan in a
+     * town finds no route at all, which is a worse answer than the one this is
+     * trying to improve on. [BrouterPlanner] retries without these if that
+     * happens anyway.
+     */
+    internal fun buildBlocked(
+        points: List<GeoPoint>,
+        collector: RoutingParamCollector,
+    ): List<OsmNodeNamed> {
+        val spec = points.joinToString("|") { p ->
+            "${p.lon},${p.lat},${BLOCKED_RADIUS_METERS.toInt()},NaN"
+        }
+        return collector.readNogoList(spec).orEmpty()
+    }
+
     private fun RawRoute.toResult(choice: RouteChoice, cameras: List<CameraVision>): BrouterRoute =
         BrouterRoute(
             choice = choice,
@@ -339,6 +369,18 @@ class BrouterRouter(
          * worth nothing however good it was.
          */
         const val PASS_BUDGET_MILLIS = 75_000L
+
+        /**
+         * The same ceiling for a plan computed while the car is moving.
+         *
+         * A driver at the kerb will wait out a long search; one at 60 mph covers
+         * a mile while it runs, and the junction the answer was for has already
+         * gone by. Better a shorter chooser, now.
+         */
+        const val REPLAN_PASS_BUDGET_MILLIS = 12_000L
+
+        /** Radius of an impassable circle over a road the driver has refused. */
+        internal const val BLOCKED_RADIUS_METERS = 70.0
 
         // Nogo penalty per meter inside a camera's zone. Balanced accepts a
         // camera to save a big detour; fewest avoids hard where a path exists.

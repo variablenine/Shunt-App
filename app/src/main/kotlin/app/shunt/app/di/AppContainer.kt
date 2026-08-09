@@ -77,8 +77,8 @@ class AppContainer(context: Context) {
         profileDir = brouterProfileDir,
     )
     private val brouterPlanner = BrouterPlanner(
-        route = { points, cams, heading ->
-            withContext(Dispatchers.Default) { brouterRouter.route(points, cams, heading) }
+        route = { request ->
+            withContext(Dispatchers.Default) { brouterRouter.route(request) }
         },
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
         camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
@@ -343,11 +343,16 @@ class AppContainer(context: Context) {
      * must then tell the driver there is no avoidance in force rather than
      * carry on as if there were.
      */
+    /**
+     * Re-plan from where the car actually is, keeping it off [blocked] — the
+     * stretch of road the driver has just refused.
+     */
     suspend fun replanFrom(
         from: app.shunt.core.GeoPoint,
         destination: app.shunt.app.plan.Destination,
         headingDegrees: Double? = null,
-    ): DrivePlan? = planLeg(from, emptyList(), destination, headingDegrees)
+        blocked: List<app.shunt.core.GeoPoint> = emptyList(),
+    ): DrivePlan? = planLeg(from, emptyList(), destination, headingDegrees, blocked)
 
     /**
      * A camera-aware plan from [from] through [via] to [destination]. Used both
@@ -362,14 +367,20 @@ class AppContainer(context: Context) {
         destination: app.shunt.app.plan.Destination,
         /** Bearing of travel, so a mid-drive leg can't begin with a U-turn. */
         headingDegrees: Double? = null,
+        /** Road the driver refused; kept out of every option on this plan only. */
+        blocked: List<app.shunt.core.GeoPoint> = emptyList(),
     ): DrivePlan? {
         val points = listOf(from) + via + destination.location
         val outcome = runCatching {
             brouterPlanner.plan(
                 points,
                 headingDegrees = headingDegrees,
-                // Every leg planned here is planned with the car moving.
+                // Every leg planned here is planned with the car moving, so both
+                // budgets are the mid-drive ones: an answer that arrives after
+                // the junction is no answer.
                 refineBudgetMillis = BrouterPlanner.REPLAN_REFINE_BUDGET_MILLIS,
+                blocked = blocked,
+                routeBudgetMillis = BrouterRouter.REPLAN_PASS_BUDGET_MILLIS,
             )
         }.getOrNull()
         val chosen = (outcome as? app.shunt.solver.brouter.PlanOutcome.Routes)
