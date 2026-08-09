@@ -228,6 +228,21 @@ fastest           4.7 s      fewest (fallback)(skipped — over budget)
 balanced         42.6 s
 ```
 
+**Read wrong the first time, and the breakdown is why.** That `balanced 42.6 s`
+line looked like a pass that worked. It was not — it hit its own timeout and
+returned nothing. A timed-out pass and a successful one had exactly the same
+shape on screen, so the option the driver was actually offered was the plain
+`fastest` road, and the summary sent back to them said "balanced". The
+instrumentation built to stop an option going missing silently was itself
+hiding one. Passes now say how they ended.
+
+**And the ordering was backwards.** `balanced` ran before `blocked`, so on the
+trips where the budget actually binds — long ones into dense metro, precisely
+where avoidance is worth most — the convenience option spent the whole allowance
+and the *product* was never attempted. Fewest-cameras now goes first, capped
+short of the whole budget so the fallback that covers its failure still has
+room.
+
 So the trip completed and the driver got a route — but not a camera-free one,
 which is the app's whole point. And the passes only account for 52 s of the 80 s
 in the routing stage. **The missing ~28 s was labelling, not routing.**

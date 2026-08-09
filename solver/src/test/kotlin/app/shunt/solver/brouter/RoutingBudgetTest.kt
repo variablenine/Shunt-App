@@ -99,6 +99,43 @@ class RoutingBudgetTest {
     }
 
     @Test
+    fun `the fewest-cameras pass runs before the balanced one`() {
+        // Observed on a real trip into dense metro: "balanced" ran first, spent
+        // the entire budget, timed out with nothing, and the fewest-cameras pass
+        // — the reason anyone installed this — was never attempted. The driver
+        // was left with the plain fastest road through fifty-one cameras.
+        //
+        // Balanced is a convenience. Fewest cameras is the product. When the
+        // budget binds, the product wins.
+        var now = 0L
+        val subject = router({ now += 1; now }, budget = 75_000)
+
+        subject.route(trip, cameras)
+
+        val order = subject.lastPassTimings.map { it.label.substringBefore(" (") }
+        assertTrue(
+            order.indexOf("blocked") < order.indexOf("balanced"),
+            "fewest-cameras must be attempted before balanced: $order",
+        )
+    }
+
+    @Test
+    fun `the hard-block pass cannot spend the whole budget`() {
+        // A hard block that finds nothing is the most expensive outcome there
+        // is — it exhausts every reachable road before concluding — and the
+        // weighted fallback is what rescues that case. If the block were allowed
+        // everything, the rescue would never run.
+        assertTrue(
+            BrouterRouter.BLOCKED_BUDGET_SHARE < 1.0,
+            "the block must leave room for the fallback that covers its failure",
+        )
+        assertTrue(
+            BrouterRouter.BLOCKED_BUDGET_SHARE > 0.0,
+            "...while still getting a real attempt",
+        )
+    }
+
+    @Test
     fun `a generous budget leaves every pass to run`() {
         var now = 0L
         val subject = router({ now += 1; now }, budget = 75_000)

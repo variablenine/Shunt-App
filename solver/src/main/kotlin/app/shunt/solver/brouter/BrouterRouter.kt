@@ -121,73 +121,84 @@ class BrouterRouter(
         // of seconds *inside the budget*, which is how the hard-block pass came
         // to be skipped for want of time it had not actually spent routing.
         val index = CameraIndex(cameras)
-        // Each of these is a full search over the road graph, which on a
-        // cross-state trip is the whole cost of planning. Which one is expensive
-        // decides what to do about it, so they are timed apart.
-        fun <T> timed(label: String, block: () -> T): T {
-            val startedAt = System.nanoTime()
-            val result = block()
-            timings += PlanTimings.Timed(label, (System.nanoTime() - startedAt) / 1_000_000)
-            return result
-        }
-
         /** What is left of the budget for the next search over the graph. */
         fun remaining(): Long = budgetMillis - (nowMillis() - startedWholeAt)
 
-        /** True once there is no time left for another search over the graph. */
-        fun outOfTime(label: String): Boolean {
-            if (remaining() > 0) return false
-            // Recorded so the reason shows up wherever the breakdown does. A
-            // silently missing option looks like the app deciding there wasn't
-            // one, which is the opposite of what happened.
-            timings += PlanTimings.Timed("$label (skipped — over budget)", 0)
-            return true
+        /**
+         * Run one search and record what it cost *and how it ended*.
+         *
+         * A pass that runs out of time and a pass that succeeds took the same
+         * shape in the breakdown before this — both just a label and a duration
+         * — so a timed-out pass read as a working one, and the missing option
+         * looked like Shunt deciding there wasn't one. That is the exact failure
+         * the breakdown exists to prevent, so the outcome is on the line now.
+         *
+         * [share] is the fraction of the remaining budget this pass may use, so
+         * one expensive search cannot spend the whole allowance and leave
+         * nothing for the ones that matter more.
+         */
+        fun pass(label: String, avoidance: Avoidance, share: Double = 1.0): RawRoute? {
+            if (remaining() <= 0) {
+                timings += PlanTimings.Timed("$label (skipped — over budget)", 0)
+                return null
+            }
+            val ceiling = (remaining() * share).toLong().coerceAtLeast(1L)
+            val startedAt = System.nanoTime()
+            val outcome = runRoute(points, cameras, avoidance, headingDegrees, ceiling, blockedRoads)
+            val took = (System.nanoTime() - startedAt) / 1_000_000
+            val suffix = when {
+                outcome.route != null -> ""
+                outcome.timedOut -> " (gave up — out of time)"
+                else -> " (no route)"
+            }
+            timings += PlanTimings.Timed(label + suffix, took)
+            return outcome.route
         }
 
-        val fastest = timed("fastest") {
-            runRoute(points, cameras, Avoidance.None, headingDegrees, remaining(), blockedRoads)
-        }?.toResult(RouteChoice.FASTEST, index)
+        val fastest = pass("fastest", Avoidance.None)?.toResult(RouteChoice.FASTEST, index)
         // With no cameras nearby there is only one sensible route.
         if (cameras.isEmpty()) {
             lastPassTimings = timings
             return listOfNotNull(fastest)
         }
 
-        val balanced = if (outOfTime("balanced")) {
-            null
-        } else {
-            timed("balanced") {
-                runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees, remaining(), blockedRoads)
-            }?.toResult(RouteChoice.BALANCED, index)
-        }
-
+        // The fewest-cameras option goes first, and that ordering is the whole
+        // point of the app rather than a tuning choice.
+        //
+        // "Balanced" is a convenience — a middle road for someone willing to
+        // trade a camera for time. "Fewest cameras" is the reason anyone
+        // installed this. Running balanced first meant that on the trips where
+        // the budget actually binds — long ones into dense metro, exactly where
+        // avoidance is worth most — balanced spent the entire allowance, timed
+        // out, produced nothing, and the option that mattered was never even
+        // attempted. The driver was left with the plain fastest road.
+        //
         // "Fewest cameras" must mean *none* whenever a camera-free path exists at
         // any distance. A weighted nogo can't promise that: BRouter charges
         // (metres inside the zone × weight), so a road clipping the edge of a
         // cone costs little and gets chosen over a long back-road detour — the
         // route then passes a camera that was in fact avoidable. Blocking the
         // zones outright makes the engine find the camera-free path or none.
-        val blocked = if (outOfTime("blocked")) {
-            null
-        } else {
-            timed("blocked") {
-                runRoute(points, cameras, Avoidance.Blocked, headingDegrees, remaining(), blockedRoads)
-            }?.toResult(RouteChoice.FEWEST_CAMERAS, index)
-        }
+        //
+        // It is capped short of the whole budget because a hard block that finds
+        // nothing is the most expensive outcome there is — it exhausts every
+        // road reachable before concluding — and the fallback below is what
+        // rescues that case. Spending everything here would starve it.
+        val blocked = pass("blocked", Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
+            ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
             // hard as possible so the user still gets the best available, and
             // record that hard avoidance failed without claiming why it failed.
-            ?: if (outOfTime("fewest (fallback)")) {
-                null
-            } else {
-                timed("fewest (fallback)") {
-                    runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees, remaining(), blockedRoads)
-                }
-                    ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
-                    ?.copy(hardAvoidanceFailed = true)
-            }
+            ?: pass("fewest (fallback)", Avoidance.Weighted(FEWEST_WEIGHT))
+                ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
+                ?.copy(hardAvoidanceFailed = true)
+
+        // Last, on whatever is left: the option it is least costly to lose.
+        val balanced = pass("balanced", Avoidance.Weighted(BALANCED_WEIGHT))
+            ?.toResult(RouteChoice.BALANCED, index)
+
         lastPassTimings = timings
 
         // Fastest first, then the avoidance options — but only ones that are
@@ -244,7 +255,7 @@ class BrouterRouter(
          */
         timeoutMillis: Long,
         blocked: List<GeoPoint> = emptyList(),
-    ): RawRoute? {
+    ): RunOutcome {
         return try {
             val rc = RoutingContext()
             // BRouter applies this by placing an imaginary previous position
@@ -281,21 +292,29 @@ class BrouterRouter(
             val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
             engine.quite = true // suppress BRouter's GPX-to-stdout dump
             engine.doRun(timeoutMillis.coerceAtLeast(1L))
-            if (engine.errorMessage != null) return note("brouter: ${engine.errorMessage}")
-            val track = engine.foundTrack ?: return note("brouter: no track returned")
+            if (engine.errorMessage != null) return failed("brouter: ${engine.errorMessage}")
+            val track = engine.foundTrack ?: return failed("brouter: no track returned")
             val line = track.nodes.map { node ->
                 GeoPoint(
                     lat = (node.getILat() - 90_000_000) / 1_000_000.0,
                     lon = (node.getILon() - 180_000_000) / 1_000_000.0,
                 )
             }
-            if (line.size < 2) return note("brouter: track < 2 points")
+            if (line.size < 2) return failed("brouter: track < 2 points")
             val seconds = track.getTotalSeconds().takeIf { it > 0 } ?: estimateSeconds(track.distance)
-            RawRoute(line, track.distance, seconds)
+            RunOutcome(RawRoute(line, track.distance, seconds), timedOut = false)
         } catch (e: Throwable) {
-            note("exception: ${e.message ?: e.toString()}")
+            // BRouter signals its own maxRunningTime by throwing. Telling that
+            // apart from a genuine "no road goes there" is the difference
+            // between "try again" and "there isn't one".
+            val message = e.message.orEmpty()
+            note("exception: ${message.ifBlank { e.toString() }}")
+            RunOutcome(null, timedOut = "timeout" in message.lowercase())
         }
     }
+
+    /** What one search produced, and whether it simply ran out of time. */
+    private data class RunOutcome(val route: RawRoute?, val timedOut: Boolean)
 
     /**
      * Nogos matching each camera's field of view: directional cameras get a
@@ -370,6 +389,12 @@ class BrouterRouter(
         return null
     }
 
+    /** A search that produced nothing for a reason other than running out of time. */
+    private fun failed(reason: String): RunOutcome {
+        note(reason)
+        return RunOutcome(null, timedOut = false)
+    }
+
     companion object {
         /**
          * How long the avoidance passes get before the rest are abandoned.
@@ -391,6 +416,16 @@ class BrouterRouter(
          * gone by. Better a shorter chooser, now.
          */
         const val REPLAN_PASS_BUDGET_MILLIS = 12_000L
+
+        /**
+         * The share of the remaining budget the hard-block pass may spend.
+         *
+         * A hard block that finds nothing is the most expensive outcome the
+         * engine has — it exhausts every reachable road before concluding — and
+         * the weighted fallback is what rescues exactly that case. Letting the
+         * block have everything would starve the thing that covers its failure.
+         */
+        const val BLOCKED_BUDGET_SHARE = 0.6
 
         /** Radius of an impassable circle over a road the driver has refused. */
         internal const val BLOCKED_RADIUS_METERS = 70.0
