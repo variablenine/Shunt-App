@@ -158,10 +158,15 @@ Three is well above what an ordinary drive produces — a missed turn re-plans
 once — and well below the number of overrides it takes for a driver to notice
 they are being fought.
 
-**Still not done:** not routing back onto the abandoned stretch in the first
-place (design above), and reviewing the alert cadence, which the maintainer
-also flagged. Standing down bounds the damage from both; it does not fix
-either.
+**The alerts that would not stop had the same root**, and it was not the alert
+code. A re-plan builds a fresh `DriveMonitorEngine`, and a fresh engine had no
+memory of which cameras it had already announced — so every camera still in
+range was warned about again. One re-plan, one repeat; a loop of them, an alert
+storm. The replacement engine now inherits what the old one had already said.
+
+Worth knowing for anything else that replaces the engine mid-drive: state that
+exists to stop repetition has to survive the replacement, or it is not doing
+the job it was written for.
 
 ### F-4 · Long routes take minutes to plan
 *Observed: pre-2026-08 build. Partly addressed — needs re-measuring.*

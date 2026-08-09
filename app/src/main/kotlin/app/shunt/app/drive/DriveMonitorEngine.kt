@@ -39,6 +39,8 @@ class DriveMonitorEngine(
      * so it must be left alone.
      */
     private val stopPoints: Set<GeoPoint> = emptySet(),
+    /** Tiers already announced by the engine this one replaces. See [warnedTiers]. */
+    alreadyWarned: Map<Long, Int> = emptyMap(),
 ) {
     init {
         require(chain.isNotEmpty()) { "drive chain must have at least the destination" }
@@ -46,11 +48,26 @@ class DriveMonitorEngine(
 
     private val cameras = cameras
     private val cameraTier = HashMap<Long, Int>() // camera id -> tier fired (0/1/2)
+
+    /**
+     * What has already been said about each camera, so a route that replaces
+     * this one does not say it all again.
+     *
+     * A re-plan builds a fresh engine, and a fresh engine used to have no memory
+     * of which cameras it had already warned about — so every camera still in
+     * range got re-announced. During the closed-road loop, where re-plans came
+     * one after another, that is what turned into alerts that would not stop.
+     */
+    val warnedTiers: Map<Long, Int> get() = cameraTier.toMap()
     private var targetIndex = 0
     private var arrived = false
 
     /** Progress along [routePolyline], so each fix only searches nearby segments. */
     private var nearestSegment = 0
+    init {
+        cameraTier.putAll(alreadyWarned)
+    }
+
     private var consecutiveOffRoute = 0
     private var offRoute = false
 

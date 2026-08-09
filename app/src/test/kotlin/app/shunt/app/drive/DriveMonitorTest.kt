@@ -244,6 +244,35 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `a re-plan does not re-announce cameras already warned about`() = runTest {
+        // Each re-plan built a fresh engine with no memory of what it had
+        // already said, so every camera still in range was announced again.
+        // With re-plans arriving one after another — the closed-road loop —
+        // that is what became alerts that would not stop.
+        val alerter = RecordingAlerter()
+        val nearby = Camera(id = 42, location = GeoPoint(33.0, -96.994))
+
+        DriveMonitor(
+            vehicle = FakeVehicleNavClient(),
+            alerter = alerter,
+            // The replacement route carries the same camera, still in range.
+            replan = { _, _, _ ->
+                DrivePlan(Destination("Home", dest), chain, listOf(nearby), routeLine)
+            },
+        ).run(
+            routedPlan(cameras = listOf(nearby)),
+            flowOf(*List(40) { fix(north(GeoPoint(33.0, -96.995), 300.0)) }.toTypedArray()),
+        )
+
+        val warnings = alerter.alerts.filterIsInstance<Alert.CameraApproaching>()
+            .filter { !it.imminent }
+        assertTrue(
+            warnings.size <= 1,
+            "one camera, one warning — got ${warnings.size} across the re-plans",
+        )
+    }
+
+    @Test
     fun `re-planning that turns into a fight hands the car back to the driver`() = runTest {
         // The closed-road loop, from a real drive: the route wants a road the
         // driver will not take, so leaving it re-plans, the re-plan is pushed,

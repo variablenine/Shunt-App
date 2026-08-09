@@ -116,7 +116,7 @@ class DriveMonitor(
                             // an answer at all.
                             replanFrom(signal.at, current, heading)?.let { fresh ->
                                 current = fresh
-                                engine = newEngine(fresh)
+                                engine = newEngine(fresh, engine)
                             }
                         }
                         DriveSignal.BackOnRoute -> alerter.alert(Alert.BackOnRoute)
@@ -167,7 +167,7 @@ class DriveMonitor(
                 )
                 applyLeg(change, finalDestination)?.let { fresh ->
                     current = fresh
-                    engine = newEngine(fresh)
+                    engine = newEngine(fresh, engine)
                 }
             }
         } finally {
@@ -209,8 +209,21 @@ class DriveMonitor(
         }
     }
 
-    private fun newEngine(plan: DrivePlan) =
-        DriveMonitorEngine(plan.chain, plan.cameras, config, plan.polyline, plan.stopPoints)
+    /**
+     * The engine for a route that replaces the one in force, carrying over what
+     * has already been announced. Without that hand-off every camera still in
+     * range is warned about again on each re-plan, which during the closed-road
+     * loop is what became alerts that would not stop.
+     */
+    private fun newEngine(plan: DrivePlan, previous: DriveMonitorEngine? = null) =
+        DriveMonitorEngine(
+            plan.chain,
+            plan.cameras,
+            config,
+            plan.polyline,
+            plan.stopPoints,
+            alreadyWarned = previous?.warnedTiers.orEmpty(),
+        )
 
     /**
      * Re-plan from [from] and put the new route in force, pushing it to the
