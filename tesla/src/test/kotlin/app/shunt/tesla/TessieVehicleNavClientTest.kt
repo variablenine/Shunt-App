@@ -216,8 +216,41 @@ class TessieVehicleNavClientTest {
         val path = share.path.orEmpty()
         assertTrue("/VIN/command/share" in path, "path was $path")
         assertTrue("/api/1/vehicles" !in path, "must not use the signing passthrough; was $path")
-        // The final destination of the chain is what gets shared.
-        assertTrue("${chain.last().lat}%2C${chain.last().lon}" in path, "path was $path")
+        // The final destination of the chain is what gets shared, in plain
+        // decimal degrees — see the scientific-notation test below.
+        assertTrue("40.090600%2C-97.643100" in path, "path was $path")
+        server.shutdown()
+    }
+
+    @Test
+    fun `a shared destination is always plain decimal degrees`() = runTest {
+        // Share is the one call that hands the car a string and lets the car
+        // decide what it means. Kotlin renders a small enough Double in
+        // scientific notation — "9.5E-5" — and a parser that can't read that as
+        // a number may fall back to treating the whole value as a place name,
+        // which is how a car ends up at the middle of a town instead of a point
+        // on a road. Near the equator and the prime meridian, ordinary
+        // coordinates are that small.
+        val server = MockWebServer()
+        val invalid = """{"response": null, "error": "invalid_command", "error_description": ""}"""
+        server.enqueue(MockResponse().setResponseCode(400).setBody(invalid))
+        server.enqueue(MockResponse().setResponseCode(400).setBody(invalid))
+        server.enqueue(MockResponse().setBody("""{"result":true}"""))
+
+        val client = TessieVehicleNavClient(
+            http = OkHttpClient(),
+            bearerToken = "tok",
+            vin = "VIN",
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            rateLimiter = CommandRateLimiter(maxCommands = 1000),
+        )
+        client.pushRoute(listOf(GeoPoint(0.000095, -0.000021)))
+
+        server.takeRequest()
+        server.takeRequest()
+        val path = server.takeRequest().path.orEmpty()
+        assertTrue("E-" !in path && "e-" !in path, "no exponent may reach the car: $path")
+        assertTrue("0.000095%2C-0.000021" in path, "path was $path")
         server.shutdown()
     }
 }

@@ -397,9 +397,10 @@ class ChargeStopCoordinatorTest {
 
         assertEquals(LegChange.None, change)
         assertEquals(
-            steeredChain,
+            listOf(nextPin),
             assertIs<FakeVehicleNavClient.Call.AdvanceTo>(vehicle.calls().last()).waypoints,
-            "the last thing the car is told must be the steering chain, not the destination",
+            "the car must be put back on the PIN it was following — sending the whole " +
+                "chain to a single-destination car collapses to the trip's destination",
         )
     }
 

@@ -102,7 +102,7 @@ class TessieVehicleNavClient(
     private suspend fun shareDestination(point: GeoPoint): PushResult {
         rateLimiter.acquire()
         val url = "$baseUrl/$vin/command/share".toHttpUrl().newBuilder()
-            .addQueryParameter("value", "${point.lat},${point.lon}")
+            .addQueryParameter("value", shareValue(point))
             .addQueryParameter("locale", locale)
             .build()
         val request = Request.Builder()
@@ -134,6 +134,24 @@ class TessieVehicleNavClient(
             PushResult.Failed("the vehicle rejected the destination", retryable = true)
         }
     }
+
+    /**
+     * The point as the share command wants it: plain decimal degrees, six
+     * places, always with a `.` separator.
+     *
+     * Share is the one place Shunt hands the car a *string* and lets the car
+     * work out what it means, which makes it the one place a formatting slip
+     * turns into "the car drove somewhere else". Kotlin's default `Double`
+     * rendering is the hazard: a coordinate small enough in magnitude comes out
+     * in scientific notation (`9.5E-5`), which nothing downstream is obliged to
+     * parse as a number — and a parser that gives up on the coordinates may
+     * fall back to treating the whole string as a place name, which is exactly
+     * the failure where a car ends up at the middle of a town.
+     *
+     * Six places is about 11 cm, far finer than anywhere a car can park.
+     */
+    private fun shareValue(point: GeoPoint): String =
+        String.format(java.util.Locale.US, "%.6f,%.6f", point.lat, point.lon)
 
     private fun String.looksUnsupported(): Boolean {
         val r = lowercase()

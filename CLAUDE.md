@@ -270,14 +270,23 @@ them, and add new observations as they come in. Detail lives in
    See `AppContainer.chargeStopCoordinator()` and the `steering` flag on
    `ChargeStopCoordinator`; a steered car is now probed the rationed way rather
    than not at all.
-2. **A waypoint on the phone map can send the car somewhere else nearby.** Worse
-   when the next waypoint is *behind* where the car has already driven. The
-   maintainer notes this resembles the old Google-Maps-share-to-Tesla failure,
-   where sharing too quickly navigated to the centre of a city, state, or the
-   whole country — i.e. it smells like a *coarse or re-geocoded* location rather
-   than the exact point. Suspicion: something is navigating to the centre of a
-   road or area. **This is consistent with the `share` fallback in §6**, which
-   hands the car a coordinate *string* that the car itself resolves.
+2. **A waypoint on the phone map can send the car somewhere else nearby.**
+   *Two real contributing causes fixed; not yet confirmed which one the driver
+   was seeing.* Worse when the next waypoint is *behind* where the car has
+   already driven. The maintainer notes this resembles the old
+   Google-Maps-share-to-Tesla failure, where sharing too quickly navigated to
+   the centre of a city, state, or the whole country — i.e. a *coarse or
+   re-geocoded* location rather than the exact point.
+
+   Fixed so far: `ChargeStopCoordinator` restored steering by sending the whole
+   remaining chain, which a single-destination car collapses to its **last**
+   point, so the car was re-aimed at the trip's destination while the phone
+   showed the next pin; and share coordinates could reach the car in scientific
+   notation, which a consumer may fall back to parsing as a *place name*.
+
+   Still possible, and the reason to keep this open: the `share` fallback in §6
+   hands the car a string it resolves itself. `docs/field-notes.md` describes
+   the read-back experiment that would settle it.
 3. **A closed road was routed onto, and leaving it was handled badly.**
    Re-planning must also respect the direction of travel while moving — an
    answer that requires driving backwards is not an answer.

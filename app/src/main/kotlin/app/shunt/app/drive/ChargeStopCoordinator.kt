@@ -262,7 +262,13 @@ class ChargeStopCoordinator(
      */
     private suspend fun unchanged(reasserted: Boolean, steeringChain: List<GeoPoint>): LegChange {
         if (reasserted && steeringChain.isNotEmpty()) {
-            val restored = runCatching { vehicle.advanceTo(steeringChain) }
+            // Hand back what the car was actually aimed at. Sending the whole
+            // chain to a single-destination car collapses to its *last* point —
+            // the trip's destination — so "put the steering back" would have
+            // pointed the car at the end of the trip and dropped the shaped
+            // route on the floor, every time a probe found nothing changed.
+            val restoring = if (steering) listOf(steeringChain.first()) else steeringChain
+            val restored = runCatching { vehicle.advanceTo(restoring) }
                 .getOrElse { PushResult.Failed("steering restore threw", retryable = true) }
             if (restored is PushResult.Failed) {
                 return LegChange.VehicleUpdateFailed(restored.reason, restored.retryable)

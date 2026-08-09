@@ -71,6 +71,28 @@ Corroborating mechanism in the code: on a car that requires signed commands,
 a **string** the car resolves on its own — the same class of mechanism as the
 Google Maps share. That is the first place to look.
 
+**Two contributing causes found and fixed. Neither is confirmed to be *the*
+cause; both were real.**
+
+1. *The car was aimed at the wrong point of the chain.* While steering pin by
+   pin, `ChargeStopCoordinator` restored steering by sending the whole remaining
+   chain. A single-destination car collapses a chain to its **last** point — the
+   trip's destination — so every probe that found nothing changed quietly
+   re-pointed the car at the end of the trip while the phone went on showing the
+   next pin. `DriveMonitor` already aimed correctly; the coordinator bypassed it.
+2. *Coordinates could reach the car in scientific notation.* The share value was
+   built from Kotlin's default `Double` rendering, which emits `9.5E-5` for
+   small magnitudes. A consumer that can't parse that as a number may fall back
+   to treating the value as a place name — precisely the "navigated to the
+   middle of a town" failure. Now always plain decimal degrees to six places.
+
+**To confirm on a real car**, the experiment that would settle it: push a
+destination whose coordinates sit clearly *between* named places (not on a
+building or a road centre), then read the active route back and compare
+`active_route_latitude`/`longitude` with what was sent. If the car reports a
+different point, it is re-resolving the string and the fix is to stop using
+`share` for shaping — not to nudge the coordinates.
+
 ### F-3 · A closed road was routed onto, and leaving it went badly
 *Observed: pre-2026-08 build.*
 
