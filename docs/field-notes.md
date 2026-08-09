@@ -169,6 +169,18 @@ Three fixes landed: the fastest option is no longer refined at all (it is the
 road the car picks anyway), legs are memoised across options, and refinement now
 has a time budget it settles within — 20 s parked, 4 s while moving.
 
+**Confirmed on a real device (2026-08-09):** the slow stage is **"Planning
+routes"** — the route-deciding passes, not pin refinement. So the fixes above
+addressed the part that was not the bottleneck.
+
+A temporary breakdown now appears on the result sheet ("Planned in …"), splitting
+the time by stage and the routing stage by what each search over the road graph
+was for. Two readings to take from it: whether `(widen N)` passes appear, which
+would mean the whole graph is being re-searched because the routes left the
+camera box; and whether one avoidance pass dominates, in particular a `blocked`
+pass that fails and forces the `fewest (fallback)` pass — two searches for one
+option. Remove the instrumentation once this is resolved.
+
 **Still to check on a real phone:** how long the route-deciding passes alone
 take on a long trip. If that is still slow, the remaining levers are
 concurrency across the avoidance passes and shrinking the nogo set — see

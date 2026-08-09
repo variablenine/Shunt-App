@@ -362,6 +362,27 @@ What has been done about it:
   itself, so a route with fewer of them is still the route we planned, still
   labelled with the cameras it passes, and still warned about while driving.
 
+**Temporary instrumentation is in the app right now.** The result sheet shows a
+"Planned in …" block breaking the time down by stage, and splitting the routing
+stage by what each search over the road graph was for (`fastest`, `balanced`,
+`blocked`, `fewest (fallback)`, and `… (widen N)` for a re-search after the
+camera area was widened). It exists because this project is developed in a
+sandbox that cannot reach the BRouter tile CDN, so the only machine that can say
+which pass is slow is a real phone. `PlanTimings`, its plumbing, and
+`PlanningTimeBreakdown` in `ResultSheet.kt` all come out together once long-route
+planning is fast enough that nobody is asking.
+
+The maintainer has confirmed from a real device that **"Planning routes" is the
+slow stage** — so the remaining cost is in the route-deciding passes, not in pin
+refinement. Two things to read from the breakdown:
+
+- **If `(widen 2)` passes appear**, a large share of the cost is re-searching the
+  whole graph because the routes left the box cameras were fetched for. Sizing
+  the first camera box from the fastest route's actual geometry, rather than the
+  straight origin→destination box, would collapse that. Cheap and low-risk.
+- **If one pass dominates**, look at which. A `blocked` pass that fails and forces
+  the `fewest (fallback)` pass costs two searches for one option.
+
 Still open, and untested because it needs a real device: whether the
 route-deciding passes alone are fast enough on a long trip. The candidates, in
 descending order of expected value and risk, are running the independent

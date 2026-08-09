@@ -177,6 +177,56 @@ class PlanningCostTest {
     }
 
     @Test
+    fun `planning reports where its time went`() = runTest {
+        // Temporary instrumentation, but it has to be right while it exists: a
+        // breakdown that misattributes time is worse than none, because it sends
+        // the next optimisation at the wrong thing.
+        var clock = 0L
+        val router = Router(
+            options(RouteChoice.FASTEST to fastRoad, RouteChoice.FEWEST_CAMERAS to detour),
+            ::carPath,
+        )
+        val planner = BrouterPlanner(
+            route = { points, cameras, heading ->
+                clock += 1_000
+                router.route(points, cameras, heading)
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { clock += 500; listOf(camera) },
+            nowMillis = { clock },
+            lastPassTimings = { listOf(PlanTimings.Timed("fastest", 700)) },
+        )
+
+        val outcome = assertIs<PlanOutcome.Routes>(planner.plan(origin, destination))
+        val timings = outcome.timings
+        assertTrue(timings != null, "the breakdown must reach the result sheet")
+
+        // The detour runs north of the straight line, so the routes leave the box
+        // the cameras were fetched for and the planner widens once and re-routes
+        // — hence two of each. That is the loop working, and the breakdown has to
+        // show its real cost rather than only the first pass.
+        val byLabel = timings.stages.associate { it.label to it.millis }
+        assertEquals(1_000L, byLabel[PlanTimings.STAGE_CAMERAS], "both camera fetches, measured apart")
+        assertEquals(
+            2_000L,
+            byLabel[PlanTimings.STAGE_ROUTING],
+            "both routing iterations — the stage reported as the slow one on a real phone",
+        )
+        assertTrue(
+            byLabel.getValue(PlanTimings.STAGE_PINS) > 0,
+            "refinement is its own stage, so it can't be blamed for routing's time",
+        )
+        assertTrue(
+            timings.routingPasses.any { it.label == "fastest" },
+            "the routing stage is split by what each graph search was for",
+        )
+        assertTrue(
+            timings.routingPasses.any { "widen 2" in it.label },
+            "and a re-search after widening is labelled as one, not silently doubled up",
+        )
+    }
+
+    @Test
     fun `a zero budget still yields usable routes`() = runTest {
         val router = Router(
             options(RouteChoice.FASTEST to fastRoad, RouteChoice.FEWEST_CAMERAS to detour),

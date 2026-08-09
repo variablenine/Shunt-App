@@ -202,6 +202,11 @@ private fun SolvedContent(
     Spacer(Modifier.height(4.dp))
     SelectedRouteDetail(phase.chosen)
 
+    phase.timings?.let {
+        Spacer(Modifier.height(12.dp))
+        PlanningTimeBreakdown(it)
+    }
+
     // Range comes after the route detail and before Go: it's about the option
     // just chosen, and it's the last thing worth knowing before setting off.
     if (rangeCheck != null) {
@@ -238,6 +243,73 @@ private fun SolvedContent(
  * is in a position to notice that, so it's said here, next to the option that
  * causes it, with a way to fix it in one tap.
  */
+/**
+ * Where the planning time went.
+ *
+ * **Temporary.** A long route takes far longer to plan than is usable, and the
+ * only machine that can say which part is slow is a real phone with real map
+ * tiles. Remove this, and [app.shunt.solver.brouter.PlanTimings] behind it, once
+ * that is fixed — it is a measurement, not a feature.
+ */
+@Composable
+private fun PlanningTimeBreakdown(timings: app.shunt.solver.brouter.PlanTimings) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        color = scheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                "Planned in ${formatSeconds(timings.totalMillis)}",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = scheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            timings.stages.forEach { stage ->
+                TimingRow(stage.label, stage.millis, scheme.onSurfaceVariant)
+            }
+            if (timings.routingPasses.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Each search over the road graph",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = scheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+                Spacer(Modifier.height(4.dp))
+                timings.routingPasses.forEach { pass ->
+                    TimingRow("  ${pass.label}", pass.millis, scheme.onSurfaceVariant.copy(alpha = 0.8f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimingRow(label: String, millis: Long, color: androidx.compose.ui.graphics.Color) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = color)
+        Text(
+            formatSeconds(millis),
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+            color = color,
+        )
+    }
+}
+
+/** "0.4 s" / "12.7 s" / "2 m 05 s" — readable at a glance, no more precision than earned. */
+private fun formatSeconds(millis: Long): String {
+    val seconds = millis / 1000.0
+    return if (seconds < 60) {
+        "${(seconds * 10).toLong() / 10.0} s"
+    } else {
+        val whole = millis / 1000
+        "${whole / 60} m ${(whole % 60).toString().padStart(2, '0')} s"
+    }
+}
+
 @Composable
 private fun RangeWarning(
     check: RangeCheck,

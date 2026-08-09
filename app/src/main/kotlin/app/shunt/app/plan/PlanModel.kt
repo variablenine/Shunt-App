@@ -135,6 +135,8 @@ sealed interface Phase {
         val destination: Destination,
         val options: List<PlannedRoute>,
         val selected: Int = 0,
+        /** Where planning time went. Temporary diagnostic — see [PlanTimings]. */
+        val timings: app.shunt.solver.brouter.PlanTimings? = null,
     ) : Phase {
         val chosen: PlannedRoute get() = options[selected.coerceIn(options.indices)]
     }

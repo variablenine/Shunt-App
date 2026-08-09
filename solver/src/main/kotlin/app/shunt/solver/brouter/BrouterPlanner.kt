@@ -37,8 +37,14 @@ data class PlannedRoute(
 
 /** Outcome of planning a trip with the native BRouter engine. */
 sealed interface PlanOutcome {
-    /** One to three distinct options, fastest first, for the user to choose. */
-    data class Routes(val options: List<PlannedRoute>) : PlanOutcome
+    /**
+     * One to three distinct options, fastest first, for the user to choose.
+     * [timings] is a temporary diagnostic — see [PlanTimings].
+     */
+    data class Routes(
+        val options: List<PlannedRoute>,
+        val timings: PlanTimings? = null,
+    ) : PlanOutcome
 
     /** The offline map tiles for this trip aren't downloaded yet (full-replace). */
     data class NeedsDownload(val tiles: List<TileId>) : PlanOutcome
@@ -76,6 +82,13 @@ class BrouterPlanner(
      */
     private val refineBudgetMillis: Long = REFINE_BUDGET_MILLIS,
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    /**
+     * The per-pass breakdown of the routing that just ran. Temporary diagnostic
+     * — see [PlanTimings]. Supplied as a function because the planner is given a
+     * routing *lambda*, not the engine, and this deliberately doesn't change
+     * that: the seam is what makes planning testable without a map tile.
+     */
+    private val lastPassTimings: () -> List<PlanTimings.Timed> = { emptyList() },
 ) {
     /**
      * Plan a trip. [onProgress] reports coarse 0f..1f progress with a label, so
@@ -129,15 +142,30 @@ class BrouterPlanner(
         // anything outside it, so counting it afterwards against a wider set
         // reports a camera the avoidance was never given a chance at — and the
         // hard-block pass still "succeeded", so nothing looks wrong.
+        // Temporary instrumentation — see PlanTimings.
+        val stages = mutableListOf<PlanTimings.Timed>()
+        val routingPasses = mutableListOf<PlanTimings.Timed>()
+        var cameraMillis = 0L
+        var routingMillis = 0L
+
         var cameraBbox = baseBbox
+        var startedAt = nowMillis()
         var cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
+        cameraMillis += nowMillis() - startedAt
         var routes: List<BrouterRoute> = emptyList()
         var covered = false
 
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.3f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
-            routes = runRoutes(points, cameras, headingDegrees)
-                ?: return PlanOutcome.Failed("Routing failed.")
+            startedAt = nowMillis()
+            val fresh = runRoutes(points, cameras, headingDegrees)
+            routingMillis += nowMillis() - startedAt
+            // Label by iteration: a second one means the routes escaped the
+            // camera area and the whole graph was searched again.
+            routingPasses += lastPassTimings().map { timed ->
+                if (pass == 0) timed else timed.copy(label = "${timed.label} (widen ${pass + 1})")
+            }
+            routes = fresh ?: return PlanOutcome.Failed("Routing failed.")
             if (routes.isEmpty()) return noRoute()
 
             val actual = routeBbox(routes)
@@ -148,7 +176,9 @@ class BrouterPlanner(
             // The routes left the area we looked at. Widen and go again, so the
             // next pass plans with the cameras out there in hand.
             cameraBbox = cameraBbox.union(actual)
+            startedAt = nowMillis()
             cameras = fetchCameras(cameraBbox) ?: return cameraDataUnavailable()
+            cameraMillis += nowMillis() - startedAt
         }
 
         if (!covered) {
@@ -175,6 +205,7 @@ class BrouterPlanner(
         // same leg was being routed once per option — three full passes over the
         // road graph for one answer.
         val deadline = nowMillis() + refineBudgetMillis
+        val pinsStartedAt = nowMillis()
         val carPaths = HashMap<Pair<GeoPoint, GeoPoint>, List<GeoPoint>?>()
         val options = routes.map { r ->
             PlannedRoute(
@@ -205,7 +236,10 @@ class BrouterPlanner(
                 hardAvoidanceFailed = r.hardAvoidanceFailed,
             )
         }
-        return PlanOutcome.Routes(options)
+        stages += PlanTimings.Timed(PlanTimings.STAGE_CAMERAS, cameraMillis)
+        stages += PlanTimings.Timed(PlanTimings.STAGE_ROUTING, routingMillis)
+        stages += PlanTimings.Timed(PlanTimings.STAGE_PINS, nowMillis() - pinsStartedAt)
+        return PlanOutcome.Routes(options, PlanTimings(stages, routingPasses))
     }
 
     /**

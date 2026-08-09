@@ -60,6 +60,14 @@ class BrouterRouter(
         private set
 
     /**
+     * How long each search over the road graph took, in the most recent [route]
+     * call. Temporary diagnostic — see [PlanTimings].
+     */
+    @Volatile
+    var lastPassTimings: List<PlanTimings.Timed> = emptyList()
+        private set
+
+    /**
      * Route through [points] — origin, any intermediate stops in order, then the
      * destination — returning up to three options.
      *
@@ -77,12 +85,28 @@ class BrouterRouter(
     ): List<BrouterRoute> {
         require(points.size >= 2) { "a route needs at least an origin and a destination" }
         lastFailureDiagnostic = null
-        val fastest = runRoute(points, cameras, Avoidance.None, headingDegrees)
+        val timings = mutableListOf<PlanTimings.Timed>()
+        // Each of these is a full search over the road graph, which on a
+        // cross-state trip is the whole cost of planning. Which one is expensive
+        // decides what to do about it, so they are timed apart.
+        fun <T> timed(label: String, block: () -> T): T {
+            val startedAt = System.nanoTime()
+            val result = block()
+            timings += PlanTimings.Timed(label, (System.nanoTime() - startedAt) / 1_000_000)
+            return result
+        }
+
+        val fastest = timed("fastest") { runRoute(points, cameras, Avoidance.None, headingDegrees) }
             ?.toResult(RouteChoice.FASTEST, cameras)
         // With no cameras nearby there is only one sensible route.
-        if (cameras.isEmpty()) return listOfNotNull(fastest)
+        if (cameras.isEmpty()) {
+            lastPassTimings = timings
+            return listOfNotNull(fastest)
+        }
 
-        val balanced = runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees)
+        val balanced = timed("balanced") {
+            runRoute(points, cameras, Avoidance.Weighted(BALANCED_WEIGHT), headingDegrees)
+        }
             ?.toResult(RouteChoice.BALANCED, cameras)
 
         // "Fewest cameras" must mean *none* whenever a camera-free path exists at
@@ -91,16 +115,19 @@ class BrouterRouter(
         // cone costs little and gets chosen over a long back-road detour — the
         // route then passes a camera that was in fact avoidable. Blocking the
         // zones outright makes the engine find the camera-free path or none.
-        val blocked = runRoute(points, cameras, Avoidance.Blocked, headingDegrees)
+        val blocked = timed("blocked") { runRoute(points, cameras, Avoidance.Blocked, headingDegrees) }
             ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
             // hard as possible so the user still gets the best available, and
             // record that hard avoidance failed without claiming why it failed.
-            ?: runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees)
+            ?: timed("fewest (fallback)") {
+                runRoute(points, cameras, Avoidance.Weighted(FEWEST_WEIGHT), headingDegrees)
+            }
                 ?.toResult(RouteChoice.FEWEST_CAMERAS, cameras)
                 ?.copy(hardAvoidanceFailed = true)
+        lastPassTimings = timings
 
         // Fastest first, then the avoidance options — but only ones that are
         // genuinely a different road, each kept under its own truthful label

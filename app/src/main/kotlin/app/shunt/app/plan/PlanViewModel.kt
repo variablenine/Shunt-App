@@ -210,7 +210,7 @@ class PlanViewModel(
             is PlanOutcome.Routes -> {
                 _state.update {
                     it.copy(
-                        phase = Phase.Solved(destination, outcome.options),
+                        phase = Phase.Solved(destination, outcome.options, timings = outcome.timings),
                         chargeStopSearchFailed = false,
                     )
                 }

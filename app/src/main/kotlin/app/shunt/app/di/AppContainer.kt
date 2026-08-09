@@ -83,6 +83,7 @@ class AppContainer(context: Context) {
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
         camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
         diagnostics = { routingDiagnostic() },
+        lastPassTimings = { brouterRouter.lastPassTimings },
     )
 
     /** One-line on-disk + engine state, surfaced on a no-route failure (alpha aid). */
