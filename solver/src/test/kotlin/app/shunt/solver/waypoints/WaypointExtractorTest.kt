@@ -173,6 +173,58 @@ class WaypointExtractorTest {
         assertTrue(waypoints.distinct().size == waypoints.size, "duplicate pins")
     }
 
+    // ---- Pinning tightly where the roads are dense -----------------------
+    //
+    // One spacing everywhere was justified by "the car cannot meaningfully
+    // deviate inside a few hundred metres". On a highway that is true. In a city
+    // grid there is a turn every block, and the rule was throwing away exactly
+    // the pins the refiner had worked hardest to place.
+
+    /** [count] cameras scattered within a few hundred metres of [around]. */
+    private fun cluster(around: GeoPoint, count: Int): app.shunt.solver.brouter.CameraIndex =
+        app.shunt.solver.brouter.CameraIndex(
+            (0 until count).map { CameraVision(GeoPoint(around.lat + it * 0.0005, around.lon), null) },
+        )
+
+    @Test
+    fun `pins survive closer together where cameras are dense`() {
+        val first = GeoPoint(39.0, -98.0)
+        // 400 m apart: too close for open road, comfortably apart in a city.
+        val second = GeoPoint(39.0, -98.0 + 400.0 / (111_320.0 * kotlin.math.cos(Math.toRadians(39.0))))
+        val pins = listOf(first, second)
+
+        assertEquals(
+            listOf(first),
+            WaypointExtractor.spaceOut(pins),
+            "on open road the second pin is inside the monitor's lead distance and buys nothing",
+        )
+        assertEquals(
+            pins,
+            WaypointExtractor.spaceOut(pins, density = cluster(first, WaypointExtractor.DENSE_CAMERA_COUNT)),
+            "in a grid that dense the car has turns between them, so both pins are real constraints",
+        )
+    }
+
+    @Test
+    fun `spacing never leaves the range its two ends define`() {
+        val here = GeoPoint(39.0, -98.0)
+        val empty = app.shunt.solver.brouter.CameraIndex(emptyList())
+        assertEquals(
+            WaypointExtractor.MIN_PIN_SPACING_METERS,
+            WaypointExtractor.spacingAt(here, empty),
+            "no cameras at all is open road",
+        )
+        // Well past the threshold: it must clamp, not keep tightening toward zero
+        // — below the drive monitor's lead distance a pin is advanced past
+        // before the car ever aims at it.
+        val spacing = WaypointExtractor.spacingAt(here, cluster(here, WaypointExtractor.DENSE_CAMERA_COUNT * 5))
+        assertEquals(WaypointExtractor.DENSE_PIN_SPACING_METERS, spacing, "clamped at the dense end")
+        assertTrue(
+            spacing >= WaypointRefiner.PAST_FORK_METERS,
+            "a pin the refiner placed past a fork must not then be dropped for being too close",
+        )
+    }
+
     @Test
     fun `closing shortcuts stops on its budget`() {
         // This phase had no bound at all, and it is not cheap: a chord early in

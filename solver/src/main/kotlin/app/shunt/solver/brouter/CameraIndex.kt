@@ -57,6 +57,17 @@ class CameraIndex(private val cameras: List<CameraVision>) {
         }
     }
 
+    /**
+     * How many cameras sit within [meters] of one point.
+     *
+     * A density reading, used to decide how tightly a stretch of route wants
+     * pinning: cameras cluster where junctions do, and a stretch with a dozen of
+     * them within a mile is a city grid where the car has a turn it could take
+     * every block. See [app.shunt.solver.waypoints.WaypointExtractor.spaceOut].
+     */
+    fun countWithin(p: GeoPoint, meters: Double): Int =
+        if (cameras.isEmpty()) 0 else index.near(p, meters).count { haversineMeters(p, it.location) <= meters }
+
     /** Every camera within [meters] of the line, seen or not — the map's context layer. */
     fun within(polyline: List<GeoPoint>, meters: Double): List<CameraVision> {
         if (cameras.isEmpty() || polyline.size < 2) return emptyList()

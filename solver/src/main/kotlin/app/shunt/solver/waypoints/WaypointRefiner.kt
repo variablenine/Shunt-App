@@ -56,11 +56,30 @@ object WaypointRefiner {
     const val FORK_THRESHOLD_METERS = 60.0
 
     /**
-     * How far past the fork to drop the pin. Far enough that reaching it means
-     * the turn has been taken and the car is committed; short enough that no
-     * other road reaches it first.
+     * How far past the fork to drop the pin, on open road. Far enough that
+     * reaching it means the turn has been taken and the car is committed; short
+     * enough that no other road reaches it first.
      */
     const val PAST_FORK_METERS = 250.0
+
+    /**
+     * The same, where the road network is dense.
+     *
+     * Those two requirements pull apart in a city. "Far enough to be committed"
+     * is satisfied almost immediately when a turn is a street corner, while
+     * "short enough that no other road reaches it first" gets *harder* every
+     * metre — at 250 m past a fork in a grid the pin can easily sit beyond the
+     * next junction or two, so the car has choices it can make and still arrive.
+     * That is exactly the reported failure: the car strays from the pin, and by
+     * the time it is clear it has passed a camera.
+     *
+     * Shorter is safe to try because the refiner verifies rather than assumes:
+     * it re-routes the leg the way the car would and, if the car still strays,
+     * inserts another pin. A pin placed too early is corrected on the next
+     * iteration; one placed too late is not, because the loop sees a leg that
+     * looks clean.
+     */
+    const val DENSE_PAST_FORK_METERS = 120.0
 
     /**
      * Pins for [chosen] that the car will follow. [pins] are the candidates
@@ -123,7 +142,7 @@ object WaypointRefiner {
                 val from = chain[i]
                 val to = chain[i + 1]
                 if (from in hopeless || (from to to) in clean) continue
-                if (outOfTime()) return WaypointExtractor.spaceOut(current)
+                if (outOfTime()) return WaypointExtractor.spaceOut(current, density = index)
 
                 val carPath = carRoute(from, to)
                 if (carPath == null) {
@@ -138,7 +157,7 @@ object WaypointRefiner {
                 // The car would pass a camera getting to this pin. Put one in
                 // just past where its path and ours part company.
                 if (maxPins != WaypointExtractor.NO_LIMIT && current.size >= maxPins) return current
-                val pin = pinPastFork(chosen, carPath, from, to)
+                val pin = pinPastFork(chosen, carPath, from, to, pastForkAt(from, index))
                 if (pin == null || pin in current) {
                     // Nowhere left to put one on this stretch.
                     hopeless += from
@@ -150,7 +169,18 @@ object WaypointRefiner {
             }
             if (!inserted) break
         }
-        return WaypointExtractor.spaceOut(current)
+        return WaypointExtractor.spaceOut(current, density = index)
+    }
+
+    /**
+     * How far past a fork around [p] the pin should go, given how built-up it
+     * is. Uses the same density reading as pin spacing, so the two agree about
+     * what counts as a city.
+     */
+    internal fun pastForkAt(p: GeoPoint, density: CameraIndex): Double {
+        val nearby = density.countWithin(p, WaypointExtractor.DENSITY_RADIUS_METERS)
+        val builtUp = (nearby.toDouble() / WaypointExtractor.DENSE_CAMERA_COUNT).coerceIn(0.0, 1.0)
+        return PAST_FORK_METERS - builtUp * (PAST_FORK_METERS - DENSE_PAST_FORK_METERS)
     }
 
     /**
@@ -163,11 +193,12 @@ object WaypointRefiner {
         carPath: List<GeoPoint>,
         from: GeoPoint,
         to: GeoPoint,
+        pastForkMeters: Double = PAST_FORK_METERS,
     ): GeoPoint? {
         if (carPath.size < 2) return null
         val startAlong = pointToPolylineProgress(from, chosen).alongMeters
         val endAlong = pointToPolylineProgress(to, chosen).alongMeters
-        if (endAlong - startAlong < PAST_FORK_METERS) return null
+        if (endAlong - startAlong < pastForkMeters) return null
 
         var along = 0.0
         var forkAlong: Double? = null
@@ -185,7 +216,7 @@ object WaypointRefiner {
             }
             // Past the fork: take the first point far enough along the detour
             // that the turn is behind us.
-            if (along - forkAlong >= PAST_FORK_METERS) return chosen[i]
+            if (along - forkAlong >= pastForkMeters) return chosen[i]
         }
         // Diverges but never far enough past it before the next pin: put the
         // pin at the end of the usable stretch rather than nothing at all.

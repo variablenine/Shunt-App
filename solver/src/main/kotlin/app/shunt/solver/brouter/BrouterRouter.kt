@@ -73,8 +73,37 @@ class BrouterRouter(
      * not a wrong one.
      */
     private val passBudgetMillis: Long = PASS_BUDGET_MILLIS,
+    /**
+     * How many searches over the road graph may run at once.
+     *
+     * `blocked` and `balanced` do not depend on each other, and measurement says
+     * they are now most of a long plan — on a real phone, 22.0 s and 21.6 s
+     * against 3.4 s for the plain fastest road. Overlapping them is the only
+     * lever left: the same measurement showed the per-link nogo lookup costs
+     * about half a second of that, so the rest is the search space genuinely
+     * growing, and no further indexing touches it.
+     *
+     * **Correctness is settled; memory is the reason this is a dial.**
+     * `btools.router.ProfileCache` is the only mutable static on the routing
+     * path, its entry points are `synchronized`, and its `profilesBusy` flag
+     * exists precisely to keep two threads off one profile context — BRouter
+     * anticipates concurrent routing. What does not scale is memory: each engine
+     * builds its own `NodesCache` over the tiles, and on a cross-state trip that
+     * is large. So this defaults to sequential, and the Android layer raises it
+     * where the device can be seen to have the headroom. An OOM mid-plan is a
+     * worse failure than a slow plan.
+     */
+    private val maxConcurrentPasses: Int = 1,
     private val nowMillis: () -> Long = System::currentTimeMillis,
 ) {
+    init {
+        require(maxConcurrentPasses >= 1) { "maxConcurrentPasses must be at least 1" }
+        // One cache slot per concurrent pass. BRouter's cache is already safe
+        // without this — its `profilesBusy` flag makes a second thread parse its
+        // own copy rather than share one — so this only saves that re-parse.
+        if (maxConcurrentPasses > 1) btools.router.ProfileCache.setSize(maxConcurrentPasses)
+    }
+
     /** Why the last [route] found nothing, for diagnostics — null after a success. */
     @Volatile
     var lastFailureDiagnostic: String? = null
@@ -137,10 +166,9 @@ class BrouterRouter(
          * one expensive search cannot spend the whole allowance and leave
          * nothing for the ones that matter more.
          */
-        fun pass(label: String, avoidance: Avoidance, share: Double = 1.0): RawRoute? {
+        fun runPass(label: String, avoidance: Avoidance, share: Double = 1.0): Pass {
             if (remaining() <= 0) {
-                timings += PlanTimings.Timed("$label (skipped — over budget)", 0)
-                return null
+                return Pass(null, PlanTimings.Timed("$label (skipped — over budget)", 0))
             }
             val ceiling = (remaining() * share).toLong().coerceAtLeast(1L)
             val startedAt = System.nanoTime()
@@ -151,9 +179,17 @@ class BrouterRouter(
                 outcome.timedOut -> " (gave up — out of time)"
                 else -> " (no route)"
             }
-            timings += PlanTimings.Timed(label + suffix, took)
-            return outcome.route
+            return Pass(outcome.route, PlanTimings.Timed(label + suffix, took))
         }
+
+        /**
+         * Run a pass and record it, in the order the *caller* asks rather than
+         * the order passes finish. With two of them overlapping, appending as
+         * each completes would shuffle the breakdown between runs, and the
+         * breakdown is read as a fixed list.
+         */
+        fun pass(label: String, avoidance: Avoidance, share: Double = 1.0): RawRoute? =
+            runPass(label, avoidance, share).also { timings += it.timing }.route
 
         val fastest = pass("fastest", Avoidance.None)?.toResult(RouteChoice.FASTEST, index)
         // With no cameras nearby there is only one sensible route.
@@ -198,13 +234,34 @@ class BrouterRouter(
         // certainly inside the block. A point that is not seen may still be
         // inside it, and that case simply runs as before.
         val endpointInsideZone = points.any { index.anySeeing(it) }
+
+        // `blocked` and `balanced` overlap where the device has the memory for
+        // it. They share nothing — each search builds its own context, engine
+        // and nogo list — so the only thing that changes is which of them the
+        // wall clock is measured against. Both are still capped at
+        // BLOCKED_BUDGET_SHARE of what is left, which leaves the remainder for
+        // the fallback below in the case that actually needs it.
+        //
+        // The reported durations stay per-pass, so two overlapping passes each
+        // read ~20 s while the stage they are in reads ~20 s rather than ~40 s.
+        // That is the honest way round: the numbers say what each search cost,
+        // and the stage says what the driver waited.
+        val balancedShare = if (maxConcurrentPasses >= 2) BLOCKED_BUDGET_SHARE else 1.0
+        val balancedTask = concurrently(enabled = maxConcurrentPasses >= 2 && !endpointInsideZone) {
+            runPass("balanced", Avoidance.Weighted(BALANCED_WEIGHT), share = balancedShare)
+        }
+
+        val blockedTiming: PlanTimings.Timed
         val blocked = if (endpointInsideZone) {
-            timings += PlanTimings.Timed("blocked (skipped — an endpoint is inside a camera's view)", 0)
+            blockedTiming = PlanTimings.Timed("blocked (skipped — an endpoint is inside a camera's view)", 0)
             null
         } else {
-            pass("blocked", Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
-                ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
+            val run = runPass("blocked", Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
+            blockedTiming = run.timing
+            run.route?.toResult(RouteChoice.FEWEST_CAMERAS, index)
         }
+        timings += blockedTiming
+
         val fewest = blocked
             // No camera-free path exists (or an endpoint sits inside a zone,
             // which a hard block rejects outright) — fall back to avoiding as
@@ -215,8 +272,11 @@ class BrouterRouter(
                 ?.copy(hardAvoidanceFailed = true)
 
         // Last, on whatever is left: the option it is least costly to lose.
-        val balanced = pass("balanced", Avoidance.Weighted(BALANCED_WEIGHT))
-            ?.toResult(RouteChoice.BALANCED, index)
+        // Already running when concurrency is on; run now when it is not.
+        val balancedPass = balancedTask?.invoke()
+            ?: runPass("balanced", Avoidance.Weighted(BALANCED_WEIGHT), share = balancedShare)
+        timings += balancedPass.timing
+        val balanced = balancedPass.route?.toResult(RouteChoice.BALANCED, index)
 
         lastPassTimings = timings
 
@@ -238,6 +298,37 @@ class BrouterRouter(
     }
 
     private data class RawRoute(val polyline: List<GeoPoint>, val distanceMeters: Int, val seconds: Int)
+
+    /** What one search produced, with the breakdown line describing it. */
+    private data class Pass(val route: RawRoute?, val timing: PlanTimings.Timed)
+
+    /**
+     * Start [work] on another thread when [enabled], else return null so the
+     * caller runs it inline at its usual point in the sequence.
+     *
+     * A bare thread rather than a coroutine or a pool: `route` is a blocking,
+     * CPU-bound call by contract, exactly two of these ever exist, and the
+     * caller joins before returning — so there is nothing for a scheduler to
+     * do, and nothing can outlive the call and hold a tile cache alive.
+     */
+    private fun concurrently(enabled: Boolean, work: () -> Pass): (() -> Pass)? {
+        if (!enabled) return null
+        val done = java.util.concurrent.CompletableFuture<Pass>()
+        val thread = Thread({
+            try {
+                done.complete(work())
+            } catch (t: Throwable) {
+                // Never let the joining thread wait forever on a pass that died.
+                // A pass that produces nothing is an option missing from the
+                // chooser, which is a shape the rest of this already handles.
+                note("concurrent pass failed: ${t.message ?: t.toString()}")
+                done.complete(Pass(null, PlanTimings.Timed("balanced (failed)", 0)))
+            }
+        }, "shunt-routing")
+        thread.isDaemon = true
+        thread.start()
+        return { done.get() }
+    }
 
     /** How hard this pass should avoid camera zones. */
     internal sealed interface Avoidance {
@@ -420,7 +511,12 @@ class BrouterRouter(
     }
 
     /** Record the first (fastest-attempt) failure reason and return null. */
+    @Synchronized
     private fun note(reason: String): RawRoute? {
+        // Synchronized because two passes can run at once and both can fail.
+        // Keeping the first reason is the point — it is the one that explains
+        // the failure the user is looking at — and read-then-write across
+        // threads would lose that.
         if (lastFailureDiagnostic == null) lastFailureDiagnostic = reason
         return null
     }

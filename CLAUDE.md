@@ -66,11 +66,13 @@ Working and reasonably trusted:
   detection, escalating haptics + notifications. Works fully offline.
 - Destination search (Photon), favourites, long-press-map-to-route.
 
-Long-route planning was the blocker for real use and is now usable: a 470 km trip
-went from 12 m 46 s to 41 s on a real phone, and a 615 km trip that had been
-abandoned after twenty minutes now plans in about 73 s against real tiles. See
-§7.4. The 615 km figure is from the repository's own benchmark rather than a
-phone, and wants confirming on one.
+Long-route planning was the blocker for real use and is now solved. A 489 km trip
+into dense metro — the one that used to be abandoned after twenty minutes —
+**planned on a real phone in 1 m 06 s and returned a genuinely camera-free
+route**, verified against the map. Since that measurement the two avoidance
+passes run concurrently, which takes the same 615 km benchmark trip from 57 s to
+43 s; that part is from the repository's benchmark and wants confirming on a
+phone. See §7.4.
 
 Working but **not proven on real vehicles**:
 
@@ -241,6 +243,51 @@ fails, both putting the car past a camera the route exists to avoid:
 will drive it *routes the leg the way the car will* (no avoidance) and checks
 whether that path enters a camera our route avoids; where it does, it puts a pin
 just past the point the two paths diverge. This is empirical on purpose.
+
+### How densely to pin, which is not one number
+
+Two constants decide how firmly a route is held, and both were single values
+tuned for open road. In a city they were wrong in the same direction, and the
+symptom was the one reported from real driving: *in denser areas the car strays
+from the pin and passes a camera before there is time to warn.*
+
+- **`MIN_PIN_SPACING_METERS` (800 m), how far apart pins may sit.** The real
+  constraint behind it is the drive monitor, which advances to the next pin once
+  the car is within `max(150 m, speed × 18 s)` of the current one — so two pins
+  closer than that lead distance are one constraint, not two, because the second
+  is advanced past before the car aims at it. At highway speed that lead is
+  500-550 m and 800 m is right. At city speed it is about 230 m, and 800 m was
+  throwing away pins that would have worked. Worse, it was throwing away *the
+  refiner's* pins specifically: those are placed `PAST_FORK_METERS` past a fork,
+  which is inside 800 m by construction. The most carefully computed pin on the
+  route was the one most likely to be discarded, exactly where the roads made it
+  matter.
+- **`PAST_FORK_METERS` (250 m), how far past a fork the pin goes.** It has to be
+  far enough that the turn is committed and near enough that no other road
+  reaches it first. Those pull apart in a grid: commitment happens almost at
+  once, while 250 m can be past the next junction or two, giving the car choices
+  it can make and still arrive at the pin.
+
+Both now slide with **local camera density** — `CameraIndex.countWithin` over
+`DENSITY_RADIUS_METERS`, tightening to `DENSE_PIN_SPACING_METERS` (250 m) and
+`DENSE_PAST_FORK_METERS` (120 m) by `DENSE_CAMERA_COUNT` cameras within about a
+mile. Camera count is a proxy for junction density, and an honest one: a polyline
+says nothing about the side streets leading off it, while ALPRs are sited where
+the traffic and the junctions are. The extra pins cost one rate-limited command
+each as the drive passes them, which is affordable precisely where they are
+added — reception in a city is the best on the trip.
+
+Tightening is safe to try because **the refiner verifies rather than assumes**: a
+pin placed too early is caught next iteration, when the leg is re-routed and
+still strays, and another goes in. A pin placed too late is not caught, because
+the leg looks clean. So the two errors are not symmetrical, and this errs toward
+the recoverable one.
+
+Measured on the 615 km trip: fewest-cameras went from 44 pins to 51, with the
+additions landing in the dense final tenth of the route, and the routes
+themselves unchanged. `DENSE_PIN_SPACING_METERS` must never drop below the
+monitor's lead distance, or pins stop being constraints at all — a test holds it
+at or above `PAST_FORK_METERS`.
 
 ### 6.1 The driver always wins
 
@@ -566,21 +613,56 @@ picking this up should cap the concurrency at two, and measure resident memory
 on a real device before going further — an OOM mid-plan is a worse failure than
 a slow plan.
 
+### Why avoidance costs what it does, and what that rules out
+
+Worth settling before anyone optimises here again, because it eliminates the
+obvious idea. On a real phone `fastest` takes 3.4 s and `blocked` 22.0 s over the
+same graph. Two explanations, opposite responses: if the *nogo lookup* is the
+cost there is headroom left in indexing; if it is the *search space* then no
+amount of indexing touches it.
+
+Separated by displacing every camera six degrees north — identical nogo count, so
+identical per-link work, but nothing near any road the trip would use:
+
+| 615 km trip, 5,388 nogos | real positions | displaced |
+|---|---|---|
+| `fastest` | 3.6 s | 3.5 s |
+| `blocked` | 16.0 s | 4.0 s |
+| `balanced` | 14.1 s | 4.1 s |
+
+So the lookup is about half a second and the other twelve are the search
+genuinely exploring more roads and settling on a longer one. **Indexing is
+finished as a lever.** `NogoIndex` did the available work and there is no second
+one to find.
+
+That leaves overlapping the passes, which is now done — `blocked` and `balanced`
+are independent, and `maxConcurrentPasses` runs them at once. Measured on the
+615 km trip: routing 38.5 s → 24.2 s, whole plan 57.1 s → 42.7 s, and the three
+options identical to the metre. The dial exists because of **memory**: peak heap
+went 230 MB → 302 MB, since each search builds its own tile cache. `AppContainer`
+asks `ActivityManager.getMemoryClass()` and only takes two lanes on a device with
+room (`CONCURRENT_ROUTING_HEAP_MB`); an OOM part-way through planning is a worse
+failure than a slow plan. Three lanes has never been measured.
+
 What else has *not* been tried, in descending order of expected value and risk:
 
-- **Running the independent avoidance passes concurrently.** The largest lever
-  left — routing is now three quarters of a long plan and `blocked` and
-  `balanced` do not depend on each other. Correctness is settled (above); memory
-  is not. Cap at two and measure resident memory on a real device.
 - **Pin refinement done lazily** — compute the next few pins rather than all of
-  them. The maintainer's suggestion, and the right shape for pins specifically.
-  It is no longer a speed problem, so pursue it for *quality*: a long route's
-  pins currently share one 20 s budget between them, and the far end of the trip
-  is what goes unpinned when it runs out.
+  them. Not a speed problem: refinement was measured against a 120 s budget and
+  still settled in 19 s with identical pins, so it reaches a fixed point rather
+  than being cut off. Pursue it only if a trip is found where it does not.
+- **A third concurrent lane.** Only `fastest`/`spine` are left to overlap and
+  they are 3-4 s each, so the ceiling is small and the memory cost is another
+  full tile cache. Measure before believing it.
 - **Narrowing the corridor** is now the wrong direction, and the reasoning that
   recommended it is recorded above so nobody re-derives it. Do not retighten
   `CAMERA_CORRIDOR_METERS` without first re-measuring whether the nogo count
   still costs anything.
+
+Beyond that, the remaining cost is the shortest-path search itself, and making
+*that* fundamentally faster means a different algorithm (precomputed contraction
+hierarchies and the like) rather than a tuning change. That is a large piece of
+work against a vendored engine, and nothing in this section should be read as
+suggesting a cross-state route can be planned in seconds without it.
 
 And one tension worth knowing about before it is discovered the hard way: an
 avoidance pass on a long trip costs about 20 s, while a mid-drive re-plan is
@@ -732,11 +814,12 @@ cannot be undone by a follow-up commit.
 
 Ordered roughly by what unblocks real use.
 
-- **[high] Confirm long-route planning on a phone** — see §7.4. A 615 km trip
-  went from abandoned-after-twenty-minutes to 72.8 s against real tiles, but
-  every number since the nogo index was measured in the sandbox. The phone is
-  what counts, and it is the last thing standing between here and a route that
-  is worth pushing to a car.
+- **[high] Confirm the concurrent passes and the denser pins on a phone** —
+  §7.4 and §6. Long-route planning is confirmed working on a real device
+  (489 km in 1 m 06 s, camera-free); what has not been seen on one is the
+  concurrency (43 s vs 57 s on the benchmark) or the density-aware pins. The
+  concurrency in particular wants watching for memory pressure on a real
+  device rather than a container with 16 GB.
 - **[high] Charging re-route on long trips** — §7.1.
 - **[high] Waypoint fidelity on the car** — §7.2. Getting a coarse location is
   worse than getting none, because it looks like it worked.

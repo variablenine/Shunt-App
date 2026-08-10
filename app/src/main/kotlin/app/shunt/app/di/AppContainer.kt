@@ -75,6 +75,7 @@ class AppContainer(context: Context) {
     private val brouterRouter = BrouterRouter(
         segmentDir = tileSource.segmentDir,
         profileDir = brouterProfileDir,
+        maxConcurrentPasses = concurrentRoutingPasses(),
     )
     private val brouterPlanner = BrouterPlanner(
         route = { request ->
@@ -443,6 +444,32 @@ class AppContainer(context: Context) {
         )
     }
 
+    /**
+     * How many searches over the road graph this device may run at once.
+     *
+     * `blocked` and `balanced` are independent and are most of a long plan, so
+     * overlapping them is the largest remaining speed-up — measured on a 615 km
+     * trip, the routing stage fell from 38.5 s to 24.2 s and the three options
+     * came back identical to the metre.
+     *
+     * The cost is memory: each search builds its own BRouter tile cache, and the
+     * same measurement put peak heap up from 230 MB to 302 MB. That is fine on a
+     * device with room and fatal on one without, and an OOM part-way through
+     * planning is a far worse failure than a slow plan — so this asks the
+     * platform what it has rather than assuming. [ActivityManager.getMemoryClass]
+     * is the heap ceiling in MB that this app is actually held to.
+     *
+     * Two lanes only. Three was never measured and each one costs another tile
+     * cache; anyone raising it should re-run the benchmark in CLAUDE.md §8 on a
+     * real device first.
+     */
+    private fun concurrentRoutingPasses(): Int {
+        val am = appContext.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            ?: return 1
+        if (am.isLowRamDevice) return 1
+        return if (am.memoryClass >= CONCURRENT_ROUTING_HEAP_MB) 2 else 1
+    }
+
     /** Download every tile this trip needs, reporting overall 0f..1f progress. */
     private suspend fun downloadTripTiles(
         origin: app.shunt.core.GeoPoint,
@@ -480,6 +507,16 @@ class AppContainer(context: Context) {
         /** Routing tiles unused for this long are pruned (~6 months). */
         const val TILE_TTL_DAYS = 183L
 
+        /**
+         * Heap ceiling (MB) a device needs before two routes are searched at once.
+         *
+         * A 615 km plan peaked at 302 MB with two lanes against 230 MB with one,
+         * so this is that peak plus room for the map, the Compose UI and the
+         * camera set — everything that is live while planning runs. Erring high
+         * costs a slower plan on a mid-range phone; erring low costs a crash
+         * part-way through one, and only one of those is recoverable.
+         */
+        const val CONCURRENT_ROUTING_HEAP_MB = 384
     }
 }
 

@@ -161,6 +161,57 @@ class WaypointRefinerTest {
     }
 
     @Test
+    fun `the pin lands sooner past a fork where the roads are dense`() {
+        // In a grid, 250 m past a fork can already be beyond the next junction
+        // or two — so the car has turns it can still take and reach the pin
+        // anyway, which is the "it strayed and passed a camera" report.
+        val here = GeoPoint(39.0, -98.0)
+        val open = app.shunt.solver.brouter.CameraIndex(emptyList())
+        val dense = app.shunt.solver.brouter.CameraIndex(
+            (0 until WaypointExtractor.DENSE_CAMERA_COUNT).map {
+                CameraVision(GeoPoint(here.lat + it * 0.0005, here.lon), null)
+            },
+        )
+
+        assertEquals(WaypointRefiner.PAST_FORK_METERS, WaypointRefiner.pastForkAt(here, open))
+        assertEquals(WaypointRefiner.DENSE_PAST_FORK_METERS, WaypointRefiner.pastForkAt(here, dense))
+        assertTrue(
+            WaypointRefiner.DENSE_PAST_FORK_METERS < WaypointRefiner.PAST_FORK_METERS,
+            "dense must mean sooner, or this constant is doing nothing",
+        )
+    }
+
+    @Test
+    fun `a shorter fork distance moves the pin closer to the turn`() {
+        // The distance has to actually reach the placement, not just the KDoc.
+        // Sampled at ~25 m, because a line whose vertices are further apart than
+        // the two distances differ by would land both pins on the same vertex
+        // and pass whatever the code did.
+        val lonStep = 25.0 / (111_320.0 * kotlin.math.cos(Math.toRadians(39.0)))
+        val latStep = 25.0 / 111_320.0
+        val corner = -98.0 + 40 * lonStep
+        val fine = buildList {
+            for (i in 0..40) add(GeoPoint(39.0, -98.0 + i * lonStep)) // east, on the car's road
+            for (j in 1..80) add(GeoPoint(39.0 + j * latStep, corner)) // then a hard turn north
+        }
+        // The car carries straight on east instead of taking the turn.
+        val carPath = listOf(fine.first(), GeoPoint(39.0, -98.0 + 200 * lonStep))
+
+        val far = WaypointRefiner.pinPastFork(
+            fine, carPath, fine.first(), fine.last(), WaypointRefiner.PAST_FORK_METERS,
+        )
+        val near = WaypointRefiner.pinPastFork(
+            fine, carPath, fine.first(), fine.last(), WaypointRefiner.DENSE_PAST_FORK_METERS,
+        )
+        assertTrue(far != null && near != null, "both must find the turn")
+        val start = fine.first()
+        assertTrue(
+            haversineMeters(start, near!!) < haversineMeters(start, far!!),
+            "the dense placement must sit earlier: ${haversineMeters(start, near)} vs ${haversineMeters(start, far)}",
+        )
+    }
+
+    @Test
     fun `a leg the router cannot answer for is left alone rather than guessed at`() = runTest {
         val pins = listOf(detour[30])
         assertEquals(

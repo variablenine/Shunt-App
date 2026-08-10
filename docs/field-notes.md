@@ -169,7 +169,9 @@ exists to stop repetition has to survive the replacement, or it is not doing
 the job it was written for.
 
 ### F-4 · Long routes take minutes to plan
-*Observed: pre-2026-08 build. Believed fixed 2026-08-10; wants a phone to confirm.*
+*Observed: pre-2026-08 build. **Confirmed fixed on a real phone, 2026-08-10** —
+489 km in 1 m 06 s with a camera-free route. Changes since that reading
+(concurrent passes) are benchmark-only and want a phone.*
 
 A route of about 5 hours took roughly 5 minutes to calculate. Unusable for real
 driving, and dangerous where mid-drive re-planning is involved, since a re-plan
@@ -455,6 +457,80 @@ all three options, and *more* pins than before (49 and 37 against 33 and 17)
 because the time is no longer wasted. This is the trip the maintainer abandoned
 after twenty minutes. Measured in the sandbox against real tiles, not on a phone;
 the phone number is the one that counts.
+
+#### Confirmed on a real phone (2026-08-10)
+
+489 km into dense metro, **1 m 06 s**, all three options, fewest-cameras
+genuinely camera-free — and the maintainer zoomed in and verified the route
+against the camera layer rather than trusting the label. No `widen`. The
+breakdown read:
+
+```
+Finding cameras   0.2 s      fastest (spine)  3.7 s
+Planning routes  51.2 s      fastest          3.4 s
+Placing pins     14.5 s      blocked         22.0 s
+                             balanced        21.6 s
+```
+
+That closes F-4 as a *planning speed* problem. Routing is now three quarters of
+the time, and the two remaining questions were answered by measurement rather
+than argument.
+
+**Is avoidance slow because of the nogo lookup, or the search?** Displacing every
+camera six degrees north keeps the nogo count identical while removing them from
+anywhere the route would go — same per-link work, `fastest`'s search space:
+
+| 615 km trip, 5,388 nogos | real positions | displaced |
+|---|---|---|
+| `fastest` | 3.6 s | 3.5 s |
+| `blocked` | 16.0 s | 4.0 s |
+
+Half a second of lookup, twelve seconds of genuinely larger search. **Indexing is
+finished as a lever** — worth knowing before someone spends a week on it.
+
+**So the passes now overlap.** `blocked` and `balanced` are independent; on the
+615 km trip routing fell 38.5 s → 24.2 s and the whole plan 57.1 s → 42.7 s, with
+all three options identical to the metre. The cost is memory — peak heap 230 MB →
+302 MB, one tile cache per lane — so the app asks `ActivityManager.getMemoryClass()`
+and stays sequential on a device without room.
+
+### F-5 · Pins are too sparse where the streets are dense
+*Observed: 2026-08-10, from the same drive-planning session. Addressed; unconfirmed on a drive.*
+
+> In denser cities with more possible turns and more Flock cameras there's a
+> higher likelihood that the car may pick an unexpected path that strays from the
+> waypoint and it may be too late and pass by a Flock camera without warning.
+
+Two constants, both single values tuned for open road, both wrong the same way in
+a city. See CLAUDE.md §6 for the full reasoning; the short version:
+
+- **Pin spacing was 800 m everywhere.** The real constraint is the drive
+  monitor's lead distance, `max(150 m, speed × 18 s)` — pins closer than that are
+  one constraint, not two. At highway speed that is ~550 m; at city speed ~230 m.
+  So 800 m was discarding pins that would have worked, and *the refiner's pins
+  first*, since those sit `PAST_FORK_METERS` past a fork and are inside 800 m by
+  construction.
+- **The pin went 250 m past a fork.** In a grid that can be past the next
+  junction or two, so the car has turns available and still arrives at the pin.
+
+Both now slide with local camera density, to 250 m and 120 m. Camera count stands
+in for junction density — a polyline cannot see side streets, and ALPRs go where
+the junctions are.
+
+Safe to tighten because the refiner **verifies rather than assumes**: a pin
+placed too early is caught next iteration when the leg still strays, and another
+goes in; a pin placed too late is not caught, because the leg looks clean. The
+two failures are not symmetrical.
+
+Measured on the 615 km trip: fewest-cameras 44 → 51 pins, the additions in the
+dense final tenth, routes unchanged.
+
+**A worry that measurement killed.** The obvious suspicion was that the 20 s
+refinement budget was truncating pins at the far end of the trip — which on a
+trip *into* a metro is the dense end. It is not: re-run with a 120 s budget,
+refinement still settles in 19 s with byte-identical pins. It reaches a fixed
+point. The pin histogram by tenth of trip also shows the concentration is already
+where it should be (`0 0 4 1 4 3 3 5 6 25` on the fewest-cameras route).
 
 ---
 

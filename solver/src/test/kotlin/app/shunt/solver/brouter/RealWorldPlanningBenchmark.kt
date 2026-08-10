@@ -176,6 +176,126 @@ class RealWorldPlanningBenchmark {
     }
 
     /**
+     * Where the avoidance passes' time actually goes, now that the nogo scan is
+     * indexed: the *search* getting bigger, or the per-link nogo lookup?
+     *
+     * On a real phone `fastest` takes 3.4 s and `blocked` 22.0 s over the same
+     * graph, and the two explanations want opposite responses. If the lookup is
+     * the cost there is still headroom in indexing; if it is the search space —
+     * avoidance genuinely explores more roads and settles on a longer one — then
+     * no amount of indexing helps and concurrency is the only lever left.
+     *
+     * Separated by moving every camera far north. The nogo *count* is identical,
+     * so the per-link work is identical, but nothing is near the route, so the
+     * search space is `fastest`'s. Whichever number it lands on is the answer.
+     */
+    @Test
+    fun `is avoidance slow because of the lookup or the search`() = runTest(timeout = 60.minutes) {
+        val from = point("SHUNT_BENCH_FROM")
+        val to = point("SHUNT_BENCH_TO")
+        val all = cameras()
+        val router = BrouterRouter(
+            segmentDir = File(benchDir, "segments"),
+            profileDir = benchDir,
+            passBudgetMillis = 30 * 60_000L,
+        )
+        val spine = router.route(RouteRequest(listOf(from, to))).firstOrNull()?.polyline
+            ?: error("no direct route")
+        val meters = 60_000.0
+        val near = all.filter { c -> spine.any { app.shunt.solver.geo.haversineMeters(it, c.location) <= meters } }
+            .map { CameraVision(it.location, it.directionDegrees) }
+        // Same count, same shapes, nowhere near any road this trip would use.
+        val displaced = near.map { CameraVision(GeoPoint(it.location.lat + 6.0, it.location.lon), it.directionDegrees) }
+
+        println("--- ${near.size} cameras, real positions ---")
+        var startedAt = System.currentTimeMillis()
+        router.route(RouteRequest(listOf(from, to), near))
+        println("  total ${(System.currentTimeMillis() - startedAt) / 1000.0} s")
+        router.lastPassTimings.forEach { println("    %-34s %8.1f s".format(it.label, it.seconds)) }
+
+        println("--- ${displaced.size} cameras, displaced 6 degrees north ---")
+        startedAt = System.currentTimeMillis()
+        router.route(RouteRequest(listOf(from, to), displaced))
+        println("  total ${(System.currentTimeMillis() - startedAt) / 1000.0} s")
+        router.lastPassTimings.forEach { println("    %-34s %8.1f s".format(it.label, it.seconds)) }
+    }
+
+    /**
+     * What overlapping the two avoidance passes buys, and what it costs in
+     * memory — the only thing standing between here and turning it on
+     * everywhere. Run this with `-Xmx` set to something a phone would recognise
+     * before drawing conclusions from it.
+     */
+    @Test
+    fun `what concurrency buys and what it costs in memory`() = runTest(timeout = 60.minutes) {
+        val from = point("SHUNT_BENCH_FROM")
+        val to = point("SHUNT_BENCH_TO")
+        val all = cameras()
+
+        val refineMs = (System.getenv("SHUNT_BENCH_REFINE_MS")
+            ?: BrouterPlanner.REFINE_BUDGET_MILLIS.toString()).toLong()
+        for (lanes in listOf(1, 2)) {
+            val router = BrouterRouter(
+                segmentDir = File(benchDir, "segments"),
+                profileDir = benchDir,
+                maxConcurrentPasses = lanes,
+            )
+            val planner = BrouterPlanner(
+                route = { request -> router.route(request) },
+                missingTiles = { emptyList() },
+                camerasIn = { bbox -> all.filter { bbox.contains(it.location) } },
+                lastPassTimings = { router.lastPassTimings },
+                refineBudgetMillis = refineMs,
+            )
+            System.gc()
+            Thread.sleep(500)
+            val runtime = Runtime.getRuntime()
+            val before = runtime.totalMemory() - runtime.freeMemory()
+            val running = java.util.concurrent.atomic.AtomicBoolean(true)
+            val peakSeen = java.util.concurrent.atomic.AtomicLong(before)
+            val watcher = Thread {
+                while (running.get()) {
+                    peakSeen.updateAndGet { maxOf(it, runtime.totalMemory() - runtime.freeMemory()) }
+                    Thread.sleep(50)
+                }
+            }
+            watcher.isDaemon = true
+            watcher.start()
+
+            val startedAt = System.currentTimeMillis()
+            val outcome = planner.plan(from, to)
+            val wall = System.currentTimeMillis() - startedAt
+            running.set(false)
+            watcher.join()
+
+            println("=== $lanes concurrent pass(es): ${wall / 1000.0} s (refine budget ${refineMs} ms) ===")
+            println("    heap: ${before / 1024 / 1024} MB before, peak ${peakSeen.get() / 1024 / 1024} MB")
+            (outcome as? PlanOutcome.Routes)?.let { r ->
+                r.timings?.stages?.forEach { println("    %-22s %7.1f s".format(it.label, it.seconds)) }
+                r.timings?.routingPasses?.forEach { println("      %-22s %7.1f s".format(it.label, it.seconds)) }
+                r.options.forEach { option ->
+                    println("      -> %-16s %6.1f km %3d cameras %d pins".format(
+                        option.choice, option.distanceMeters / 1000.0, option.camerasPassed, option.waypoints.size))
+                    if (option.waypoints.isEmpty()) return@forEach
+                    // Where the pins actually fall. The budget is spent
+                    // front-to-back, so if it binds, the far end of the trip —
+                    // which on a trip into a metro is the dense end — goes
+                    // unpinned. A histogram in tenths says whether that is
+                    // happening far better than a count does.
+                    val line = option.polyline
+                    val total = line.zipWithNext().sumOf { (a, b) -> app.shunt.solver.geo.haversineMeters(a, b) }
+                    val buckets = IntArray(10)
+                    option.waypoints.forEach { pin ->
+                        val along = app.shunt.solver.geo.pointToPolylineProgress(pin, line).alongMeters
+                        buckets[((along / total) * 10).toInt().coerceIn(0, 9)]++
+                    }
+                    println("         by tenth of trip: ${buckets.joinToString(" ")}")
+                }
+            } ?: println("    $outcome")
+        }
+    }
+
+    /**
      * How many cameras a corridor of each width actually draws in, on this
      * trip. The corridor is the single biggest lever on planning time, and its
      * width was picked from geometry rather than from counting.

@@ -56,12 +56,63 @@ object WaypointExtractor {
     const val DIVERGENCE_THRESHOLD_METERS = 50.0
 
     /**
-     * Pins closer together than this are pointless. The car cannot meaningfully
-     * deviate inside a few hundred metres, so a second pin there constrains
-     * nothing — it just costs another command and clutters the map, which is
-     * what the dense clusters along the route were.
+     * How far apart pins must be on open road.
+     *
+     * The reason is not tidiness, it is that the drive monitor advances to the
+     * next pin once the car is within `max(150 m, speed × 18 s)` of the current
+     * one — so two pins closer together than that lead distance are not two
+     * constraints, they are one, because the second is advanced past before the
+     * car ever aims at it. At highway speed that lead is 500-550 m, and this is
+     * that plus margin. **If either number changes, they have to move together**
+     * (`DriveModel`'s `waypointLeadSeconds` / `waypointLeadMinMeters`).
+     *
+     * This is the *loose* end of the scale. See [DENSE_PIN_SPACING_METERS].
      */
     const val MIN_PIN_SPACING_METERS = 800.0
+
+    /**
+     * How far apart pins may be where the road network is dense.
+     *
+     * The old rule was this one number everywhere, justified by "the car cannot
+     * meaningfully deviate inside a few hundred metres". On a highway with
+     * junctions kilometres apart that is true. In a city grid it is plainly
+     * false — there is a turn every block — and it was doing real harm: the
+     * refiner works out exactly where the car would leave our route and places a
+     * pin [WaypointRefiner.PAST_FORK_METERS] past that fork, and then spacing
+     * silently threw that pin away for sitting too close to the previous one.
+     * The pin that was computed most carefully was the one most likely to be
+     * discarded, precisely where the roads made it matter most.
+     *
+     * So the floor here matches `PAST_FORK_METERS`: a pin the refiner thought
+     * worth placing survives. It is not smaller than that, because of the lead
+     * distance above — at city speed the monitor advances within ~230 m, so pins
+     * tighter than this stop being separate constraints at all.
+     *
+     * The cost of more pins is one rate-limited command each as the drive
+     * passes them, which is exactly where a city is at its most forgiving:
+     * reception is better there than anywhere else on the trip.
+     */
+    const val DENSE_PIN_SPACING_METERS = 250.0
+
+    /**
+     * How far around a pin to look when judging how built-up it is.
+     *
+     * Camera count is the proxy, because it is what this app can actually see —
+     * a polyline says nothing about the side streets leading off it. It is a
+     * good proxy for the thing that matters: ALPRs go where the traffic and the
+     * junctions are, so "many cameras within a mile" and "many ways for the car
+     * to surprise us" are the same places. About a mile.
+     */
+    const val DENSITY_RADIUS_METERS = 1_500.0
+
+    /**
+     * Cameras within [DENSITY_RADIUS_METERS] at which spacing is fully tightened.
+     *
+     * Between zero and this, spacing slides between the two numbers above rather
+     * than switching, so a route entering a metro tightens up gradually instead
+     * of at one arbitrary line.
+     */
+    const val DENSE_CAMERA_COUNT = 12
 
     fun extract(
         chosen: List<GeoPoint>,
@@ -87,20 +138,44 @@ object WaypointExtractor {
 
         val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
         val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints, index, outOfTime)
-        return spaceOut(pinned.map { chosen[it] })
+        return spaceOut(pinned.map { chosen[it] }, density = index)
     }
 
     /**
      * Drop pins that sit on top of one another. Keeps the first of each cluster
      * — the earliest is the one that actually forces the turn.
+     *
+     * How close is "on top of" depends on where: open road wants
+     * [MIN_PIN_SPACING_METERS], a dense grid wants [DENSE_PIN_SPACING_METERS],
+     * and [density] decides which by counting cameras nearby. Without an index
+     * this behaves exactly as it always did, at the open-road spacing.
+     *
+     * Where two pins straddle the change — one out in open country, the next
+     * entering a city — the *tighter* of their two spacings wins. Erring that
+     * way keeps the first pin of a built-up stretch, which is the one that has
+     * to survive: it is the one holding the car onto the right road as the
+     * junctions start.
      */
-    internal fun spaceOut(pins: List<GeoPoint>): List<GeoPoint> {
+    internal fun spaceOut(pins: List<GeoPoint>, density: CameraIndex? = null): List<GeoPoint> {
         val kept = mutableListOf<GeoPoint>()
         for (pin in pins) {
             val last = kept.lastOrNull()
-            if (last == null || haversineMeters(last, pin) >= MIN_PIN_SPACING_METERS) kept += pin
+            if (last == null) {
+                kept += pin
+                continue
+            }
+            val spacing = minOf(spacingAt(last, density), spacingAt(pin, density))
+            if (haversineMeters(last, pin) >= spacing) kept += pin
         }
         return kept
+    }
+
+    /** How far apart pins need to be around [p], given how built-up it is. */
+    internal fun spacingAt(p: GeoPoint, density: CameraIndex?): Double {
+        if (density == null) return MIN_PIN_SPACING_METERS
+        val nearby = density.countWithin(p, DENSITY_RADIUS_METERS)
+        val builtUp = (nearby.toDouble() / DENSE_CAMERA_COUNT).coerceIn(0.0, 1.0)
+        return MIN_PIN_SPACING_METERS - builtUp * (MIN_PIN_SPACING_METERS - DENSE_PIN_SPACING_METERS)
     }
 
     /** Indices of the most divergent point of each stretch off the fastest route. */
