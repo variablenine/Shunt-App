@@ -62,31 +62,39 @@ object WaypointExtractor {
      * next pin once the car is within `max(150 m, speed × 18 s)` of the current
      * one — so two pins closer together than that lead distance are not two
      * constraints, they are one, because the second is advanced past before the
-     * car ever aims at it. At highway speed that lead is 500-550 m, and this is
-     * that plus margin. **If either number changes, they have to move together**
-     * (`DriveModel`'s `waypointLeadSeconds` / `waypointLeadMinMeters`).
+     * car ever aims at it. At highway speed that lead is 500-550 m.
+     *
+     * **Two rules bracket this from opposite sides, and it must satisfy both:**
+     *
+     * - No smaller than the monitor's lead, or pins stop being constraints.
+     * - No *larger* than [WaypointRefiner.PAST_FORK_METERS], or the refiner's
+     *   own pins get discarded — those sit exactly that far past a fork, so a
+     *   wider spacing throws away the most carefully placed pin on the route.
+     *   At 800 m against a 250 m fork distance, that is precisely what happened.
+     *
+     * So it equals the fork distance at each end of the density scale. **If the
+     * monitor's numbers change, all four move together** (`DriveModel`'s
+     * `waypointLeadSeconds` / `waypointLeadMinMeters`); a test in `:app` holds
+     * the relationship, because only that module can see both sides of it.
      *
      * This is the *loose* end of the scale. See [DENSE_PIN_SPACING_METERS].
      */
-    const val MIN_PIN_SPACING_METERS = 800.0
+    const val MIN_PIN_SPACING_METERS = 600.0
 
     /**
      * How far apart pins may be where the road network is dense.
      *
-     * The old rule was this one number everywhere, justified by "the car cannot
+     * The old rule was one number everywhere, justified by "the car cannot
      * meaningfully deviate inside a few hundred metres". On a highway with
      * junctions kilometres apart that is true. In a city grid it is plainly
-     * false — there is a turn every block — and it was doing real harm: the
-     * refiner works out exactly where the car would leave our route and places a
-     * pin [WaypointRefiner.PAST_FORK_METERS] past that fork, and then spacing
-     * silently threw that pin away for sitting too close to the previous one.
-     * The pin that was computed most carefully was the one most likely to be
-     * discarded, precisely where the roads made it matter most.
+     * false — there is a turn every block — and it was doing real harm, since
+     * at 800 m it discarded the refiner's own pins for sitting too close to the
+     * previous one.
      *
-     * So the floor here matches `PAST_FORK_METERS`: a pin the refiner thought
-     * worth placing survives. It is not smaller than that, because of the lead
-     * distance above — at city speed the monitor advances within ~230 m, so pins
-     * tighter than this stop being separate constraints at all.
+     * Matches [WaypointRefiner.DENSE_PAST_FORK_METERS], and for the same reason
+     * as the open-road pair: city speed puts the monitor's lead at 160-240 m, so
+     * this is that plus margin, and a pin the refiner placed past a fork is
+     * never then thrown away for being where it was deliberately put.
      *
      * The cost of more pins is one rate-limited command each as the drive
      * passes them, which is exactly where a city is at its most forgiving:

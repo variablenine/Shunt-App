@@ -11,16 +11,34 @@ class RangeCheckTest {
     private fun miles(m: Double) = (m * RangeEstimate.METERS_PER_MILE).toInt()
 
     @Test
-    fun `usable range is derated and holds a reserve back`() {
-        // 100 rated miles is not 100 real miles, and you must not arrive on 0%.
+    fun `usable range holds a reserve back`() {
+        // The car's figure is `est_battery_range`, which already has real
+        // driving in it, so the margin is the reserve and nothing else.
         val usable = RangeEstimate.usableMeters(100.0)
-        assertTrue(usable < 100 * RangeEstimate.METERS_PER_MILE * 0.8)
+        val raw = 100 * RangeEstimate.METERS_PER_MILE
+        assertTrue(usable < raw, "you must not plan to arrive on empty")
         assertEquals(
-            100 * RangeEstimate.METERS_PER_MILE * RangeEstimate.REAL_WORLD_FRACTION -
-                RangeEstimate.RESERVE_METERS,
+            raw * RangeEstimate.RANGE_TRUST_FRACTION - RangeEstimate.RESERVE_METERS,
             usable,
             absoluteTolerance = 0.5,
         )
+    }
+
+    @Test
+    fun `the real reading that used to cry wolf now reads as tight`() {
+        // From a real car: the equivalent of 160 miles reported at 55%, against
+        // a 241 km camera-avoiding route. Deraing an already-real-world estimate
+        // by a further quarter turned "makes it with 17 km in hand" into a red
+        // "not enough range". Tight is the honest answer — and the driver's.
+        val check = RangeEstimate.of(
+            routeMeters = 240_900,
+            shortestOptionMeters = 204_800,
+            estimatedRangeMiles = 160.4,
+            batteryPercent = 55,
+        )!!
+        assertEquals(RangeCheck.Level.TIGHT, check.level, "it fits, and only just")
+        assertEquals(0.0, check.shortfallMeters, "so there is no shortfall to report")
+        assertFalse(check.detourIsTheProblem)
     }
 
     @Test
@@ -44,25 +62,27 @@ class RangeCheckTest {
 
     @Test
     fun `a trip that only just fits is called tight, not fine`() {
-        // 100 rated miles -> 65 usable; 60 miles is 92% of that.
-        val check = RangeEstimate.of(miles(60.0), miles(58.0), estimatedRangeMiles = 100.0, batteryPercent = 40)!!
+        // 100 estimated miles -> 90 usable once the reserve is held back;
+        // 84 miles is 93% of that.
+        val check = RangeEstimate.of(miles(84.0), miles(80.0), estimatedRangeMiles = 100.0, batteryPercent = 40)!!
         assertEquals(RangeCheck.Level.TIGHT, check.level)
     }
 
     @Test
     fun `a trip past the usable range is short`() {
-        val check = RangeEstimate.of(miles(90.0), miles(85.0), estimatedRangeMiles = 100.0, batteryPercent = 40)!!
+        // 100 estimated miles is 90 usable; 105 is past it by any reading.
+        val check = RangeEstimate.of(miles(105.0), miles(100.0), estimatedRangeMiles = 100.0, batteryPercent = 40)!!
         assertEquals(RangeCheck.Level.SHORT, check.level)
         assertTrue(check.shortfallMeters > 0)
     }
 
     @Test
     fun `the detour is named as the problem when the direct route would have made it`() {
-        // The case that motivates this whole check: 30 rated miles is about
-        // 12.5 usable. The direct route fits; the camera-avoiding one doesn't.
+        // The case that motivates this whole check: 30 estimated miles is 20
+        // usable. The direct route fits; the camera-avoiding one doesn't.
         val check = RangeEstimate.of(
-            routeMeters = miles(15.0),
-            shortestOptionMeters = miles(11.0),
+            routeMeters = miles(24.0),
+            shortestOptionMeters = miles(18.0),
             estimatedRangeMiles = 30.0,
             batteryPercent = 12,
         )!!

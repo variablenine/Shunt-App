@@ -30,4 +30,13 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // The benchmark is memory-bound in a way the unit suite is not: BRouter
+    // builds a tile cache per concurrent routing pass, and whether two of them
+    // fit is the whole question behind `maxConcurrentPasses`. A phone's heap
+    // ceiling is what that has to be judged against, not a container's, so the
+    // benchmark can be run under one:
+    //
+    //     ./gradlew :solver:test -PshuntTestHeap=256m --tests '*Benchmark*'
+    //
+    (project.findProperty("shuntTestHeap") as String?)?.let { maxHeapSize = it }
 }

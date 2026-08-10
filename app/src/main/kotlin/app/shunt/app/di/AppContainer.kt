@@ -510,13 +510,25 @@ class AppContainer(context: Context) {
         /**
          * Heap ceiling (MB) a device needs before two routes are searched at once.
          *
-         * A 615 km plan peaked at 302 MB with two lanes against 230 MB with one,
-         * so this is that peak plus room for the map, the Compose UI and the
-         * camera set — everything that is live while planning runs. Erring high
-         * costs a slower plan on a mid-range phone; erring low costs a crash
-         * part-way through one, and only one of those is recoverable.
+         * **This was 384 and never fired.** `getMemoryClass` is not the device's
+         * RAM — it is the per-app Java heap ceiling, and 256 MB is a common value
+         * on phones with 8 GB or more. Sized from a peak-usage reading taken with
+         * a lazy garbage collector and no ceiling to push against, 384 ruled out
+         * hardware that runs this comfortably, and the concurrency shipped
+         * switched off on a real phone without anything looking wrong.
+         *
+         * Re-measured properly instead — the 615 km plan run *under* a 256 MB
+         * cap, which is the question that actually matters: it completed, peaked
+         * at 235 MB, returned the same three routes, and still took the routing
+         * stage from 44.5 s to 24.1 s. The earlier 302 MB was uncollected
+         * garbage, not demand.
+         *
+         * There is a real safety net under this, which is what makes 256 a
+         * reasonable line rather than a brave one: a search that runs out of
+         * memory is caught like any other failure, and costs the *option* rather
+         * than the app — the breakdown then names the pass that dropped out.
          */
-        const val CONCURRENT_ROUTING_HEAP_MB = 384
+        const val CONCURRENT_ROUTING_HEAP_MB = 256
     }
 }
 

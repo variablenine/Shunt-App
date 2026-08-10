@@ -268,26 +268,66 @@ from the pin and passes a camera before there is time to warn.*
   once, while 250 m can be past the next junction or two, giving the car choices
   it can make and still arrive at the pin.
 
-Both now slide with **local camera density** — `CameraIndex.countWithin` over
-`DENSITY_RADIUS_METERS`, tightening to `DENSE_PIN_SPACING_METERS` (250 m) and
-`DENSE_PAST_FORK_METERS` (120 m) by `DENSE_CAMERA_COUNT` cameras within about a
-mile. Camera count is a proxy for junction density, and an honest one: a polyline
-says nothing about the side streets leading off it, while ALPRs are sited where
-the traffic and the junctions are. The extra pins cost one rate-limited command
-each as the drive passes them, which is affordable precisely where they are
-added — reception in a city is the best on the trip.
+**The rule that governs both is the drive monitor's lead distance**, and missing
+that is how these numbers came to be wrong more than once. The monitor advances
+to the next pin as soon as the car is within `max(150 m, speed × 18 s)` of the
+current one. So:
+
+- A pin **closer to a fork than the lead** is abandoned *before the car reaches
+  the fork*, and the turn it exists to force is not forced.
+- Two pins **closer together than the lead** are one constraint, because the
+  second is advanced past before the car ever aims at it.
+- A spacing floor **wider than the fork distance** throws away the refiner's own
+  pins, which sit exactly that far past a fork.
+
+Which brackets everything: `lead ≤ spacing ≤ past-fork`. Both pairs are now the
+lead distance at the speed that stretch is driven, plus margin — 600 m on open
+road (lead at 70 mph is 563 m) and 250 m where it is dense (lead at 30 mph is
+241 m), sliding between the two on **local camera density** (`CameraIndex.countWithin`
+over `DENSITY_RADIUS_METERS`, fully tight by `DENSE_CAMERA_COUNT`). Camera count
+is a proxy for junction density, and an honest one: a polyline says nothing about
+the side streets leading off it, while ALPRs are sited where the traffic and the
+junctions are.
+
+`PAST_FORK_METERS` was **250 m for most of this project**, against a highway lead
+of 563 m — so on any fast road the pin was dropped 313 m *before* the fork and
+never constrained the turn at all. That is the "long stretches where the car
+doesn't follow the route" report. A test in `:app` holds the whole relationship,
+because only that module can see both the pin constants and `DriveMonitorConfig`.
 
 Tightening is safe to try because **the refiner verifies rather than assumes**: a
-pin placed too early is caught next iteration, when the leg is re-routed and
-still strays, and another goes in. A pin placed too late is not caught, because
-the leg looks clean. So the two errors are not symmetrical, and this errs toward
-the recoverable one.
+pin placed too far along is caught next iteration, when the leg is re-routed and
+the car still strays. Being advanced past too early is *not* caught, because the
+leg looks clean — so the two errors are not symmetrical, and erring long is the
+recoverable direction.
 
-Measured on the 615 km trip: fewest-cameras went from 44 pins to 51, with the
-additions landing in the dense final tenth of the route, and the routes
-themselves unchanged. `DENSE_PIN_SPACING_METERS` must never drop below the
-monitor's lead distance, or pins stop being constraints at all — a test holds it
-at or above `PAST_FORK_METERS`.
+### Pins have to earn their place
+
+Pins arrive from two places and only one of them checked its work.
+`WaypointExtractor` adds them from the route's shape and from chords that clip a
+camera — both geometric guesses — and the refiner adds them where the car
+provably strays. Nothing then asked whether each was still needed, and the result
+was reported from real use as *"pointless waypoints one after the other on the
+same straight road"*.
+
+`pruneIdlePins` runs the refiner's own test backwards: take a pin out, route the
+leg it was splitting the way the car would, and keep it unless the car does
+**both** of the things it was there for — stays clear of every camera the route
+avoids, *and* still drives the line we planned, within `FORK_THRESHOLD_METERS`.
+
+That second condition is load-bearing. On cameras alone, pruning strips a route
+back to the few pins cameras strictly force and lets the car pick its own way
+between them: camera-free, but not the route on the screen, and every divergence
+is something the drive monitor then reports as off-route. Measured on the 615 km
+trip, cameras-only pruning took the balanced option from 52 pins to 25; with the
+route-following condition it settles at 27, and fewest-cameras at ~40.
+
+This makes the whole phase self-correcting — earlier stages can be generous,
+because anything they over-add is removed on evidence rather than by a rule about
+spacing. **What it costs is a deeper reliance on BRouter modelling the car
+correctly**, since a pin is now dropped on BRouter's word that the car would
+follow the road anyway. That is the assumption to suspect first if a car strays
+somewhere a pin used to sit.
 
 ### 6.1 The driver always wins
 
@@ -344,6 +384,18 @@ camera-avoiding detour outruns the battery — the car costs charging for the
 direct route it was given and never sees our detour, so nothing else is in a
 position to notice. `SuperchargerSource` (Overpass) backs the one-tap "add a
 charging stop on the way", which just inserts an ordinary first stop.
+
+**Know which range figure that works from.** Shunt reads Tesla's
+`est_battery_range`, which the car computes from *recent consumption* — it is
+already a real-world number, not the EPA rating. For most of this project a
+further 0.75 "real world" derate was applied on top, which is double-counting,
+and it produced a red "not enough range" on a trip the driver knew fitted: the
+car's own estimate was 258 km against a 241 km route, and Shunt presented 178 km
+of usable range. The estimate is now taken at face value
+(`RANGE_TRUST_FRACTION`), and **the whole margin lives in `RESERVE_METERS`**, one
+number instead of two compounding invisibly. If these warnings are ever pitched
+wrongly, that reserve is the dial — and a warning that fires on trips that are
+plainly fine is not conservative, it is one people learn to ignore.
 
 ---
 
@@ -831,9 +883,9 @@ Ordered roughly by what unblocks real use.
   currently share one budget between them.
 - **OSM coverage:** keep improving nearby-first ranking; add missing local
   places to OpenStreetMap so they become searchable for everyone.
-- **Charging fine-tuning:** the range derate (`REAL_WORLD_FRACTION`), the
-  charger corridor, and the probe cadences are first-pass numbers — worth
-  revisiting against real drives.
+- **Charging fine-tuning:** the reserve (`RESERVE_METERS`, now the only margin
+  on the car's range estimate), the charger corridor, and the probe cadences are
+  first-pass numbers — worth revisiting against real drives.
 - On-route arrow, and gray out the traveled portion of the route.
 - Simplify the current-location dot to a solid pulsing dot (no accuracy halo).
 - Fix one-way arrows pointing the wrong direction on the basemap.

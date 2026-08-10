@@ -79,15 +79,45 @@ object RangeEstimate {
     const val METERS_PER_MILE = 1_609.344
 
     /**
-     * Tesla reports the EPA-rated remaining range, which real driving does not
-     * achieve: highway speed, cold, heat, hills and headwind all take a bite.
-     * Three quarters is the conventional rule of thumb for planning against a
-     * rated figure, and erring low is the safe direction for this particular
-     * warning — the cost of being wrong is being stranded.
+     * How far to trust the car's own range estimate.
+     *
+     * **This was 0.75 and named `REAL_WORLD_FRACTION`, and both were wrong.**
+     * The reasoning was sound for the *rated* range — EPA figures are not what
+     * real driving achieves, and three quarters is the usual rule of thumb — but
+     * the field Shunt reads is `est_battery_range`, which Tesla computes from
+     * recent consumption and which therefore already has real driving in it.
+     * Derating an already-derated number by a further quarter is why a trip the
+     * driver knew perfectly well they could make came up in red.
+     *
+     * From the real reading that exposed it: the car reported the equivalent of
+     * 160 miles and the route was 241 km. The car's own estimate was 258 km — it
+     * fits, with about 17 km in hand. Shunt presented "about 178 km of usable
+     * range" and a 63 km shortfall.
+     *
+     * So the estimate is now taken at face value, and **the entire margin lives
+     * in [RESERVE_METERS]** where it can be reasoned about as one number instead
+     * of compounding invisibly with another. That reading now comes out as
+     * [RangeCheck.Level.TIGHT] — makes it, not by much — which is the honest
+     * answer and the one the driver gave.
+     *
+     * Lower this if field reports show the car's estimate running optimistic
+     * (deep cold is the likely case, though the car re-estimates for that too).
+     * Erring low is still the safe direction, because stranded beats nagged —
+     * but a warning that fires on trips that are plainly fine is not a
+     * conservative warning, it is one people learn to dismiss, and that costs
+     * the real ones too.
      */
-    const val REAL_WORLD_FRACTION = 0.75
+    const val RANGE_TRUST_FRACTION = 1.0
 
-    /** Never plan to arrive on empty; hold back roughly ten miles. */
+    /**
+     * Never plan to arrive on empty; hold back roughly ten miles.
+     *
+     * Now the *only* margin between the car's estimate and what Shunt will plan
+     * against, which makes it the dial to turn if these warnings turn out to be
+     * pitched wrongly in either direction. Ten miles is enough to reach a
+     * charger from the point the car says it is empty, which is what a reserve
+     * is for.
+     */
     const val RESERVE_METERS = 16_000.0
 
     /** Above this fraction of usable range, a route is "tight" rather than fine. */
@@ -107,7 +137,7 @@ object RangeEstimate {
     const val CHARGE_TO_FRACTION = 0.8
 
     fun usableMeters(estimatedRangeMiles: Double): Double =
-        (estimatedRangeMiles * METERS_PER_MILE * REAL_WORLD_FRACTION - RESERVE_METERS)
+        (estimatedRangeMiles * METERS_PER_MILE * RANGE_TRUST_FRACTION - RESERVE_METERS)
             .coerceAtLeast(0.0)
 
     /**

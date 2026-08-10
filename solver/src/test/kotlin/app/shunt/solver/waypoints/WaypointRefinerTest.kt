@@ -161,6 +161,46 @@ class WaypointRefinerTest {
     }
 
     @Test
+    fun `a pin the car does not need is dropped`() = runTest {
+        // Reported from real use: "pointless waypoints one after the other on
+        // the same straight road". A pin on a stretch the car was going to
+        // drive anyway constrains nothing and costs a command.
+        val onTheStraight = detour.last { it.lon < -98.15 } // before the fork
+        val refined = WaypointRefiner.refine(
+            chosen = detour,
+            pins = listOf(onTheStraight, detour[14]),
+            avoid = listOf(camera),
+            carRoute = ::carRoute,
+        )
+        assertTrue(
+            onTheStraight !in refined,
+            "a pin on the shared straight, where the car cannot go anywhere else, must not survive",
+        )
+    }
+
+    @Test
+    fun `a pin the car does need is kept`() = runTest {
+        // The other half: the same pruning must not strip the pin that is the
+        // only reason the car turns onto the detour at all.
+        val refined = WaypointRefiner.refine(
+            chosen = detour,
+            pins = listOf(detour[14]),
+            avoid = listOf(camera),
+            carRoute = ::carRoute,
+        )
+        assertTrue(refined.isNotEmpty(), "the detour still has to be held, or the car drives past the camera")
+        // And what survives must genuinely keep the car off the camera.
+        val chain = listOf(detour.first()) + refined + detour.last()
+        for (i in 0 until chain.size - 1) {
+            val path = carRoute(chain[i], chain[i + 1])
+            assertTrue(
+                path != null && !camera.seesRoute(path),
+                "leg $i lets the car reach the camera",
+            )
+        }
+    }
+
+    @Test
     fun `the pin lands sooner past a fork where the roads are dense`() {
         // In a grid, 250 m past a fork can already be beyond the next junction
         // or two — so the car has turns it can still take and reach the pin

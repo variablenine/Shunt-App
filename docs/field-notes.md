@@ -532,6 +532,96 @@ refinement still settles in 19 s with byte-identical pins. It reaches a fixed
 point. The pin histogram by tenth of trip also shows the concentration is already
 where it should be (`0 0 4 1 4 3 3 5 6 25` on the fewest-cameras route).
 
+### F-6 · A red range warning on a trip that plainly fits
+*Observed: 2026-08-10. Cause found and fixed; unconfirmed on a drive.*
+
+> I definitely can make it to Wausau on a 55% charge idk what's going on there.
+
+240.9 km route, 55% battery, and Shunt said "about 177.6 km of usable range".
+
+Shunt reads `est_battery_range` — the figure Tesla computes from *recent
+consumption*, so it already has real driving in it. On top of that a 0.75
+"real-world" derate was applied, whose KDoc described deraing the **EPA-rated**
+range. Sound reasoning, wrong field, and the two compounded: the car's own
+estimate was 258 km, which fits the route with about 17 km in hand.
+
+The estimate is now taken at face value and the entire margin is `RESERVE_METERS`
+(16 km), so there is one number to reason about rather than two multiplying. The
+same reading now reports **tight** — makes it, not by much — which is both the
+honest answer and the driver's. A unit test pins that exact reading.
+
+Worth keeping in mind for anything similar: a warning that fires on trips that
+are plainly fine is not a conservative warning. It is one people learn to
+dismiss, and that costs the real ones too.
+
+### F-7 · Concurrency shipped switched off
+*Observed: 2026-08-10, from the breakdown on a real phone.*
+
+The two avoidance passes were meant to overlap. The breakdown read
+`spine 4.0 / fastest 2.9 / blocked 17.9 / balanced 18.0` against a routing stage
+of 43.4 s — which is their *sum*, so they ran one after the other.
+
+`ActivityManager.getMemoryClass()` is not the device's RAM, it is the per-app
+Java heap ceiling, and 256 MB is a common value on phones with 8 GB or more. The
+gate demanded 384, sized from a peak-usage reading taken in a container with a
+lazy collector and no ceiling to push against, so it ruled out hardware that runs
+this comfortably — and nothing looked wrong, because a sequential plan is a
+correct plan.
+
+Re-measured the way the question is actually posed: the 615 km plan run *under* a
+256 MB cap. It completed, peaked at 235 MB, returned the same three routes, and
+took the routing stage from 44.5 s to 24.1 s. The 302 MB was uncollected garbage,
+not demand. Gate is 256 now.
+
+**A general lesson worth not relearning:** a capability gated on a threshold that
+never passes fails silently and looks like the feature not being worth much. If a
+gate exists, something has to be able to say which side of it a device landed on.
+
+### F-8 · Pins in the wrong places, both directions at once
+*Observed: 2026-08-10. Addressed; unconfirmed on a drive.*
+
+> Some pointless waypoints being put one after the other on the same straight
+> road, and other long stretches where it seems like there isn't enough
+> waypoints to expect that the car is going to follow it.
+
+Both halves turned out to be the same missing rule, and it is the drive monitor
+rather than the geometry. The monitor advances to the next pin once the car is
+within `max(150 m, speed × 18 s)` of the current one, so:
+
+| speed | monitor re-aims at | pin 250 m past a fork |
+|---|---|---|
+| 30 mph | 241 m out | 121 m *before* the fork |
+| 45 mph | 362 m out | 112 m *before* the fork |
+| 70 mph | 563 m out | 313 m *before* the fork |
+
+`PAST_FORK_METERS` had been 250 m for most of the project, so above about 35 mph
+a pin was abandoned before the car reached the turn it existed to force. That is
+the under-pinned half — and it was invisible, because the refiner verifies that
+the car *routes* to a pin correctly and has no model of the monitor dropping it.
+
+(An earlier attempt at this made it worse: a `DENSE_PAST_FORK_METERS` of 120 m,
+reasoning that a city turn is committed immediately. True of the car, irrelevant
+to the monitor — at 20 mph it re-aims 161 m out, so the pin was abandoned 41 m
+before the fork. Wrong at every speed.)
+
+The constants are now the lead distance at the speed each stretch is driven —
+600 m open road, 250 m dense — and spacing is paired to them, because a spacing
+floor wider than the fork distance discards the refiner's own pins. Bracketed:
+`lead ≤ spacing ≤ past-fork`. A test in `:app` holds it, since only that module
+can see both sides.
+
+The *over*-pinned half is now handled by evidence rather than a rule.
+`pruneIdlePins` removes a pin when routing the merged leg the way the car would
+shows it doing nothing — no camera reached, and the car still on our line within
+60 m. That second condition matters: on cameras alone, pruning cut the balanced
+option from 52 pins to 25 by letting the car pick its own camera-free way between
+sparse pins, which is not the route on the screen and reads as off-route to the
+monitor. With it, 27.
+
+**The cost is a deeper dependence on BRouter modelling the car**, since pins are
+now dropped on its word that the car would follow the road anyway. If a car
+strays somewhere a pin used to be, suspect that first.
+
 ---
 
 ## Resolved

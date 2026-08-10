@@ -219,9 +219,23 @@ class WaypointExtractorTest {
         // before the car ever aims at it.
         val spacing = WaypointExtractor.spacingAt(here, cluster(here, WaypointExtractor.DENSE_CAMERA_COUNT * 5))
         assertEquals(WaypointExtractor.DENSE_PIN_SPACING_METERS, spacing, "clamped at the dense end")
+    }
+
+    @Test
+    fun `spacing never discards a pin the refiner deliberately placed`() {
+        // The refiner puts its pins exactly PAST_FORK past a fork. If spacing
+        // is wider than that, it throws them away — which is the bug that made
+        // dense areas worst, since those pins are the ones that matter there.
+        // The two have to be paired at each end of the density scale.
         assertTrue(
-            spacing >= WaypointRefiner.PAST_FORK_METERS,
-            "a pin the refiner placed past a fork must not then be dropped for being too close",
+            WaypointExtractor.MIN_PIN_SPACING_METERS <= WaypointRefiner.PAST_FORK_METERS,
+            "open road: spacing ${WaypointExtractor.MIN_PIN_SPACING_METERS} would drop a pin " +
+                "placed ${WaypointRefiner.PAST_FORK_METERS} past a fork",
+        )
+        assertTrue(
+            WaypointExtractor.DENSE_PIN_SPACING_METERS <= WaypointRefiner.DENSE_PAST_FORK_METERS,
+            "dense: spacing ${WaypointExtractor.DENSE_PIN_SPACING_METERS} would drop a pin " +
+                "placed ${WaypointRefiner.DENSE_PAST_FORK_METERS} past a fork",
         )
     }
 

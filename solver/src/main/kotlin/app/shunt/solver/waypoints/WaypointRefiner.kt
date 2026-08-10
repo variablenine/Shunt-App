@@ -4,6 +4,7 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.CameraIndex
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
+import app.shunt.solver.geo.PolylineIndex
 import app.shunt.solver.geo.pointToPolyline
 import app.shunt.solver.geo.pointToPolylineProgress
 
@@ -56,30 +57,50 @@ object WaypointRefiner {
     const val FORK_THRESHOLD_METERS = 60.0
 
     /**
-     * How far past the fork to drop the pin, on open road. Far enough that
-     * reaching it means the turn has been taken and the car is committed; short
-     * enough that no other road reaches it first.
+     * How far past the fork to drop the pin, on open road.
+     *
+     * **The governing constraint is the drive monitor, not the geometry**, and
+     * missing that is how this number came to be wrong twice. The monitor
+     * advances to the *next* pin as soon as the car is within
+     * `max(150 m, speed × 18 s)` of the current one. So a pin placed less than
+     * that distance past a fork is re-aimed away from **before the car reaches
+     * the fork** — the pin stops constraining the turn it exists to force, and
+     * the car is free to carry straight on. Worked through:
+     *
+     * | speed | monitor advances at | 250 m past fork | 600 m past fork |
+     * |---|---|---|---|
+     * | 30 mph | 241 m | re-aims 121 m *before* the fork | committed |
+     * | 45 mph | 362 m | re-aims 112 m *before* the fork | committed |
+     * | 70 mph | 563 m | re-aims 313 m *before* the fork | committed |
+     *
+     * At 250 m — the value this held for most of the project — a pin only
+     * survived to do its job below about 35 mph. On a highway fork it never
+     * did, which is the "long stretches where the car doesn't follow it" report.
+     *
+     * So this is the lead distance at highway speed, plus margin. The competing
+     * pressure is real — a pin too far along a detour lets the car take the fast
+     * road and join at the tail — but **that failure is the one the refiner
+     * catches**, by re-routing the leg and seeing the car go the wrong way,
+     * whereas being advanced past early is invisible to it. Erring long is
+     * therefore the recoverable direction.
      */
-    const val PAST_FORK_METERS = 250.0
+    const val PAST_FORK_METERS = 600.0
 
     /**
      * The same, where the road network is dense.
      *
-     * Those two requirements pull apart in a city. "Far enough to be committed"
-     * is satisfied almost immediately when a turn is a street corner, while
-     * "short enough that no other road reaches it first" gets *harder* every
-     * metre — at 250 m past a fork in a grid the pin can easily sit beyond the
-     * next junction or two, so the car has choices it can make and still arrive.
-     * That is exactly the reported failure: the car strays from the pin, and by
-     * the time it is clear it has passed a camera.
+     * Same rule, lower speed: city driving puts the monitor's lead at 160-240 m,
+     * so a pin has to clear the fork by about that much rather than by 600 m.
+     * Being able to place it sooner is what lets a grid be pinned at all — at
+     * 600 m in a city the pin lands several junctions past the turn.
      *
-     * Shorter is safe to try because the refiner verifies rather than assumes:
-     * it re-routes the leg the way the car would and, if the car still strays,
-     * inserts another pin. A pin placed too early is corrected on the next
-     * iteration; one placed too late is not, because the loop sees a leg that
-     * looks clean.
+     * **This was briefly 120 m, which was wrong at every speed** — even at
+     * 20 mph the monitor advances 161 m out, so the car re-aimed 41 m before
+     * reaching the fork. The intuition behind it ("a city turn is committed
+     * immediately") was about the car, and the binding constraint is the
+     * monitor.
      */
-    const val DENSE_PAST_FORK_METERS = 120.0
+    const val DENSE_PAST_FORK_METERS = 250.0
 
     /**
      * Pins for [chosen] that the car will follow. [pins] are the candidates
@@ -169,7 +190,67 @@ object WaypointRefiner {
             }
             if (!inserted) break
         }
+        pruneIdlePins(chosen, current, avoidedIndex, outOfTime, carRoute)
         return WaypointExtractor.spaceOut(current, density = index)
+    }
+
+    /**
+     * Drop pins that are not holding the car to anything.
+     *
+     * Pins arrive from two places, and only one of them checks its work.
+     * [WaypointExtractor] adds them from the shape of the route and from chords
+     * that clip a camera — both geometric guesses — and the loop above adds them
+     * where the car provably strays. Nothing then asked whether each one was
+     * still needed, so a route could carry several in a row on a straight road
+     * where the car has nowhere else to go: reported from real use as
+     * "pointless waypoints one after the other on the same straight road".
+     *
+     * The test is the same one used to add a pin, run backwards: take it out,
+     * route the leg it was splitting the way the car would, and keep it unless
+     * the car does **both** of the things the pin was there to ensure —
+     *
+     *  - stays out of every camera the route avoids, and
+     *  - actually drives the road we planned, within [FORK_THRESHOLD_METERS].
+     *
+     * The second condition is what stops this from quietly becoming a different
+     * feature. Judged on cameras alone, pruning would strip a route back to the
+     * few pins that cameras strictly force and let the car pick its own way
+     * between them — camera-free, but not the route on the screen, and every
+     * divergence is something the drive monitor then reports as off-route. A pin
+     * that keeps the car on the line it was shown is doing a job even when no
+     * camera depends on it.
+     *
+     * What is left to remove is then exactly what was reported: pins on a
+     * straight road the car was going to drive anyway. That makes the whole pin
+     * phase self-correcting — earlier stages can be generous, because anything
+     * they over-add is removed here on evidence rather than by a rule about
+     * spacing.
+     *
+     * Conservative in the two places it has to be: a leg the router cannot
+     * answer for keeps its pin, and running out of time stops the pruning rather
+     * than assuming the rest were idle.
+     */
+    private suspend fun pruneIdlePins(
+        chosen: List<GeoPoint>,
+        pins: MutableList<GeoPoint>,
+        avoidedIndex: CameraIndex,
+        outOfTime: () -> Boolean,
+        carRoute: suspend (from: GeoPoint, to: GeoPoint) -> List<GeoPoint>?,
+    ) {
+        // Built once: asking "how far is this point from the route" walks the
+        // whole line otherwise, and a merged leg is sampled at every vertex.
+        val line = PolylineIndex(chosen)
+        var i = 0
+        while (i < pins.size) {
+            if (outOfTime()) return
+            val before = if (i == 0) chosen.first() else pins[i - 1]
+            val after = if (i == pins.lastIndex) chosen.last() else pins[i + 1]
+            val withoutIt = carRoute(before, after)
+            val idle = withoutIt != null &&
+                !avoidedIndex.anySees(withoutIt) &&
+                withoutIt.all { line.distanceMeters(it) <= FORK_THRESHOLD_METERS }
+            if (idle) pins.removeAt(i) else i++
+        }
     }
 
     /**
