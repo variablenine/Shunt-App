@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.shunt.app.plan.Destination
+import app.shunt.app.drive.DriveActivity
 import app.shunt.app.plan.Phase
 import app.shunt.app.ui.theme.safeColor
 import app.shunt.solver.brouter.PlannedRoute
@@ -65,6 +66,8 @@ fun ResultSheet(
     onSaveWork: (Destination) -> Unit,
     /** The charging stop the car added on its own, when it has added one. */
     chargingVia: String? = null,
+    /** What Shunt is doing with the car right now — see [DriveActivity]. */
+    driveActivity: DriveActivity = DriveActivity.Watching,
     /** How the chosen route compares with the car's range; null = no claim. */
     rangeCheck: RangeCheck? = null,
     findingChargeStop: Boolean = false,
@@ -96,7 +99,7 @@ fun ResultSheet(
                     chargeStopAlternatives, onChargeFirst, onChargeAlternative,
                 )
                 is Phase.Pushing -> PushingContent(phase.destination)
-                is Phase.Driving -> DrivingContent(phase, chargingVia, onDismiss)
+                is Phase.Driving -> DrivingContent(phase, chargingVia, driveActivity, onDismiss)
                 is Phase.PushFailed -> PushFailedContent(phase, onRetryPush, onDismiss)
                 is Phase.Error -> ErrorContent(phase.message, onDismiss)
                 Phase.Browsing -> Unit
@@ -577,7 +580,12 @@ private fun PushingContent(destination: Destination) {
 }
 
 @Composable
-private fun DrivingContent(phase: Phase.Driving, chargingVia: String?, onCancel: () -> Unit) {
+private fun DrivingContent(
+    phase: Phase.Driving,
+    chargingVia: String?,
+    activity: DriveActivity,
+    onCancel: () -> Unit,
+) {
     val destination = phase.destination
     val cameraCount = phase.plan.cameras.size
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -610,6 +618,41 @@ private fun DrivingContent(phase: Phase.Driving, chargingVia: String?, onCancel:
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             }
+        }
+    }
+    // What it is doing at this instant. Reported from a real drive: "it's
+    // impossible right now to tell what the app is doing" — all of this was
+    // already happening, just silently unless it failed.
+    Spacer(Modifier.height(10.dp))
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        ) {
+            if (activity !is DriveActivity.Watching && activity !is DriveActivity.StoodDown) {
+                CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(14.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(
+                when (activity) {
+                    is DriveActivity.Watching -> "Watching for cameras"
+                    is DriveActivity.SendingWaypoint ->
+                        "Sending waypoint ${activity.number} of ${activity.total} to the car"
+                    is DriveActivity.CheckingCharging -> "Asking your car about charging"
+                    is DriveActivity.Replanning -> "Re-planning from here"
+                    is DriveActivity.StoodDown -> "Not steering — the car is yours"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
     Spacer(Modifier.height(8.dp))

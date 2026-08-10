@@ -18,7 +18,14 @@ import kotlin.math.roundToInt
  * point of the fallback. Messages are terse ("Camera 1,200 ft on your right")
  * because they're meant to be heard and felt, not read.
  */
-class AndroidAlerter(private val context: Context) : Alerter {
+class AndroidAlerter(
+    private val context: Context,
+    /**
+     * Speaks the alerts. Optional so a test — or a caller that has no business
+     * making noise — can leave it out; every alert still vibrates and notifies.
+     */
+    private val speech: SpokenAlerts? = null,
+) : Alerter {
 
     private val vibrator: Vibrator? = run {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -41,6 +48,62 @@ class AndroidAlerter(private val context: Context) : Alerter {
         vibrate(alert.severity)
         val (id, title, body) = describe(alert)
         notify(id, title, body, alert.severity)
+        // Last, and never in a way that can stop the two above from happening:
+        // speech is the channel that actually reaches a driver, but it is also
+        // the one that can be missing, still starting up, or muted.
+        speech?.say(spoken(alert), urgent = alert.severity == Alert.Severity.URGENT)
+    }
+
+    /**
+     * What to say aloud, which is not the notification text.
+     *
+     * Written to be heard once, at speed, with eyes on the road: the thing
+     * first, then where, then the number. Anything a driver cannot act on in
+     * the next few seconds is left to the notification.
+     */
+    private fun spoken(alert: Alert): String = when (alert) {
+        is Alert.CameraApproaching -> buildString {
+            append(if (alert.imminent) "Camera now" else "Camera ahead")
+            when (alert.side) {
+                Side.LEFT -> append(", on your left")
+                Side.RIGHT -> append(", on your right")
+                null -> {}
+            }
+            append(", ").append(spokenDistance(alert.distanceMeters))
+        }
+        is Alert.AdvanceFailed ->
+            "Route update failed. " + if (alert.retryable) "Retrying." else "The car may stop at the waypoint."
+        is Alert.OffRoute ->
+            "Off the planned route. " + if (alert.replanning) "Finding a new one." else "Camera avoidance is not active."
+        is Alert.Replanned ->
+            if (alert.camerasOnNewRoute == 0) "New route, camera free."
+            else "New route, passing ${alert.camerasOnNewRoute} camera${plural(alert.camerasOnNewRoute)}."
+        is Alert.ReplanFailed -> "Off route, and no new route. Drive as if unprotected."
+        Alert.BackOnRoute -> "Back on the route."
+        Alert.StoodDown -> "Shunt has stopped steering. The car is yours. Camera warnings continue."
+        is Alert.ReachedStop ->
+            if (alert.remainingStops > 0) "Stop reached. ${alert.remainingStops} to go." else "Stop reached. Destination next."
+        is Alert.ChargeStopAhead ->
+            "Your car added a charging stop at ${alert.name}. " +
+                if (alert.camerasOnLeg == 0) "That leg is camera free."
+                else "That leg passes ${alert.camerasOnLeg} camera${plural(alert.camerasOnLeg)}."
+        is Alert.ReachedChargeStop -> "Charging stop reached."
+        is Alert.ResumingToDestination ->
+            if (alert.camerasOnLeg == 0) "Back on the way. Camera free."
+            else "Back on the way, passing ${alert.camerasOnLeg} camera${plural(alert.camerasOnLeg)}."
+        is Alert.ChargeStopUnroutable ->
+            "Your car is detouring to ${alert.name} and Shunt could not route it. Drive as if unprotected."
+        is Alert.ChargingUpdateFailed -> "Charging route update failed. Check the route on the car."
+        Alert.Arrived -> "Arrived."
+    }
+
+    private fun plural(n: Int) = if (n == 1) "" else "s"
+
+    /** Spoken form of a distance — "1,200 feet", not "in 1,200 ft". */
+    private fun spokenDistance(meters: Double): String {
+        val feet = (meters * 3.28084).roundToInt()
+        val rounded = ((feet + 50) / 100) * 100
+        return if (rounded <= 0) "just ahead" else "%,d feet".format(rounded)
     }
 
     private fun describe(alert: Alert): Triple<Int, String, String> = when (alert) {

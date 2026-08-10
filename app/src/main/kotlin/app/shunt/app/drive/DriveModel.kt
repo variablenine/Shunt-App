@@ -67,6 +67,20 @@ data class DriveMonitorConfig(
     val assumedSpeedMetersPerSec: Double = 25.0,
     /** Within this of the destination counts as arrived. */
     val arrivalRadiusMeters: Double = 60.0,
+    /**
+     * A bend sharper than this counts as a turn the car has to commit to before
+     * the waypoint beyond it may be advanced past. See
+     * [DriveMonitorEngine.commitPointFor].
+     */
+    val turnCommitDegrees: Double = 35.0,
+    /** How far back from a waypoint to look for that turn. */
+    val turnCommitLookbackMeters: Double = 500.0,
+    /**
+     * Distance either side of a vertex used to measure how sharply the route
+     * bends there. Wide enough that the wobble in a dense polyline does not read
+     * as a turn, narrow enough that a real junction does.
+     */
+    val turnMeasureSpanMeters: Double = 40.0,
     /** First (early) camera warning tier. */
     val cameraWarnMeters: Double = 400.0,
     /** Second (escalated) camera warning tier. */
@@ -209,6 +223,36 @@ fun interface Alerter {
 }
 
 /** Coarse drive lifecycle for the UI to reflect. */
+/**
+ * What Shunt is doing with the car *right now*, for the driver to see.
+ *
+ * Reported from a real drive: *"it's impossible right now to tell what the app
+ * is doing."* Everything on this list already happened — waypoints went out,
+ * the car got probed about charging, re-plans fired — but all of it was silent
+ * unless something went wrong. That is a bad property for an app that steers a
+ * vehicle: a driver who cannot see it working cannot tell a quiet moment from a
+ * broken one, and cannot describe what it did afterwards either.
+ *
+ * Deliberately coarse. This is glanceable text on a screen in a moving car, not
+ * a log.
+ */
+sealed interface DriveActivity {
+    /** Nothing in flight; just following the route and watching for cameras. */
+    data object Watching : DriveActivity
+
+    /** Moving the car's aim on to the next shaping pin. */
+    data class SendingWaypoint(val number: Int, val total: Int) : DriveActivity
+
+    /** Asking the car whether it has inserted a charging stop. */
+    data object CheckingCharging : DriveActivity
+
+    /** Working out a new route because the car left the planned one. */
+    data object Replanning : DriveActivity
+
+    /** Shunt has given the car back and is only warning about cameras (§6.1). */
+    data object StoodDown : DriveActivity
+}
+
 sealed interface DriveStatus {
     data object Idle : DriveStatus
 

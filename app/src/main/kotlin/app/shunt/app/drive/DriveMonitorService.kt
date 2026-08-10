@@ -31,6 +31,14 @@ class DriveMonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob())
     private var monitorJob: Job? = null
 
+    /**
+     * Owned by the service, not the alerter, because a text-to-speech engine is
+     * a bound service connection: it has to be shut down when the drive ends or
+     * it outlives the thing that needed it. Created on the first drive and
+     * released in [onDestroy].
+     */
+    private var speech: SpokenAlerts? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -55,9 +63,11 @@ class DriveMonitorService : Service() {
         }
 
         container.liveDrivePlan.value = plan
+        if (speech == null) speech = SpokenAlerts(this)
         val monitor = DriveMonitor(
             vehicle = container.vehicleNavClient,
-            alerter = AndroidAlerter(this),
+            alerter = AndroidAlerter(this, speech),
+            onActivity = { container.driveActivity.value = it },
             onStatus = { status ->
                 container.driveStatus.value = status
                 if (status is DriveStatus.Arrived) stopSelf()
@@ -85,8 +95,11 @@ class DriveMonitorService : Service() {
 
     override fun onDestroy() {
         monitorJob?.cancel()
+        speech?.shutdown()
+        speech = null
         scope.cancel()
         val container = (application as ShuntApplication).container
+        container.driveActivity.value = DriveActivity.Watching
         if (container.driveStatus.value !is DriveStatus.Arrived) {
             container.driveStatus.value = DriveStatus.Idle
         }

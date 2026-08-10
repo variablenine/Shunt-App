@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import app.shunt.BuildConfig
+import app.shunt.app.drive.DriveActivity
 import app.shunt.app.drive.DriveStatus
 import app.shunt.app.plan.CameraGateway
 import app.shunt.app.plan.DrivePlan
@@ -246,6 +247,13 @@ class AppContainer(context: Context) {
      */
     var activeDrivePlan: DrivePlan? = null
     val driveStatus = MutableStateFlow<DriveStatus>(DriveStatus.Idle)
+
+    /**
+     * What Shunt is doing with the car right now, for the driving sheet to
+     * show. See [DriveActivity] — until this existed, every waypoint push and
+     * charging probe was invisible unless it failed.
+     */
+    val driveActivity = MutableStateFlow<DriveActivity>(DriveActivity.Watching)
 
     /**
      * The route actually in force, republished whenever the monitor replaces it

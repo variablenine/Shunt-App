@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
                 val vm: PlanViewModel = viewModel(factory = container.planViewModelFactory())
                 val state by vm.state.collectAsStateWithLifecycle()
                 val driveStatus by container.driveStatus.collectAsStateWithLifecycle()
+                val driveActivity by container.driveActivity.collectAsStateWithLifecycle()
 
                 // Refresh camera data on open; schedule no background work.
                 LaunchedEffect(Unit) { vm.onOpen() }
@@ -118,6 +119,7 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,
+                    driveActivity = driveActivity,
                     vehicleSettings = VehicleSettingsUi(
                         token = credentials.token,
                         vin = credentials.vin,

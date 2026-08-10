@@ -57,6 +57,57 @@ object WaypointRefiner {
     const val FORK_THRESHOLD_METERS = 60.0
 
     /**
+     * Whether a leg the car would drive needs a pin putting in it.
+     *
+     * Two ways it can, and **for most of this project only the first counted**:
+     *
+     *  - the car's own path enters a camera the route was built to avoid, or
+     *  - the car gets there by a different road altogether.
+     *
+     * The second was the gap, and it showed up on the first real drive: *"the
+     * car picked a different route than what Shunt was banking on."* Judged on
+     * cameras alone the leg is fine — a different road that happens to be
+     * camera-free passes the test — so no pin went in, and the car drove
+     * somewhere the map on the phone did not show. Everything downstream then
+     * misreads: the drive monitor calls it off-route, camera warnings are
+     * computed for a line the car is not on, and a re-plan may fire.
+     *
+     * Checking both is also what makes the pin set *definite* rather than
+     * merely sufficient — it is the same predicate `pruneIdlePins` uses to take
+     * pins back out, so insertion and removal agree and the phase settles on the
+     * pins that hold the route and no others.
+     */
+    private fun needsPin(carPath: List<GeoPoint>, avoided: CameraIndex, line: PolylineIndex): Boolean =
+        avoided.anySees(carPath) || straysFrom(line, carPath)
+
+    /**
+     * Whether [path] leaves [line] anywhere along it.
+     *
+     * **Walks the path rather than checking its vertices**, and that is not
+     * pedantry — it is the same trap `BrouterPlanner.sampleSpine` fell into.
+     * A path's vertices can all sit on the planned line while the road between
+     * two of them goes somewhere else entirely: a straight hop from one junction
+     * to another is two points, and everything that matters happens in between.
+     * Checking only the ends reports such a leg as faithful.
+     */
+    private fun straysFrom(line: PolylineIndex, path: List<GeoPoint>): Boolean {
+        for (i in 0 until path.size - 1) {
+            val a = path[i]
+            val b = path[i + 1]
+            val steps = (haversineMeters(a, b) / PATH_SAMPLE_METERS).toInt().coerceAtLeast(1)
+            for (s in 0..steps) {
+                val t = s.toDouble() / steps
+                val at = GeoPoint(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
+                if (line.distanceMeters(at) > FORK_THRESHOLD_METERS) return true
+            }
+        }
+        return false
+    }
+
+    /** How finely a leg is walked when asking whether it follows the route. */
+    private const val PATH_SAMPLE_METERS = 50.0
+
+    /**
      * How far past the fork to drop the pin, on open road.
      *
      * **The governing constraint is the drive monitor, not the geometry**, and
@@ -154,6 +205,8 @@ object WaypointRefiner {
         // change how the car drives an earlier leg.
         val clean = mutableSetOf<Pair<GeoPoint, GeoPoint>>()
         var passes = 0
+        // Built once; every leg is measured against the whole planned line.
+        val line = PolylineIndex(chosen)
 
         while (passes++ < MAX_PASSES) {
             if (outOfTime()) break
@@ -170,13 +223,14 @@ object WaypointRefiner {
                     clean += from to to
                     continue
                 }
-                if (!avoidedIndex.anySees(carPath)) {
+                if (!needsPin(carPath, avoidedIndex, line)) {
                     clean += from to to
                     continue
                 }
 
-                // The car would pass a camera getting to this pin. Put one in
-                // just past where its path and ours part company.
+                // The car would pass a camera getting to this pin, or would get
+                // there by a different road. Put one in just past where its path
+                // and ours part company.
                 if (maxPins != WaypointExtractor.NO_LIMIT && current.size >= maxPins) return current
                 val pin = pinPastFork(chosen, carPath, from, to, pastForkAt(from, index))
                 if (pin == null || pin in current) {
@@ -246,9 +300,11 @@ object WaypointRefiner {
             val before = if (i == 0) chosen.first() else pins[i - 1]
             val after = if (i == pins.lastIndex) chosen.last() else pins[i + 1]
             val withoutIt = carRoute(before, after)
-            val idle = withoutIt != null &&
-                !avoidedIndex.anySees(withoutIt) &&
-                withoutIt.all { line.distanceMeters(it) <= FORK_THRESHOLD_METERS }
+            // Exactly the predicate insertion uses, negated: a pin stays if and
+            // only if taking it out would give a leg the refiner would have put
+            // one into. That symmetry is what makes the phase settle rather than
+            // oscillate, and what lets "no more, no less" mean something.
+            val idle = withoutIt != null && !needsPin(withoutIt, avoidedIndex, line)
             if (idle) pins.removeAt(i) else i++
         }
     }

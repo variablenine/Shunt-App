@@ -11,6 +11,7 @@ import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointToPolylineProgress
 import app.shunt.tesla.PushResult
 import app.shunt.tesla.VehicleNavClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Orchestrates the planning flow: enter destination → route on-device → choose
@@ -208,10 +210,17 @@ class PlanViewModel(
         }.getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
         when (outcome) {
             is PlanOutcome.Routes -> {
+                // Opened before the chooser is shown, and therefore before Go
+                // can be tapped. Doing it inside checkRange() left a window
+                // between the two where the gate did not exist yet, which is the
+                // same bug one instruction narrower.
+                val gate = rangeReader?.let { CompletableDeferred<Unit>() }
+                rangeReady = gate
                 _state.update {
                     it.copy(
                         phase = Phase.Solved(destination, outcome.options, timings = outcome.timings),
                         chargeStopSearchFailed = false,
+                        checkingRange = gate != null,
                     )
                 }
                 checkRange()
@@ -272,10 +281,21 @@ class PlanViewModel(
      * nothing is correct here, and an optimistic guess is the one thing that
      * could actually strand someone.
      */
+    /**
+     * Completes when the in-flight range read has finished, or null when none
+     * was started. [onGo] waits on it — see [tripHasRangeToSpare].
+     */
+    private var rangeReady: CompletableDeferred<Unit>? = null
+
     private suspend fun checkRange() {
         val reader = rangeReader ?: return
-        lastRangeReading = runCatching { reader.read() }.getOrNull()
-        _state.update { it.copy(rangeCheck = rangeCheckFor(it.phase)) }
+        try {
+            lastRangeReading = runCatching { reader.read() }.getOrNull()
+            _state.update { it.copy(rangeCheck = rangeCheckFor(it.phase)) }
+        } finally {
+            _state.update { it.copy(checkingRange = false) }
+            rangeReady?.complete(Unit)
+        }
     }
 
     private fun rangeCheckFor(phase: Phase): RangeCheck? {
@@ -452,6 +472,14 @@ class PlanViewModel(
         val plan = drivePlanFor(option, solved.destination)
         _state.update { it.copy(phase = Phase.Pushing(solved.destination, option)) }
         workScope.launch {
+            // Let the range read land before deciding how to drive this trip.
+            // Steering pin by pin is only safe when the trip does not need
+            // charging, and "not read yet" used to be indistinguishable from
+            // "plenty" — so on a long trip Go set off steering, the car never
+            // planned a charge for the real route, and the whole charging path
+            // was skipped. Bounded, because a vehicle API that never answers
+            // must not strand the driver on a spinner.
+            rangeReady?.let { withTimeoutOrNull(RANGE_WAIT_MILLIS) { it.await() } }
             val (result, steering) = pushForDriving(plan)
 
             _state.update {
@@ -609,6 +637,17 @@ class PlanViewModel(
         /** Fallback search bias when no location is known (US geographic center). */
         val DEFAULT_BIAS = GeoPoint(39.8283, -98.5795)
         private const val MAX_CHARGE_ALTERNATIVES = 3
+
+        /**
+         * How long Go will wait for the car's range before setting off anyway.
+         *
+         * Long enough for an ordinary vehicle-API round trip, short enough that
+         * a service which has silently stopped answering does not leave the
+         * driver holding a spinner. Timing out lands on the old behaviour —
+         * unknown range is treated as enough — which is the documented choice
+         * for an unreadable car, not a new risk.
+         */
+        private const val RANGE_WAIT_MILLIS = 6_000L
 
         /** Enough for a long day's drive; a guard against looping, not a policy. */
         private const val MAX_CHARGE_STOPS = 4

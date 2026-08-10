@@ -63,7 +63,13 @@ Working and reasonably trusted:
 - The map: dark basemap, every known camera with its facing cone, tap for
   details, the route, live location.
 - The drive monitor: camera-approach warnings, waypoint advancement, off-route
-  detection, escalating haptics + notifications. Works fully offline.
+  detection, escalating haptics, **spoken alerts** and notifications. Works
+  fully offline — the speech is Android's on-device TTS, no account or key
+  (`SpokenAlerts`), routed as navigation guidance so it reaches car audio and
+  ducks music.
+- A live "what is Shunt doing" line on the driving sheet (`DriveActivity`):
+  sending waypoint *n* of *m*, asking the car about charging, re-planning,
+  stood down. All of this happened before and was invisible unless it failed.
 - Destination search (Photon), favourites, long-press-map-to-route.
 
 Long-route planning was the blocker for real use and is now solved. A 489 km trip
@@ -301,6 +307,40 @@ the car still strays. Being advanced past too early is *not* caught, because the
 leg looks clean — so the two errors are not symmetrical, and erring long is the
 recoverable direction.
 
+### A pin holds the route, not just the cameras
+
+For most of this project the refiner asked one question of each leg: *does the
+car's own path enter a camera we avoid?* On the first real drive that turned out
+to be half a question — the car took a different road, one that happened to be
+camera-free, so no pin was ever placed and the car drove somewhere the phone was
+not showing. Everything downstream then misreads: the monitor calls it off-route,
+camera warnings are computed for a line the car is not on, and a re-plan may
+fire.
+
+`needsPin` now asks both — the car's path enters an avoided camera, **or** it
+leaves our line by more than `FORK_THRESHOLD_METERS`. `pruneIdlePins` uses the
+same predicate negated, so insertion and removal agree and the phase settles on
+the pins that hold the route and no others, which is what "no more, no less"
+has to mean to be checkable.
+
+Two things this cost, both worth knowing:
+
+- **It walks each leg rather than checking its vertices.** A car path's vertices
+  can all sit on the planned line while the road between two of them goes
+  somewhere else entirely — a straight hop between junctions is two points, and
+  everything that matters happens in between. Exactly the trap `sampleSpine`
+  fell into (see §7); `straysFrom` samples at 50 m.
+- **The phase got slower, so `REFINE_BUDGET_MILLIS` went from 20 s to 45 s.**
+  Measured on the 615 km benchmark it converges in about 34 s. At 20 s it was
+  cut off part-way, and the symptom was counter-intuitive: *more* pins than the
+  converged answer, because the pruning that removes the redundant ones never
+  ran. A truncated phase is not a smaller version of the right answer.
+
+Converged, that trip carries 27 pins on the balanced option and 30 on
+fewest-cameras — fewer than the 40-odd it used to produce, and a strictly
+stronger guarantee, because now every leg between them has been driven the way
+the car would drive it and checked against both conditions.
+
 ### Pins have to earn their place
 
 Pins arrive from two places and only one of them checked its work.
@@ -361,6 +401,24 @@ Two properties worth preserving if you touch this:
 Anything added later that can push to the vehicle on a timer or a signal —
 charging probes included — has to respect the same flag.
 
+### A waypoint must not be dropped before its turn
+
+The monitor advances to the next pin once the car is within
+`max(150 m, speed × 18 s)`, and that floor exists for crawling traffic. Sitting
+at a red light in a turn lane, a little short of a pin just past the junction,
+the car is inside the floor *and* stationary — so the pin was advanced past, and
+the next one was reachable by carrying straight on. FSD moved to leave the turn
+lane. **A pin abandoned before its turn is worse than no pin: it actively steers
+the car the wrong way, at a junction, under driver assistance.**
+
+`DriveMonitorEngine` now precomputes, for each pin, the last bend sharper than
+`turnCommitDegrees` within `turnCommitLookbackMeters` before it, and will not
+advance until the car is past that point. It does not delay the advance
+otherwise — advancing early is still right, because the car treats a waypoint as
+a *stop* and will slow for it. There is one safety valve: within
+`arrivalRadiusMeters` it advances regardless, so a car that never registers as
+past the commit point is not left aiming at a pin it is sitting on.
+
 ### It doesn't plan charging until it's put into drive
 
 Reading at the moment Go is tapped always answers "no charging stop". The check
@@ -378,6 +436,15 @@ has to repeat once the car is actually moving. Hence two kinds of check in
 
 A charging stop found this way becomes a normal camera-avoided leg; arriving at
 it is a leg end, not the trip's end.
+
+**Go waits for that reading before deciding how to drive the trip.** Steering pin
+by pin is only safe when the trip does not need charging, and `rangeCheck` was
+null both when no claim could be made *and* while the vehicle read was still in
+flight — so tapping Go promptly on a long trip set off steering, the car never
+planned a charge for the real route, and the whole charging path was skipped.
+`checkingRange` distinguishes the two, and `onGo` waits on it for at most
+`RANGE_WAIT_MILLIS`; timing out lands on the documented behaviour for an
+unreadable car rather than on a new risk.
 
 Separately, `solver/charging/RangeCheck.kt` warns *before* setting off when the
 camera-avoiding detour outruns the battery — the car costs charging for the
@@ -889,5 +956,16 @@ Ordered roughly by what unblocks real use.
 - On-route arrow, and gray out the traveled portion of the route.
 - Simplify the current-location dot to a solid pulsing dot (no accuracy halo).
 - Fix one-way arrows pointing the wrong direction on the basemap.
+- **Standby mode — follow the car's own navigation.** Shunt sits idle; the
+  driver sets a destination in the *car*, and Shunt notices, plans a
+  camera-avoiding route to it and starts steering. Anything that appears
+  unexpectedly — a destination the driver typed, or a charging stop the car
+  inserted — goes to the front of the queue. Most of the machinery exists:
+  `TessieAccountClient.activeRoute` already reads what the car is aiming at, and
+  `ChargeStopCoordinator` already polls it on a cadence that respects §6.1. What
+  is new is the idle watch and the trigger, and the thing to be careful about is
+  §6.1 again: a mode whose whole job is to notice a destination and push a route
+  is one bad edge away from fighting the driver, so the stand-down rules have to
+  cover it from the start.
 - **[far future]** Direct Tesla Fleet API integration (connect a Tesla account,
   no Tessie) — only after everything else is fleshed out and tested.

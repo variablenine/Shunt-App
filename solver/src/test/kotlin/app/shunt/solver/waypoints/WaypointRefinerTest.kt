@@ -161,6 +161,37 @@ class WaypointRefinerTest {
     }
 
     @Test
+    fun `a pin goes in where the car would take a different road, camera or not`() = runTest {
+        // Reported from the first real drive: "the car picked a different route
+        // than what Shunt was banking on." Judged on cameras alone this leg is
+        // fine — the car's own road happens to be camera-free — so no pin went
+        // in, and the car drove somewhere the phone was not showing.
+        //
+        // The camera here sits far off both roads, so it is *avoided* (which is
+        // what gets the refiner past its early return) but is not what makes
+        // this leg need a pin. Only the divergence is.
+        val farAway = CameraVision(GeoPoint(39.5, -97.0), directionDegrees = null)
+        val refined = WaypointRefiner.refine(
+            chosen = detour,
+            pins = emptyList(),
+            avoid = listOf(farAway),
+            carRoute = ::carRoute,
+        )
+
+        assertTrue(
+            refined.isNotEmpty(),
+            "the car would drive the fast road instead of the detour and nothing pinned it there",
+        )
+        // Each pin is a point on the planned route, out on the part the car
+        // would otherwise skip — not a guess somewhere off it.
+        assertTrue(refined.all { it in detour }, "pins must be points on the chosen route")
+        assertTrue(
+            refined.any { pointToPolyline(it, northernLeg).distanceMeters < 300.0 },
+            "at least one has to land on the stretch the car was cutting out",
+        )
+    }
+
+    @Test
     fun `a pin the car does not need is dropped`() = runTest {
         // Reported from real use: "pointless waypoints one after the other on
         // the same straight road". A pin on a stretch the car was going to

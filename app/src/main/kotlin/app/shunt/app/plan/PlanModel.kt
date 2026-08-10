@@ -81,6 +81,15 @@ data class PlanUiState(
      * Null whenever no claim can be made: no car connected, or unreadable.
      */
     val rangeCheck: RangeCheck? = null,
+    /**
+     * The car's range is being read right now.
+     *
+     * Distinct from a null [rangeCheck], and the distinction is the point: null
+     * means "no claim can be made" — no car, or the read failed — whereas this
+     * means "ask again in a moment". Collapsing the two is how Go came to set
+     * off steering a trip that had not been checked for charging yet.
+     */
+    val checkingRange: Boolean = false,
     /** A charging stop is being looked for (the "charge on the way" tap). */
     val findingChargeStop: Boolean = false,
     /** The last charging-stop search came back with nothing usable. */

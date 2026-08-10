@@ -71,6 +71,85 @@ class DriveMonitorEngine(
     private var consecutiveOffRoute = 0
     private var offRoute = false
 
+    /** Along-route distance at each vertex of [routePolyline]. */
+    private val alongAt: DoubleArray = DoubleArray(routePolyline.size).also { out ->
+        for (i in 1 until routePolyline.size) {
+            out[i] = out[i - 1] + haversineMeters(routePolyline[i - 1], routePolyline[i])
+        }
+    }
+
+    /**
+     * For each waypoint, how far along the route the car must be before that
+     * waypoint may be advanced past. `-inf` where there is no turn to commit to.
+     *
+     * **This is what stops Shunt pulling a car out of a turn lane.** Reported
+     * from a real drive: stopped at a red light in a centre lane waiting to
+     * turn, a little short of a waypoint just beyond the junction. The monitor's
+     * lead distance has a floor of 150 m for crawling traffic, the car was
+     * inside it and stationary, so the waypoint was advanced past — and the next
+     * one was reachable by carrying straight on, so FSD moved to leave the turn
+     * lane. A waypoint that is abandoned before the turn it exists to force is
+     * worse than no waypoint at all: it actively steers the car the wrong way.
+     *
+     * Advancing early is still right in general — the car treats a waypoint as a
+     * *stop* and will slow for it, which is the reason the lead exists — so this
+     * does not delay the advance, it only refuses to do it before the turn is
+     * behind the car.
+     */
+    private val commitAlong: DoubleArray = DoubleArray(chain.size) { Double.NEGATIVE_INFINITY }
+
+    init {
+        if (routePolyline.size >= 2) {
+            var cursor = 0
+            for (i in chain.indices) {
+                cursor = nearestVertex(chain[i], from = cursor)
+                commitAlong[i] = commitPointFor(cursor)
+            }
+        }
+    }
+
+    /** Index of the route vertex nearest [p], searching forward from [from]. */
+    private fun nearestVertex(p: GeoPoint, from: Int): Int {
+        var best = from
+        var bestDistance = Double.MAX_VALUE
+        for (i in from until routePolyline.size) {
+            val d = haversineMeters(p, routePolyline[i])
+            if (d < bestDistance) { bestDistance = d; best = i }
+        }
+        return best
+    }
+
+    /**
+     * Along-distance of the last turn before the waypoint at route vertex
+     * [waypointVertex], or `-inf` when the approach is straight.
+     *
+     * Takes the *last* qualifying bend rather than the sharpest: what has to be
+     * behind the car is the final decision point, and an earlier, sharper one is
+     * already committed by the time that matters.
+     */
+    internal fun commitPointFor(waypointVertex: Int): Double {
+        val target = alongAt[waypointVertex]
+        var j = waypointVertex
+        while (j > 0 && target - alongAt[j] <= config.turnCommitLookbackMeters) {
+            if (bendDegreesAt(j) > config.turnCommitDegrees) return alongAt[j]
+            j--
+        }
+        return Double.NEGATIVE_INFINITY
+    }
+
+    /** How sharply the route turns at vertex [j], measured over a fixed span. */
+    private fun bendDegreesAt(j: Int): Double {
+        val span = config.turnMeasureSpanMeters
+        var a = j
+        while (a > 0 && alongAt[j] - alongAt[a] < span) a--
+        var b = j
+        while (b < routePolyline.size - 1 && alongAt[b] - alongAt[j] < span) b++
+        if (a == j || b == j) return 0.0
+        val into = bearingDegrees(routePolyline[a], routePolyline[j])
+        val outOf = bearingDegrees(routePolyline[j], routePolyline[b])
+        return kotlin.math.abs(((outOf - into + 540.0) % 360.0) - 180.0)
+    }
+
     /**
      * The not-yet-passed part of the chain — what the car should be steering
      * along right now. Empty once the whole chain is behind us.
@@ -193,11 +272,26 @@ class DriveMonitorEngine(
 
         val speed = update.speedMetersPerSec ?: config.assumedSpeedMetersPerSec
         val lead = maxOf(config.waypointLeadMinMeters, speed * config.waypointLeadSeconds)
-        if (distance <= lead) {
-            targetIndex++
-            return DriveSignal.ApproachingWaypoint(chain.subList(targetIndex, chain.size).toList())
-        }
-        return null
+        if (distance > lead) return null
+        // Close enough to advance — but not until the turn this waypoint exists
+        // to force is actually behind the car. Sitting at a light in a turn lane
+        // is inside the lead and stationary, and advancing there hands the car a
+        // target it can reach by going straight on. See [commitAlong].
+        //
+        // The distance check is the safety valve: if the car somehow never
+        // registers as past the commit point, it must still not be left aiming
+        // at a waypoint it is sitting on, because the car would stop there.
+        if (!pastCommitPoint() && distance > config.arrivalRadiusMeters) return null
+        targetIndex++
+        return DriveSignal.ApproachingWaypoint(chain.subList(targetIndex, chain.size).toList())
+    }
+
+    /** Whether the car is past the turn that the current waypoint depends on. */
+    private fun pastCommitPoint(): Boolean {
+        val commit = commitAlong.getOrNull(targetIndex) ?: return true
+        if (commit == Double.NEGATIVE_INFINITY) return true
+        if (routePolyline.size < 2) return true
+        return alongAt[nearestSegment] >= commit
     }
 
     private fun cameraWarnings(update: LocationUpdate): List<DriveSignal> {

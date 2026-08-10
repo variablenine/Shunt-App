@@ -554,10 +554,21 @@ class BrouterPlanner(
          * route, which is a handful. Refinement is not: it costs a pass per
          * candidate pin per option, and a long trip through camera-dense country
          * wants a lot of them — which is how a five-hour route came to take
-         * about five minutes to plan. Twenty seconds is far more than a normal
-         * trip needs and far less than a driver will sit through.
+         * about five minutes to plan.
+         *
+         * **Raised from 20 s once pins had to guarantee the route**, not merely
+         * dodge cameras. Measured on the 615 km benchmark, the phase converges —
+         * inserts every pin it wants and prunes the idle ones back out — in
+         * about 34 s. At 20 s it was cut off part-way, which showed up in the
+         * worst possible way: *more* pins than the converged answer, because the
+         * pruning that removes the redundant ones never ran. A truncated phase
+         * does not give you a smaller version of the right answer.
+         *
+         * This only binds on long trips. A 200 km trip settles in about 3 s, so
+         * the ceiling costs nothing where it is not needed, and where it is
+         * needed is exactly where a car has the most chances to go its own way.
          */
-        const val REFINE_BUDGET_MILLIS = 20_000L
+        const val REFINE_BUDGET_MILLIS = 45_000L
 
         /**
          * The same ceiling for a plan computed while the car is moving.

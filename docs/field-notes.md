@@ -622,6 +622,56 @@ monitor. With it, 27.
 now dropped on its word that the car would follow the road anyway. If a car
 strays somewhere a pin used to be, suspect that first.
 
+### F-9 · Five things from a real drive
+*Observed: 2026-08-10, second drive. All addressed; none confirmed on a drive.*
+
+**It pulled the car out of a turn lane.** Stopped at a red light in a centre
+lane waiting to turn, a little short of a waypoint just past the junction. The
+monitor's lead floors at 150 m for crawling traffic, the car was inside it and
+stationary, so the waypoint was advanced past — and the next one was straight
+ahead, so FSD moved to leave the turn lane.
+
+The driver's suggested fix was to scale the advance radius with speed. It already
+does (`max(150 m, speed × 18 s)`); the floor is what bit, and the floor is there
+for a good reason — the car treats a waypoint as a *stop* and slows for it, so
+advancing late is its own failure. The fix is a different question: not *how
+close* but *whether the turn is behind us*. `DriveMonitorEngine` precomputes the
+last sharp bend before each waypoint and refuses to advance until the car is past
+it. **A waypoint dropped before its turn is worse than no waypoint — it steers
+the car the wrong way, at a junction, under assistance.**
+
+**The car took a different route than Shunt expected.** The refiner only asked
+whether the car's own path entered an *avoided camera*. A different road that
+happens to be camera-free passed that test, so nothing pinned it. It now asks
+both — camera or divergence from our line — and `pruneIdlePins` uses the same
+predicate negated, so the two agree. See CLAUDE.md §6.
+
+Two things fell out of that. It has to *walk* each leg rather than check its
+vertices — a car path's vertices can all lie on the planned line while the road
+between two of them goes elsewhere, the same trap `sampleSpine` fell into. And
+the phase got slower, so its budget went 20 s → 45 s; it converges in ~34 s on
+the 615 km trip. At 20 s it was cut off, which showed up as *more* pins than the
+converged answer, because pruning never ran.
+
+**It auto-navigated before charging was worked out.** `rangeCheck` was null both
+for "no claim can be made" and for "still reading", and Go treated both as
+"plenty of range", so it set off steering pin by pin on a trip that may have
+needed a charge. `checkingRange` separates them and Go waits, bounded.
+
+**No audio at all.** Alerts were vibration and a notification — the wrong channel
+for the one moment they matter, and unusable under FSD where reading a phone is
+the last thing a driver should do. `SpokenAlerts` uses Android's on-device TTS
+(offline, no key) with `USAGE_ASSISTANCE_NAVIGATION_GUIDANCE`, which is what
+makes a phone route audio into a car over Bluetooth and duck music. Speech is
+best-effort and never load-bearing: every alert still vibrates and notifies.
+
+**No idea what the app was doing.** Waypoint pushes, charging probes and
+re-plans were all silent unless they failed. `DriveActivity` puts the current one
+on the driving sheet — *sending waypoint 3 of 12*, *asking your car about
+charging*, *re-planning from here*, *not steering — the car is yours*. A driver
+who cannot see it working cannot tell a quiet moment from a broken one, and
+cannot describe afterwards what it did.
+
 ---
 
 ## Resolved

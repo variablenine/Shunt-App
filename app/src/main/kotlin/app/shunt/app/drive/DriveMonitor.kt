@@ -43,6 +43,11 @@ class DriveMonitor(
     private val config: DriveMonitorConfig = DriveMonitorConfig(),
     private val onStatus: (DriveStatus) -> Unit = {},
     /**
+     * What Shunt is doing with the car at this instant, for the driver to see.
+     * Every one of these things already happened invisibly; see [DriveActivity].
+     */
+    private val onActivity: (DriveActivity) -> Unit = {},
+    /**
      * Works out a fresh camera-aware plan from the vehicle's current position
      * when it has left the planned route, or null if it can't. Absent, leaving
      * the route is still detected and alerted — just not recovered from.
@@ -71,8 +76,13 @@ class DriveMonitor(
      */
     private var steering = false
 
+    /** Shaping pins in the plan in force, for "waypoint 3 of 12". */
+    private var totalPins = 0
+
     suspend fun run(plan: DrivePlan, locations: Flow<LocationUpdate>) {
         steering = plan.steerByWaypoints
+        totalPins = (plan.chain.size - 1).coerceAtLeast(0)
+        onActivity(DriveActivity.Watching)
         var current = plan
         var engine = newEngine(current)
         val finalDestination = plan.destination
@@ -158,6 +168,7 @@ class DriveMonitor(
                 previous = update
                 if (!due) return@collect
 
+                onActivity(DriveActivity.CheckingCharging)
                 val change = charging.check(
                     from = update.point,
                     destination = finalDestination,
@@ -165,6 +176,7 @@ class DriveMonitor(
                     steeringChain = engine.remainingChain(),
                     headingDegrees = heading,
                 )
+                onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
                 applyLeg(change, finalDestination)?.let { fresh ->
                     current = fresh
                     // Deliberately NOT inheriting what has already been
@@ -248,6 +260,7 @@ class DriveMonitor(
     ): DrivePlan? {
         if (stoodDown) return null
         val doReplan = replan ?: return null
+        onActivity(DriveActivity.Replanning)
         // Keep the new route off the stretch just abandoned. Shunt cannot see a
         // closure — only that the driver left here — so what gets blocked is the
         // road immediately ahead of that point, for this plan and no longer.
@@ -261,9 +274,12 @@ class DriveMonitor(
         val planned = runCatching { doReplan(from, headingDegrees, refused) }.getOrNull()
         if (planned == null) {
             alerter.alert(Alert.ReplanFailed("couldn't work out a new route from here"))
+            onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
             return null
         }
         val fresh = inForce(planned)
+        // The new plan replaces the old one, pins and all.
+        totalPins = (fresh.chain.size - 1).coerceAtLeast(0)
         // Only bother the car when the new route actually needs steering.
         //
         // A route with no shaping pins is one the car would drive anyway, so
@@ -282,6 +298,7 @@ class DriveMonitor(
 
         alerter.alert(Alert.Replanned(fresh.cameras.size))
         onPlanChanged(fresh)
+        onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
         return fresh
     }
 
@@ -315,6 +332,7 @@ class DriveMonitor(
 
     private suspend fun standDown() {
         stoodDown = true
+        onActivity(DriveActivity.StoodDown)
         alerter.alert(Alert.StoodDown)
     }
 
@@ -369,8 +387,12 @@ class DriveMonitor(
     private suspend fun advance(remaining: List<GeoPoint>) {
         if (stoodDown) return
         val sending = aim(remaining)
+        // Numbered from the driver's point of view: how many of this plan's pins
+        // are behind them, out of how many there were.
+        onActivity(DriveActivity.SendingWaypoint(totalPins - remaining.size + 1, totalPins))
         val result = runCatching { vehicle.advanceTo(sending) }
             .getOrElse { e -> PushResult.Failed("advance threw: ${e.message}", retryable = true) }
+        onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
         if (result is PushResult.Failed) {
             // Loud: the car may still stop at the waypoint we failed to drop.
             alerter.alert(Alert.AdvanceFailed(sending, result.reason, result.retryable))

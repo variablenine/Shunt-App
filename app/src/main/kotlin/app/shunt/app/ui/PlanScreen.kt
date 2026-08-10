@@ -97,6 +97,8 @@ fun PlanScreen(
     vehicleSettings: VehicleSettingsUi? = null,
     /** Names the charging stop the car inserted mid-drive, when it has. */
     chargingVia: String? = null,
+    /** What Shunt is doing with the car right now, for the driving sheet. */
+    driveActivity: app.shunt.app.drive.DriveActivity = app.shunt.app.drive.DriveActivity.Watching,
 ) {
     val overlay = routeOverlay(state.phase)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -152,6 +154,7 @@ fun PlanScreen(
                 ResultSheet(
                     phase = state.phase,
                     chargingVia = chargingVia,
+                    driveActivity = driveActivity,
                     rangeCheck = state.rangeCheck,
                     findingChargeStop = state.findingChargeStop,
                     chargeStopSearchFailed = state.chargeStopSearchFailed,
