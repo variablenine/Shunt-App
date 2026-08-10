@@ -450,6 +450,17 @@ class BrouterRouter(
          * A driver at the kerb will wait out a long search; one at 60 mph covers
          * a mile while it runs, and the junction the answer was for has already
          * gone by. Better a shorter chooser, now.
+         *
+         * **Known tension, unresolved.** On a long trip an avoidance pass costs
+         * around 20 s, so twelve buys the spine and `fastest` and little else —
+         * a re-plan early in a cross-state drive comes back as the plain fastest
+         * road, which is the one thing this app exists not to hand anyone. It
+         * shrinks as the drive goes on, because what is re-planned is the
+         * *remaining* trip. Worth revisiting against a real drive rather than at
+         * a desk: the two ways out are letting a mid-drive re-plan take longer
+         * (the driver is still on a route meanwhile, so this is less dangerous
+         * than it sounds) and running the passes concurrently. Do not "fix" it
+         * by dropping the ceiling — an unbounded re-plan is what §6.1 is about.
          */
         const val REPLAN_PASS_BUDGET_MILLIS = 12_000L
 

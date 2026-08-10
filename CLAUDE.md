@@ -582,6 +582,16 @@ What else has *not* been tried, in descending order of expected value and risk:
   `CAMERA_CORRIDOR_METERS` without first re-measuring whether the nogo count
   still costs anything.
 
+And one tension worth knowing about before it is discovered the hard way: an
+avoidance pass on a long trip costs about 20 s, while a mid-drive re-plan is
+allowed 12 s (`REPLAN_PASS_BUDGET_MILLIS`). So a re-plan early in a cross-state
+drive comes back as the plain fastest road — the one thing this app exists not
+to hand anyone. It shrinks as the drive goes on, since what gets re-planned is
+the *remaining* trip, and it wants confirming on a real drive rather than tuning
+at a desk. The ways out are a longer mid-drive ceiling (the driver is still on a
+route while it thinks, so this is less dangerous than it sounds) or concurrency.
+Not a smaller one: an unbounded re-plan is what §6.1 is about.
+
 ---
 
 ## 8. Build, test, and CI
