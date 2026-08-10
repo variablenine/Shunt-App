@@ -169,7 +169,7 @@ exists to stop repetition has to survive the replacement, or it is not doing
 the job it was written for.
 
 ### F-4 · Long routes take minutes to plan
-*Observed: pre-2026-08 build. Partly addressed — needs re-measuring.*
+*Observed: pre-2026-08 build. Believed fixed 2026-08-10; wants a phone to confirm.*
 
 A route of about 5 hours took roughly 5 minutes to calculate. Unusable for real
 driving, and dangerous where mid-drive re-planning is involved, since a re-plan
@@ -401,6 +401,60 @@ generous allowance as a driver sitting at the kerb. The refine budget is already
 split that way; this should be too. If that is still slow, the remaining levers are
 concurrency across the avoidance passes and shrinking the nogo set — see
 CLAUDE.md §7 for why the second one is dangerous.
+
+#### "On my end I saw no improvements" (2026-08-10)
+
+The phone showed `blocked` and `balanced` finishing at 20.5 s each — the index
+working — and then a `(widen 2)` round that timed out, leaving the driver the
+fastest road alone. The corridor narrowing had outlived its reason. It was made
+narrow *because* the camera set was the cost of routing; the index removed that
+relationship, so the trade was backwards, and a widen is not a slightly wider
+camera set but the whole chooser run again out of the same budget.
+
+Measured on the 490 km trip with the index in place:
+
+| corridor | cameras | passes |
+|---|---|---|
+| 15 km | 2,349 | 36.1 s |
+| 30 km | 3,580 | 37.5 s |
+| 60 km | 5,395 | 40.7 s |
+
+Four seconds for four times the cameras. `CAMERA_CORRIDOR_METERS` is back at
+60 km, and the 615 km trip plans with no widen at all.
+
+#### The pins were five times the routing (2026-08-10)
+
+With the widen gone, the 615 km trip planned end-to-end for the first time
+against real tiles — and the breakdown said something nobody had seen, because
+until now the routing stage had always dominated:
+
+```
+Finding cameras     0.1 s
+Planning routes    52.3 s
+Placing pins      349.2 s      <- against a 20 s budget
+```
+
+Two bugs, both the same shape as passing zero to BRouter's own timeout, one level
+up:
+
+1. `WaypointExtractor.pinAgainstShortcuts` asked every avoided camera whether it
+   saw a chord. A chord early in that loop spans most of the trip and a camera
+   walks a line at ten-metre samples, so one check is (trip ÷ 10 m) × cameras —
+   and there is a check per insertion. It goes through `CameraIndex` now.
+2. Neither extraction nor the refiner's leg routing carried a ceiling. The
+   refiner checks its clock *between* legs, which bounds nothing when one leg
+   runs long, and each leg fell back to the router's default: a whole pass
+   budget, per leg. Legs now get what is left of the refinement deadline, and
+   extraction shares it.
+
+Fixing (2) alone changed the total by 7 s, which is what identified (1) — the
+time was not in routing at all.
+
+**Same trip after both: 72.8 s** (routing 52.3, pins 20.2 — the budget, exactly),
+all three options, and *more* pins than before (49 and 37 against 33 and 17)
+because the time is no longer wasted. This is the trip the maintainer abandoned
+after twenty minutes. Measured in the sandbox against real tiles, not on a phone;
+the phone number is the one that counts.
 
 ---
 

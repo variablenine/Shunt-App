@@ -66,8 +66,11 @@ Working and reasonably trusted:
   detection, escalating haptics + notifications. Works fully offline.
 - Destination search (Photon), favourites, long-press-map-to-route.
 
-Long-route planning was the blocker for real use and is now usable: measured on
-a real phone, a 470 km trip went from 12 m 46 s to 41 s. See §7.4.
+Long-route planning was the blocker for real use and is now usable: a 470 km trip
+went from 12 m 46 s to 41 s on a real phone, and a 615 km trip that had been
+abandoned after twenty minutes now plans in about 73 s against real tiles. See
+§7.4. The 615 km figure is from the repository's own benchmark rather than a
+phone, and wants confirming on one.
 
 Working but **not proven on real vehicles**:
 
@@ -341,10 +344,15 @@ them, and add new observations as they come in. Detail lives in
    which turned out not to live in the alerting at all. A re-plan builds a fresh
    `DriveMonitorEngine`, and a fresh engine had no memory of which cameras it had
    already announced, so every camera still in range was warned about again.
-4. **Long routes are far too slow to plan.** A 5-hour route can take ~5 minutes.
-   That is unusable in the real world, and actively dangerous where mid-drive
-   re-planning is involved. *Partly addressed* — see below; needs re-measuring
-   on a real phone.
+4. **Long routes are far too slow to plan.** A 5-hour route can take ~5 minutes,
+   and a 615 km trip into dense metro was abandoned after twenty. That is
+   unusable in the real world, and actively dangerous where mid-drive re-planning
+   is involved. *Believed fixed; wants confirming on a phone.* Four separate
+   causes, found in this order and each hiding the next: a widen that fired every
+   trip, a camera set filtered by bounding box, a nogo scan that was linear in
+   the camera count, and finally pin selection — which had no ceiling at all and
+   turned out to be five times the cost of routing. Same 615 km trip: 20 min+ →
+   403 s → **72.8 s**. See below.
 
 ### Where planning time actually goes
 
@@ -374,6 +382,13 @@ What has been done about it:
   giving up on the route would not be: pins only *steer* a car that routes
   itself, so a route with fewer of them is still the route we planned, still
   labelled with the cameras it passes, and still warned about while driving.
+
+  **That budget covers the whole pin phase, and did not always.** Both halves —
+  `WaypointExtractor` closing shortcuts, and `WaypointRefiner` routing legs —
+  now share the one deadline, and every leg is routed under whatever is left of
+  it. Before that the phase overran twenty seconds by seventeen times. If you add
+  anything to this phase, hand it the same deadline; a clock checked only between
+  units of work bounds nothing when one unit is what runs long.
 
 **Temporary instrumentation is in the app right now.** The result sheet shows a
 "Planned in …" block breaking the time down by stage, and splitting the routing
@@ -409,14 +424,14 @@ and using its shape:
    bounding box. A long diagonal trip's box is mostly country no route would
    touch, and every camera in it was being checked against every link.
 
-The corridor's half-width is the single biggest lever there is, and it is
-separate from the tile margin now (`CAMERA_CORRIDOR_METERS`, 15 km). It started
-at 60 km only because it inherited the tile number, and on a 489 km trip that
-drew cameras from roughly 59,000 km² — three metro areas' worth, most of it
-beside roads no route would consider. Measured on that trip: the plain fastest
-search took 4.5 s and the same search carrying the camera set took 42 s, two
-completely different search spaces at near-identical cost, which is what
-identifies the camera set rather than the search as the expense.
+The corridor's half-width (`CAMERA_CORRIDOR_METERS`) was the single biggest lever
+there was, and narrowing it from 60 km to 15 km is what made a 489 km trip
+plannable at all: the plain fastest search took 4.5 s and the same search
+carrying the camera set took 42 s, two completely different search spaces at
+near-identical cost, which is what identified the camera *set* rather than the
+search as the expense. **`NogoIndex` then removed that relationship entirely, and
+with it the reason to be narrow — so the corridor is back at 60 km.** See below
+for how that reversed.
 
 **The corridor is only safe because the fixed-point loop verifies it.** A route
 that leaves the corridor has been planned against an incomplete camera set, so
@@ -490,6 +505,52 @@ with and without the index produced identical geometry point for point
 With it, the trip that could not be planned at all now returns all three options
 in about 36 s of routing, including a genuinely camera-free route.
 
+### What the index made backwards
+
+Two decisions were correct when the camera set *was* the cost, and wrong the
+moment it stopped being. Both are worth knowing about, because the same reasoning
+will go stale again the next time something here gets faster.
+
+**The corridor is back at 60 km.** At 15 km a real 615 km trip still escaped the
+corridor and forced a widen — which is not a slightly wider camera set, it is the
+whole chooser run a second time out of the same plan budget, and in practice the
+second round timed out and the driver was shown the fastest road alone. That is
+exactly the failure the breakdown exists to make visible, and the user saw it.
+Measured on the 490 km trip with the index in place:
+
+| corridor | cameras | passes |
+|---|---|---|
+| 15 km | 2,349 | 36.1 s |
+| 30 km | 3,580 | 37.5 s |
+| 60 km | 5,395 | 40.7 s |
+
+Four seconds for four times the cameras. Against a whole extra round, that is not
+a close call. `CAMERA_CORRIDOR_METERS` now matches `ROUTE_BBOX_MARGIN_METERS`
+again — cameras are considered anywhere a detour could plausibly go. Either width
+is *safe*, which is what makes this a pure cost question: the fixed-point loop
+verifies the corridor, so a route that leaves it is never labelled.
+
+**Choosing the pins was then the whole of planning time**, and had been hiding
+behind routing. On that 615 km trip the breakdown read: routing 52 s, *pins
+349 s* — against a phase budget of 20 s. Two separate bugs, both the same shape
+as passing zero to BRouter's own timeout:
+
+- `WaypointExtractor.pinAgainstShortcuts` asked *every* avoided camera whether it
+  saw a chord, and a chord early in that loop spans most of the trip while a
+  camera walks a line at ten-metre samples. So one check was (trip length ÷ 10 m)
+  × cameras, and there is a check per insertion. It goes through `CameraIndex`
+  now, like everything else that asks that question.
+- Neither extraction nor the refiner's leg routing carried a ceiling. The refiner
+  checks the clock *between* legs, which bounds nothing when a single leg is what
+  runs long, and each leg fell back to the router's default — a whole pass
+  budget, per leg. Legs now get what is left of the refinement budget, and
+  extraction shares the same deadline rather than running unbounded.
+
+Same trip after both: **72.8 s total** (routing 52.3, pins 20.2 — the budget,
+exactly), all three options, and *more* pins than before (49 and 37, against 33
+and 17) because the time is no longer wasted. That is the trip the maintainer
+abandoned after twenty minutes.
+
 **On running the passes concurrently** — a lever, and no longer an unknown. Looked at properly: `btools.router.ProfileCache` is the only
 mutable static state on the routing path, its entry points are `synchronized`,
 and it carries a `profilesBusy` flag whose *only* purpose is to stop two threads
@@ -506,17 +567,20 @@ on a real device before going further — an OOM mid-plan is a worse failure tha
 a slow plan.
 
 What else has *not* been tried, in descending order of expected value and risk:
-narrowing the corridor **further** than the 15 km it is now (tightening risks
-re-introducing widens on exactly the long detours that made the fewest-cameras
-option good, though the fixed-point loop keeps that safe rather than wrong).
-Pin refinement is no longer the bottleneck, so doing it lazily — the
-maintainer's suggestion, and the right shape for pins specifically — is worth
-doing for *quality* on long routes rather than for speed. The candidates, in
-descending order of expected value and risk, are running the independent
-avoidance passes concurrently (BRouter thread-safety and phone memory are the
-unknowns), and narrowing the nogo set from the trip's bounding box to a corridor
-around the routes actually under consideration (which risks re-introducing the
-"drove past an avoidable camera" bug — read §5 before trying it).
+
+- **Running the independent avoidance passes concurrently.** The largest lever
+  left — routing is now three quarters of a long plan and `blocked` and
+  `balanced` do not depend on each other. Correctness is settled (above); memory
+  is not. Cap at two and measure resident memory on a real device.
+- **Pin refinement done lazily** — compute the next few pins rather than all of
+  them. The maintainer's suggestion, and the right shape for pins specifically.
+  It is no longer a speed problem, so pursue it for *quality*: a long route's
+  pins currently share one 20 s budget between them, and the far end of the trip
+  is what goes unpinned when it runs out.
+- **Narrowing the corridor** is now the wrong direction, and the reasoning that
+  recommended it is recorded above so nobody re-derives it. Do not retighten
+  `CAMERA_CORRIDOR_METERS` without first re-measuring whether the nogo count
+  still costs anything.
 
 ---
 
@@ -658,8 +722,11 @@ cannot be undone by a follow-up commit.
 
 Ordered roughly by what unblocks real use.
 
-- **[high] Long-route planning performance** — see §7.4. The blocker for real
-  driving.
+- **[high] Confirm long-route planning on a phone** — see §7.4. A 615 km trip
+  went from abandoned-after-twenty-minutes to 72.8 s against real tiles, but
+  every number since the nogo index was measured in the sandbox. The phone is
+  what counts, and it is the last thing standing between here and a route that
+  is worth pushing to a car.
 - **[high] Charging re-route on long trips** — §7.1.
 - **[high] Waypoint fidelity on the car** — §7.2. Getting a coarse location is
   worse than getting none, because it looks like it worked.

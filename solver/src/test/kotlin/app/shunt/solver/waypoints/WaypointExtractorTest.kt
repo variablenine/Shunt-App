@@ -172,4 +172,40 @@ class WaypointExtractorTest {
         assertTrue(waypoints.isNotEmpty(), "a route this exposed must be pinned")
         assertTrue(waypoints.distinct().size == waypoints.size, "duplicate pins")
     }
+
+    @Test
+    fun `closing shortcuts stops on its budget`() {
+        // This phase had no bound at all, and it is not cheap: a chord early in
+        // the loop spans most of the trip, and every camera walks it. On a real
+        // 615 km route it took 349 s inside a 20 s budget, which the planner had
+        // no way to notice because the clock was only checked around routing.
+        val (chosen, fastest) = lShapedDetour()
+        val shapeOnly = WaypointExtractor.extract(chosen, fastest)
+        val camera = cameraAt(
+            GeoPoint(
+                (chosen.first().lat + shapeOnly.first().lat) / 2,
+                (chosen.first().lon + shapeOnly.first().lon) / 2,
+            ),
+        )
+
+        val unhurried = WaypointExtractor.extract(chosen, fastest, avoid = listOf(camera))
+        val rushed = WaypointExtractor.extract(
+            chosen, fastest, avoid = listOf(camera), outOfTime = { true },
+        )
+
+        assertTrue(
+            unhurried.size > shapeOnly.size,
+            "the shortcut must be worth closing, or this proves nothing",
+        )
+        assertEquals(
+            shapeOnly,
+            rushed,
+            "out of time must hand back the pins already found, not close shortcuts anyway",
+        )
+        // Fewer pins is safe; a wrong route is not. What comes back is still the
+        // route's own points, in its own order.
+        assertTrue(rushed.all { it in chosen }, "pins must still be points on the chosen route")
+        val lons = rushed.map { it.lon }
+        assertEquals(lons.sorted(), lons, "and still in route order")
+    }
 }

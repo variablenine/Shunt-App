@@ -263,7 +263,9 @@ class BrouterPlanner(
                     shaping = if (r === fastest) {
                         emptyList()
                     } else {
-                        pinsTheCarWillFollow(r.polyline, fastest.polyline, visions, index, deadline, carPaths)
+                        pinsTheCarWillFollow(
+                            r.polyline, fastest.polyline, visions, index, deadline, carPaths,
+                        )
                     },
                     polyline = r.polyline,
                 ),
@@ -306,6 +308,8 @@ class BrouterPlanner(
             chosen = chosen,
             fastest = fastest,
             avoid = visions,
+            index = index,
+            outOfTime = { nowMillis() >= deadline },
         )
         return runCatching {
             WaypointRefiner.refine(
@@ -314,7 +318,7 @@ class BrouterPlanner(
                 avoid = visions,
                 index = index,
                 outOfTime = { nowMillis() >= deadline },
-                carRoute = { from, to -> carPathBetween(from, to, carPaths) },
+                carRoute = { from, to -> carPathBetween(from, to, carPaths, deadline) },
             )
         }.getOrDefault(candidates)
     }
@@ -325,15 +329,25 @@ class BrouterPlanner(
      * Memoised across every option in one plan. A null answer is cached too — a
      * leg the engine can't route stays unroutable, and re-asking costs as much
      * as asking did.
+     *
+     * **Bounded by what is left of the refinement budget**, and that matters far
+     * more than it looks. The refiner checks the clock between legs, which
+     * bounds nothing when a single leg is what runs long: a search is a tight
+     * CPU loop with no suspension point, and this call carried no ceiling at
+     * all, so it fell back to the router's own default — a whole pass budget,
+     * *per leg*. Measured on a 615 km trip, a 20 s refinement phase took 349 s.
+     * Same shape of bug as passing zero to BRouter's own timeout, one level up.
      */
     private suspend fun carPathBetween(
         from: GeoPoint,
         to: GeoPoint,
         carPaths: MutableMap<Pair<GeoPoint, GeoPoint>, List<GeoPoint>?>,
+        deadline: Long,
     ): List<GeoPoint>? {
         val key = from to to
         if (carPaths.containsKey(key)) return carPaths[key]
-        val path = runCatching { route(RouteRequest(points = listOf(from, to))) }
+        val left = (deadline - nowMillis()).coerceAtLeast(1L)
+        val path = runCatching { route(RouteRequest(points = listOf(from, to), budgetMillis = left)) }
             .getOrNull()
             ?.firstOrNull()
             ?.polyline
@@ -488,21 +502,30 @@ class BrouterPlanner(
         /**
          * Half-width of the corridor cameras are taken from.
          *
-         * This is the single biggest lever on planning time, because what makes
-         * routing slow is checking every expanded link against every zone. At
-         * 60 km — the old value, inherited from the tile margin — a 489 km trip
-         * drew cameras from about 59,000 km², which through this part of the
-         * country means three metro areas' worth of them, most beside roads no
-         * route would ever consider.
+         * This was 15 km, and narrowing it to that was right at the time: a
+         * link was checked against every nogo in turn, so the size of the camera
+         * set *was* the cost of routing, and trimming the set was the only lever
+         * that moved. `NogoIndex` removed that relationship — the scan is now
+         * over the nogos near a link rather than all of them — and with it the
+         * reason to be tight. Measured on the same 490 km trip: 15 km draws
+         * 2,349 cameras and the passes take 36.1 s, 30 km draws 3,580 and takes
+         * 37.5 s, 60 km draws 5,395 and takes 40.7 s. Four seconds for four
+         * times the cameras.
          *
-         * Narrow is safe here *only* because the fixed-point loop verifies it: a
-         * route that leaves the corridor has been planned against an incomplete
-         * set, so it is never labelled — the spine grows to cover where the
-         * routes actually went and everything is planned again. Too tight
-         * therefore costs a second pass, not a wrong answer. Too wide costs
-         * every trip, every time.
+         * A widen costs far more than that. It is not a slightly wider set — it
+         * is the whole chooser run a second time, out of the same plan budget,
+         * which in practice meant the second round timing out and the driver
+         * being shown the fastest route alone. Against ~4 s, a widen avoided is
+         * worth paying for on every trip, so this now matches
+         * [ROUTE_BBOX_MARGIN_METERS]: cameras are considered anywhere a detour
+         * could plausibly go.
+         *
+         * Either way the answer is safe, which is what makes this a pure
+         * cost/benefit choice: the fixed-point loop verifies the corridor, so a
+         * route that leaves it is never labelled — the spine grows to cover
+         * where the routes actually went and everything is planned again.
          */
-        const val CAMERA_CORRIDOR_METERS = 15_000.0
+        const val CAMERA_CORRIDOR_METERS = 60_000.0
 
         /** How close to the line a camera has to be to be worth drawing as context. */
         const val NEARBY_CAMERA_METERS = 2_500.0

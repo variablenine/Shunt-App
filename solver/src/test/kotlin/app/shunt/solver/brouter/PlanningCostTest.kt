@@ -60,6 +60,8 @@ class PlanningCostTest {
         val carPath: (GeoPoint, GeoPoint) -> List<GeoPoint>,
     ) {
         val probes = mutableListOf<Pair<GeoPoint, GeoPoint>>()
+        /** The ceiling each probe was given, in the order they were asked. */
+        val probeBudgets = mutableListOf<Long?>()
         var planningPasses = 0
 
         suspend fun route(request: RouteRequest): List<BrouterRoute> {
@@ -70,6 +72,7 @@ class PlanningCostTest {
             // probe is the one that asks about some *other* pair of points.
             if (points != trip) {
                 probes += points[0] to points[1]
+                probeBudgets += request.budgetMillis
                 return listOf(BrouterRoute(RouteChoice.FASTEST, carPath(points[0], points[1]), 1_000, 60, 0, 0))
             }
             planningPasses++
@@ -180,6 +183,51 @@ class PlanningCostTest {
             "must stop probing once the budget is spent, not run on: ${router.probes.size}",
         )
         assertEquals(2, outcome.options.size, "and must still return the routes it decided on")
+    }
+
+    @Test
+    fun `every refinement leg carries a ceiling from the same budget`() = runTest {
+        // Checking the clock between legs bounds nothing when a single leg is
+        // what runs long — a search is a tight CPU loop with no suspension
+        // point. These calls carried no ceiling at all, so each fell back to the
+        // router's default of a whole pass budget, *per leg*: on a real 615 km
+        // trip a phase allowed twenty seconds took three hundred and forty-nine.
+        var clock = 0L
+        val router = Router(
+            listOf(origin, destination),
+            options(RouteChoice.FASTEST to fastRoad, RouteChoice.FEWEST_CAMERAS to detour),
+            ::carPath,
+        )
+        val planner = BrouterPlanner(
+            route = { request ->
+                clock += 1_000
+                router.route(request)
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { listOf(camera) },
+            refineBudgetMillis = 4_000,
+            nowMillis = { clock },
+        )
+
+        assertIs<PlanOutcome.Routes>(planner.plan(origin, destination))
+
+        assertTrue(router.probeBudgets.isNotEmpty(), "the detour must be probed, or this proves nothing")
+        router.probeBudgets.forEachIndexed { i, budget ->
+            assertTrue(
+                budget != null && budget > 0,
+                "probe $i must carry a ceiling of its own, not fall back to a whole pass budget",
+            )
+            assertTrue(
+                budget <= 4_000,
+                "and never more than the refinement budget it is spending: $budget",
+            )
+        }
+        val given = router.probeBudgets.filterNotNull()
+        assertEquals(
+            given.sortedDescending(),
+            given,
+            "each leg gets what is left, so the ceilings only shrink",
+        )
     }
 
     @Test

@@ -1,6 +1,7 @@
 package app.shunt.solver.waypoints
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.CameraIndex
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.PolylineIndex
@@ -68,11 +69,24 @@ object WaypointExtractor {
         avoid: List<CameraVision> = emptyList(),
         maxWaypoints: Int = NO_LIMIT,
         thresholdMeters: Double = DIVERGENCE_THRESHOLD_METERS,
+        /** Shared grid over [avoid]; building one per call would undo the point of it. */
+        index: CameraIndex = CameraIndex(avoid),
+        /**
+         * Stop closing shortcuts and hand back the pins found so far.
+         *
+         * The same reasoning as [WaypointRefiner]'s budget: a pin only *steers* a
+         * car that routes itself, so a route with fewer of them is still the
+         * route we planned, still labelled with the cameras it passes, and still
+         * warned about on approach. This phase used to have no bound at all, and
+         * it shares the refinement budget rather than minting one of its own —
+         * they are two halves of deciding the same pins.
+         */
+        outOfTime: () -> Boolean = { false },
     ): List<GeoPoint> {
         if (chosen.size < 2 || fastest.size < 2) return emptyList()
 
         val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
-        val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints)
+        val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints, index, outOfTime)
         return spaceOut(pinned.map { chosen[it] })
     }
 
@@ -144,14 +158,18 @@ object WaypointExtractor {
         avoid: List<CameraVision>,
         shape: List<Int>,
         maxWaypoints: Int,
+        index: CameraIndex,
+        outOfTime: () -> Boolean,
     ): List<Int> {
         if (avoid.isEmpty()) return shape
 
         // Only cameras our own route genuinely stays clear of are worth pinning
         // against — one the route knowingly passes is already reported to the
         // user, and no waypoint will change that.
-        val avoided = avoid.filterNot { it.seesRoute(chosen) }
+        val seen = index.seeing(chosen).toSet()
+        val avoided = avoid.filterNot { it in seen }
         if (avoided.isEmpty()) return shape
+        val avoidedIndex = CameraIndex(avoided)
 
         // Work over the full chain including the endpoints, which bound the
         // first and last shortcuts.
@@ -162,12 +180,14 @@ object WaypointExtractor {
         var budget = if (maxWaypoints == NO_LIMIT) Int.MAX_VALUE else maxWaypoints - shape.size
         var madeProgress = true
         while (budget > 0 && madeProgress) {
+            if (outOfTime()) break
             madeProgress = false
             var i = 0
             while (i < pins.size - 1 && budget > 0) {
+                if (outOfTime()) return pins.filter { it != 0 && it != chosen.lastIndex }
                 val a = pins[i]
                 val b = pins[i + 1]
-                if (b - a > 1 && shortcutIsExposed(chosen, a, b, avoided)) {
+                if (b - a > 1 && shortcutIsExposed(chosen, a, b, avoidedIndex)) {
                     val insert = mostDivergentBetween(chosen, a, b)
                     if (insert != null) {
                         pins.add(i + 1, insert)
@@ -184,16 +204,23 @@ object WaypointExtractor {
         return pins.filter { it != 0 && it != chosen.lastIndex }
     }
 
-    /** True if the straight line from `chosen[a]` to `chosen[b]` enters a camera's view. */
+    /**
+     * True if the straight line from `chosen[a]` to `chosen[b]` enters a
+     * camera's view.
+     *
+     * Through the grid, and that is not a micro-optimisation. A chord early in
+     * this loop spans most of the trip, and a camera walks a line at ten-metre
+     * samples — so asking every avoided camera in turn is (trip length ÷ 10 m) ×
+     * cameras, per check, with a check per insertion. Measured on a 615 km trip
+     * carrying 5,395 cameras, choosing the pins took 349 s against a phase
+     * budget of 20; through the index the same work is a few seconds.
+     */
     private fun shortcutIsExposed(
         chosen: List<GeoPoint>,
         a: Int,
         b: Int,
-        avoided: List<CameraVision>,
-    ): Boolean {
-        val chord = listOf(chosen[a], chosen[b])
-        return avoided.any { it.seesRoute(chord) }
-    }
+        avoided: CameraIndex,
+    ): Boolean = avoided.anySees(listOf(chosen[a], chosen[b]))
 
     /**
      * The route point between [a] and [b] that sits farthest from the straight
