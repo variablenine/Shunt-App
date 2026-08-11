@@ -61,6 +61,7 @@ import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
@@ -110,6 +111,10 @@ private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
 private const val CHARGER_SOURCE = "route-chargers"
 private const val CHARGER_LAYER = "route-charger-dots"
+
+/** The basemap's own one-way arrow layers. See [straightenOneWayArrows]. */
+private const val ONE_WAY_LAYER = "road_oneway"
+private const val ONE_WAY_REVERSED_LAYER = "road_oneway_opposite"
 private const val NEARBY_SOURCE = "route-nearby-cameras"
 private const val NEARBY_LAYER = "route-nearby-camera-dots"
 private const val WAYPOINT_SOURCE = "route-waypoints"
@@ -202,6 +207,7 @@ fun RouteMap(
             else Style.Builder().fromJson(BLANK_STYLE)
             map.setStyle(builder) { loaded ->
                 style = loaded
+                straightenOneWayArrows(loaded)
                 // Report the viewport whenever the user stops moving the map so
                 // we can fetch the cameras now visible.
                 map.addOnCameraIdleListener {
@@ -445,6 +451,46 @@ private fun renderRoute(
 }
 
 /** Draw the charging sites on offer, as a target big enough to hit while driving. */
+/**
+ * Turn the basemap's one-way arrows to point along the road.
+ *
+ * They point a quarter-turn off, and have since the basemap was adopted. The
+ * cause is in the OpenFreeMap style rather than in Shunt: its `oneway` sprite is
+ * an arrow drawn pointing **up**, while MapLibre's `symbol-placement: line`
+ * aligns a symbol's **+X (right)** axis with the direction of the line. So the
+ * arrow comes out 90° anticlockwise of the road.
+ *
+ * Measured rather than guessed, by rendering that same sprite and layout over
+ * lines of known bearing:
+ *
+ * | line runs | arrow points |
+ * |---|---|
+ * | west → east | north |
+ * | east → west | south |
+ * | southwest → northeast | northwest |
+ *
+ * Consistently 90° anticlockwise, and note the first two are opposites — the
+ * *direction* is honoured, it is the axis that is wrong. Adding 90° to each
+ * layer's `icon-rotate` lands them on the road.
+ *
+ * **Only applied when the values are the ones known to be wrong** (0 for the
+ * forward layer, 180 for the reversed one). The style is fetched at run time
+ * from a server this project does not control, so if it is ever corrected
+ * upstream this patch would otherwise turn correct arrows into wrong ones —
+ * which is a worse bug than the one being fixed, because nobody would be
+ * looking for it.
+ */
+private fun straightenOneWayArrows(style: Style) {
+    fun fix(id: String, broken: Float) {
+        val layer = runCatching { style.getLayerAs<SymbolLayer>(id) }.getOrNull() ?: return
+        val current = layer.iconRotate.value ?: return
+        if (current != broken) return
+        runCatching { layer.setProperties(PropertyFactory.iconRotate(current + 90f)) }
+    }
+    fix(ONE_WAY_LAYER, 0f)
+    fix(ONE_WAY_REVERSED_LAYER, 180f)
+}
+
 private fun renderChargers(style: Style, chargers: List<MapCharger>) {
     val features = FeatureCollection.fromFeatures(
         chargers.map { charger ->

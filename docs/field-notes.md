@@ -672,6 +672,41 @@ charging*, *re-planning from here*, *not steering — the car is yours*. A drive
 who cannot see it working cannot tell a quiet moment from a broken one, and
 cannot describe afterwards what it did.
 
+### F-10 · One-way arrows point the wrong way
+*Observed: long-standing, reported again 2026-08-11. Fixed; wants an eyeball on a phone.*
+
+Not Shunt's data — the arrows come from the OpenFreeMap basemap style, which is
+fetched at run time. Worth writing down because the answer was not the obvious
+one and because the method generalises.
+
+The style's two layers are internally consistent (`oneway == 1` → `icon-rotate: 0`,
+`oneway == -1` → `180`), so the natural guess is that the arrows are *reversed*
+and want another 180°. They are not. Decoding the sprite sheet shows the `oneway`
+icon is an arrow drawn pointing **up**, while MapLibre's `symbol-placement: line`
+aligns a symbol's **+X (right)** axis with the direction of the line.
+
+Confirmed by rendering that sprite and layout over lines of known bearing in
+headless Chromium — the same style, the same sprite, lines this end authored:
+
+| line runs | arrow points |
+|---|---|
+| west → east | north |
+| east → west | south |
+| southwest → northeast | northwest |
+
+Consistently 90° anticlockwise. Note the first two are opposites, which settles
+the question the layers raised: *direction* is honoured, it is the axis that is
+wrong. Re-rendered at `icon-rotate: 90` the arrows land on the road.
+
+`RouteMap.straightenOneWayArrows` adds the quarter-turn after the style loads,
+**and only when the layers still carry the broken values.** The style belongs to
+someone else; if it is corrected upstream, an unconditional patch would silently
+create the mirror-image bug, and nobody would go looking for it.
+
+The general lesson: a 180° guess would have looked plausible, shipped, and been
+wrong. Rendering the actual sprite against a line of known bearing took a few
+minutes and gave a number instead of a hypothesis.
+
 ---
 
 ## Resolved

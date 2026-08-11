@@ -955,7 +955,13 @@ Ordered roughly by what unblocks real use.
   first-pass numbers — worth revisiting against real drives.
 - On-route arrow, and gray out the traveled portion of the route.
 - Simplify the current-location dot to a solid pulsing dot (no accuracy halo).
-- Fix one-way arrows pointing the wrong direction on the basemap.
+- ~~Fix one-way arrows pointing the wrong direction on the basemap.~~ Done:
+  they were 90° out, because OpenFreeMap's `oneway` sprite is drawn pointing up
+  while MapLibre aligns a line-placed symbol's *+X* axis with the line.
+  `RouteMap.straightenOneWayArrows` adds the missing quarter-turn, and only when
+  the style still carries the values known to be wrong — the style is fetched
+  from a server this project does not control, so an upstream fix must not turn
+  into a new bug here.
 - **Standby mode — follow the car's own navigation.** Shunt sits idle; the
   driver sets a destination in the *car*, and Shunt notices, plans a
   camera-avoiding route to it and starts steering. Anything that appears
