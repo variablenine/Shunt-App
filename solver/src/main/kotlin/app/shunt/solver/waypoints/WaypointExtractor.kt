@@ -4,6 +4,8 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.CameraIndex
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.haversineMeters
+import app.shunt.solver.geo.pointAtAlong
+import app.shunt.solver.geo.turnsAlong
 import app.shunt.solver.geo.PolylineIndex
 import app.shunt.solver.geo.pointToPolyline
 import app.shunt.solver.geo.pointToSegmentMeters
@@ -122,6 +124,19 @@ object WaypointExtractor {
      */
     const val DENSE_CAMERA_COUNT = 12
 
+    /**
+     * How sharply the route must bend to count as a turn worth pinning.
+     *
+     * Well above the wander of a polyline following a curving road, and below a
+     * normal junction turn. Too low and a sweeping highway bend becomes a
+     * "decision"; too high and a slip road onto a parallel route reads as
+     * straight on, which is exactly the case where the car goes its own way.
+     */
+    const val TURN_DEGREES = 35.0
+
+    /** Distance either side of a point used to measure how sharply it bends. */
+    const val TURN_SPAN_METERS = 40.0
+
     fun extract(
         chosen: List<GeoPoint>,
         fastest: List<GeoPoint>,
@@ -146,8 +161,49 @@ object WaypointExtractor {
 
         val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
         val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints, index, outOfTime)
-        return spaceOut(pinned.map { chosen[it] }, density = index)
+        // Merged in route order — spacing walks the list in order, so an
+        // out-of-order pin would be measured against the wrong neighbour.
+        val along = DoubleArray(chosen.size)
+        for (i in 1 until chosen.size) along[i] = along[i - 1] + haversineMeters(chosen[i - 1], chosen[i])
+        val merged = (turnPins(chosen, index) + pinned.map { along[it] }).sorted()
+        val spaced = spaceOut(merged.mapNotNull { pointAtAlong(chosen, it) }.distinct(), density = index)
+        // An explicit cap stays a cap. Production passes NO_LIMIT — see that
+        // constant for why — but a caller that asks for a ceiling gets one.
+        return if (maxWaypoints == NO_LIMIT) spaced else spaced.take(maxWaypoints)
     }
+
+    /**
+     * A pin just past every turn the route takes.
+     *
+     * **This is the belt to the refiner's braces, and it exists because of what
+     * the refiner cannot know.** The refiner decides a leg is safe by routing it
+     * the way the car would — using BRouter — and seeing that the car stays on
+     * our line. That is only ever as true as BRouter's model of Tesla's router.
+     * Where the two disagree, a leg that looked fine is one the car drives its
+     * own way, and nothing on the route says otherwise.
+     *
+     * A turn is where that disagreement can actually cost something. Carrying
+     * straight on is never a wrong answer to "the route goes straight on"; it is
+     * only at a junction that the car has a choice to get wrong, and the further
+     * away the next waypoint is, the more freedom it has in making it. So every
+     * turn gets a pin whether or not BRouter thinks one is needed, which turns
+     * the route from *predicted* to *instructed* at exactly the points where the
+     * prediction could be wrong.
+     *
+     * The cost is a rate-limited command each as the drive passes them, spread
+     * over hours — cheap against the car quietly taking a road we did not plan.
+     *
+     * Spacing still applies afterwards, so a dense grid does not produce pins
+     * closer together than the drive monitor can actually use them.
+     */
+    internal fun turnPins(chosen: List<GeoPoint>, density: CameraIndex): List<Double> =
+        turnsAlong(chosen, TURN_DEGREES, TURN_SPAN_METERS).mapNotNull { turnAlong ->
+            // Past the turn, for the same reason the refiner places its pins
+            // there: a pin before the turn is one the monitor abandons while the
+            // car is still short of the junction.
+            val at = pointAtAlong(chosen, turnAlong) ?: return@mapNotNull null
+            turnAlong + WaypointRefiner.pastForkAt(at, density)
+        }
 
     /**
      * Drop pins that sit on top of one another. Keeps the first of each cluster

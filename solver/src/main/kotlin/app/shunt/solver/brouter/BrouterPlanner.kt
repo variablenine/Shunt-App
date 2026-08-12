@@ -311,12 +311,19 @@ class BrouterPlanner(
             index = index,
             outOfTime = { nowMillis() >= deadline },
         )
+        // Pins that exist because the route turns there, which pruning must not
+        // second-guess: dropping one means trusting BRouter's model of the car
+        // at exactly the point where being wrong costs a wrong road.
+        val atTurns = WaypointExtractor.turnPins(chosen, index)
+            .mapNotNull { app.shunt.solver.geo.pointAtAlong(chosen, it) }
+            .toSet()
         return runCatching {
             WaypointRefiner.refine(
                 chosen = chosen,
                 pins = candidates,
                 avoid = visions,
                 index = index,
+                protectedPins = atTurns,
                 outOfTime = { nowMillis() >= deadline },
                 carRoute = { from, to -> carPathBetween(from, to, carPaths, deadline) },
             )

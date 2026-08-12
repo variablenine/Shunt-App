@@ -353,6 +353,51 @@ fewest-cameras — fewer than the 40-odd it used to produce, and a strictly
 stronger guarantee, because now every leg between them has been driven the way
 the car would drive it and checked against both conditions.
 
+### Every turn gets a pin, whether or not anything says it needs one
+
+Everything above decides pins by *prediction*: route the leg the way the car
+would — through BRouter — and pin where that prediction says the car strays.
+The maintainer put the obvious objection to it:
+
+> I have a hard time believing that it would actually turn off the road it's on
+> to get to that waypoint, especially if it introduces another turn.
+
+That is the right objection, and the answer is that the prediction is only as
+good as BRouter's model of Tesla's router. Where the two disagree, a leg that
+looked fine is one the car drives its own way, and nothing on the route says
+otherwise. Pruning made that worse by removing pins on the strength of the same
+model.
+
+So `WaypointExtractor.turnPins` puts a pin past **every turn the route takes**,
+found geometrically (`turnsAlong`) and independent of cameras, routing or
+prediction, and `refine`'s `protectedPins` stops pruning removing them again.
+The reasoning is that a turn is the only place the prediction can cost anything:
+carrying straight on is never a wrong answer to a route that goes straight on,
+and it is only at a junction that the car has a choice to get wrong. Pinning
+them turns the route from *predicted* to *instructed* exactly where prediction
+is risky.
+
+The cost is one rate-limited command each as the drive passes them, spread over
+hours — which is why this is worth doing generously. Measured on the 615 km
+benchmark, and better on every axis:
+
+| | before | with turn pins |
+|---|---|---|
+| balanced | 27 pins | 82 |
+| fewest-cameras | 30 pins | 100 |
+| spread of fewest, by tenth | `0 0 1 1 4 3 1 4 4 12` | `2 1 3 6 18 10 8 17 10 25` |
+| pin phase | ~33 s | 10 s |
+
+Faster, counter-intuitively: more pins means shorter legs, and a short leg is
+quicker to route than a long one. Spacing still applies afterwards, so a dense
+grid cannot produce pins closer together than the drive monitor can use.
+
+**A trap for anyone writing tests here.** A hard-cornered fixture now gets pinned
+at its corners whatever else is true, which silently makes it useless for testing
+the camera and shortcut logic — two existing tests started passing for the wrong
+reason. `gentleArc` in `WaypointExtractorTest` exists for that: a divergence with
+no turn in it, guarded by its own test asserting `turnsAlong` finds nothing.
+
 ### Pins have to earn their place
 
 Pins arrive from two places and only one of them checked its work.

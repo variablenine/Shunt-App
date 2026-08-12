@@ -19,16 +19,24 @@ class WaypointExtractorTest {
     }
 
     @Test
-    fun `single detour gets a single waypoint on the detour`() {
+    fun `a detour is pinned onto its divergent stretch`() {
         val fastest = line(39.0)
-        // Chosen route bulges 2 km north over the middle third.
+        // Chosen route bulges 2 km north over the middle third — a hard corner
+        // onto the detour and another back off it.
         val chosen = fastest.mapIndexed { i, p ->
             if (i in 14..26) GeoPoint(p.lat + 0.018, p.lon) else p
         }
         val waypoints = WaypointExtractor.extract(chosen, fastest)
-        assertTrue(waypoints.size == 1, "expected 1 waypoint, got ${waypoints.size}")
-        val d = pointToPolyline(waypoints[0], fastest).distanceMeters
-        assertTrue(d > 1000, "waypoint must sit on the divergent stretch, was ${d}m off")
+
+        // This used to insist on exactly one. It now gets one per corner, which
+        // is the point of turn pins: the corner onto the detour is precisely
+        // where the car decides whether to take it.
+        assertTrue(waypoints.isNotEmpty(), "the detour has to be held by something")
+        assertTrue(
+            waypoints.any { pointToPolyline(it, fastest).distanceMeters > 1000 },
+            "at least one pin must sit out on the divergent stretch, not on the fast line",
+        )
+        assertTrue(waypoints.all { it in chosen }, "every pin is a point on the chosen route")
     }
 
     @Test
@@ -76,6 +84,90 @@ class WaypointExtractorTest {
     private fun cameraAt(p: GeoPoint) = CameraVision(p, directionDegrees = null)
 
     /**
+     * A route that leaves the fast line and rejoins it **without ever turning**:
+     * a long, shallow arc, sampled finely enough that no 40 m span of it bends
+     * anywhere near [WaypointExtractor.TURN_DEGREES].
+     *
+     * Needed because turn pins would otherwise do the shortcut-closer's job for
+     * it. A hard-cornered detour gets pinned at its corners whatever the cameras
+     * say, which makes it useless for testing the thing that closes *chords*.
+     * Here there is no corner to pin, so any pin that appears is one the
+     * shortcut pass put there.
+     */
+    private fun gentleArc(): Pair<List<GeoPoint>, List<GeoPoint>> {
+        val n = 400
+        val fastest = (0..n).map { GeoPoint(39.0, -98.2 + 0.4 * it / n) }
+        val chosen = (0..n).map { i ->
+            val t = i.toDouble() / n
+            // ~1.1 km of bulge spread over 35 km: divergent, never a turn.
+            GeoPoint(39.0 + 0.030 * kotlin.math.sin(Math.PI * t), -98.2 + 0.4 * t)
+        }
+        return chosen to fastest
+    }
+
+    /** The northernmost point of the arc, which the shape pass pins. */
+    private fun peakOf(chosen: List<GeoPoint>) = chosen.maxBy { it.lat }
+
+    /** Halfway along the straight hop from the route's start to that peak. */
+    private fun midpointOfFirstHop(chosen: List<GeoPoint>): GeoPoint {
+        val a = chosen.first()
+        val b = peakOf(chosen)
+        return GeoPoint((a.lat + b.lat) / 2, (a.lon + b.lon) / 2)
+    }
+
+    @Test
+    fun `every turn on the route gets a pin, camera or not`() {
+        // The car is given one point at a time and routes itself there. Between
+        // two pins it is free, and a turn is the only place that freedom can
+        // cost anything — carrying straight on is never a wrong answer to a
+        // route that goes straight on. The refiner would only pin a turn where
+        // *BRouter* predicts the car strays, which is exactly the prediction
+        // worth not relying on at a junction.
+        //
+        // A zigzag that stays north of the fast line the whole way, so the
+        // shape pass sees **one** continuous divergent run and pins one point,
+        // while the route itself turns a dozen times. Anything beyond that one
+        // pin is here because of the turns.
+        val fastest = line(39.0, n = 200)
+        val zigzag = buildList {
+            var lon = -98.2
+            var high = true
+            repeat(12) {
+                val lat = if (high) 39.020 else 39.010
+                for (i in 0..20) add(GeoPoint(lat, lon + i * 0.0008))
+                lon += 20 * 0.0008
+                high = !high
+            }
+        }
+
+        val pins = WaypointExtractor.extract(zigzag, fastest)
+        val turns = app.shunt.solver.geo.turnsAlong(
+            zigzag, WaypointExtractor.TURN_DEGREES, WaypointExtractor.TURN_SPAN_METERS,
+        )
+        val shapeOnlyCount = 1 // one divergent run, so one pin from shape alone
+
+        assertTrue(turns.size >= 8, "the fixture must actually turn; found ${turns.size}")
+        assertTrue(
+            pins.size > shapeOnlyCount * 3,
+            "a route with ${turns.size} turns came back with only ${pins.size} pins",
+        )
+        assertTrue(pins.all { it in zigzag }, "every pin is a point on the route")
+    }
+
+    @Test
+    fun `the gentle arc really has no turns to pin`() {
+        // Guards the two tests below: if this fixture ever grows a corner, they
+        // would silently stop testing shortcut closing at all.
+        val (chosen, _) = gentleArc()
+        assertEquals(
+            emptyList(),
+            app.shunt.solver.geo.turnsAlong(
+                chosen, WaypointExtractor.TURN_DEGREES, WaypointExtractor.TURN_SPAN_METERS,
+            ),
+        )
+    }
+
+    /**
      * An L-shaped detour: east along the fast line, then a hard turn north, then
      * east again. One pin lands near the far end, so the straight hop from the
      * start to that pin slices right across the bend — and a camera sitting in
@@ -96,19 +188,17 @@ class WaypointExtractorTest {
 
     @Test
     fun `a waypoint is added when the shortcut between pins passes a camera`() {
-        val (chosen, fastest) = lShapedDetour()
+        val (chosen, fastest) = gentleArc()
         val without = WaypointExtractor.extract(chosen, fastest)
 
-        // Place the camera on the straight hop between the start and that pin,
-        // where our own route does not go.
-        val start = chosen.first()
-        val pin = without.first()
-        val camera = cameraAt(
-            GeoPoint((start.lat + pin.lat) / 2, (start.lon + pin.lon) / 2),
-        )
+        // The shape pass already pins the arc's peak, so the whole-route chord
+        // is not the exposed one — the hop from the start *to* that peak is.
+        // A sine arc is concave, so it bows away from that chord, leaving room
+        // for a camera the chord passes and the route does not.
+        val camera = cameraAt(midpointOfFirstHop(chosen))
         assertTrue(!camera.seesRoute(chosen), "the route itself must clear the camera")
         assertTrue(
-            camera.seesRoute(listOf(start, pin)),
+            camera.seesRoute(listOf(chosen.first(), peakOf(chosen))),
             "the shortcut must be exposed for this test to mean anything",
         )
 
@@ -245,19 +335,17 @@ class WaypointExtractorTest {
         // the loop spans most of the trip, and every camera walks it. On a real
         // 615 km route it took 349 s inside a 20 s budget, which the planner had
         // no way to notice because the clock was only checked around routing.
-        val (chosen, fastest) = lShapedDetour()
-        val shapeOnly = WaypointExtractor.extract(chosen, fastest)
-        val camera = cameraAt(
-            GeoPoint(
-                (chosen.first().lat + shapeOnly.first().lat) / 2,
-                (chosen.first().lon + shapeOnly.first().lon) / 2,
-            ),
-        )
+        //
+        // The turn-free arc again: with a corner in it, turn pins would be doing
+        // the work and running out of time would look like it changed nothing.
+        val (chosen, fastest) = gentleArc()
+        val camera = cameraAt(midpointOfFirstHop(chosen))
 
         val unhurried = WaypointExtractor.extract(chosen, fastest, avoid = listOf(camera))
         val rushed = WaypointExtractor.extract(
             chosen, fastest, avoid = listOf(camera), outOfTime = { true },
         )
+        val shapeOnly = WaypointExtractor.extract(chosen, fastest)
 
         assertTrue(
             unhurried.size > shapeOnly.size,
@@ -268,8 +356,6 @@ class WaypointExtractorTest {
             rushed,
             "out of time must hand back the pins already found, not close shortcuts anyway",
         )
-        // Fewer pins is safe; a wrong route is not. What comes back is still the
-        // route's own points, in its own order.
         assertTrue(rushed.all { it in chosen }, "pins must still be points on the chosen route")
         val lons = rushed.map { it.lon }
         assertEquals(lons.sorted(), lons, "and still in route order")

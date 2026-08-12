@@ -847,6 +847,52 @@ Measured before changing anything: ten Photon queries at the debounce interval
 produced no 429s at all from here, which is why this went in as the *second*
 fix rather than the first.
 
+### F-14 · "I have a hard time believing it would turn off the road it's on"
+*Raised: 2026-08-11, looking at a planned route rather than from a drive. Addressed; unconfirmed in a car.*
+
+> idk if the cars navigation is going to follow this route […] I just have a hard
+> time believing that it would actually turn off the road it's on to get to that
+> waypoint, especially if it introduces another turn. […] I think there should be
+> more waypoints, just to be certain. Its not like we're hurting for API calls
+
+A fair challenge to the whole pin design, and it lands on the assumption that was
+already written down as the weak point: every pin decision was made by *asking
+BRouter what the car would do*. Insert where BRouter says the car strays; prune
+where BRouter says it wouldn't. Sound reasoning, entirely dependent on BRouter
+modelling Tesla's router — and where they disagree, the route quietly stops being
+guaranteed, with pruning actively removing the pins that would have saved it.
+
+The fix is to stop deciding those pins by prediction at all. A turn is the only
+place the prediction can cost anything: carrying straight on is never a wrong
+answer to a route that goes straight on, and it is only at a junction that the
+car has a choice to get wrong. So every turn on the route now gets a pin past
+it, found geometrically, regardless of cameras, routing, or what BRouter thinks —
+and pruning is forbidden from removing them.
+
+Measured on the 615 km benchmark, this is better on every axis at once:
+
+| | before | after |
+|---|---|---|
+| balanced | 27 pins | 82 |
+| fewest-cameras | 30 pins | 100 |
+| spread of fewest, by tenth of trip | `0 0 1 1 4 3 1 4 4 12` | `2 1 3 6 18 10 8 17 10 25` |
+| pin phase | ~33 s | 10 s |
+| whole plan (2 lanes) | 59 s | 47 s |
+
+The speed-up is worth understanding rather than enjoying: more pins means
+shorter legs, and a short leg routes faster than a long one. The pin phase was
+never bounded by pin *count*, it was bounded by how far each leg had to be
+searched.
+
+**A trap this laid for the test suite.** Two existing tests started passing for
+the wrong reason — a hard-cornered fixture now gets pinned at its corners
+whatever else is true, so they no longer exercised the camera and shortcut logic
+they were written for. `gentleArc` exists for that: a divergence with no turn in
+it, with its own test asserting `turnsAlong` finds nothing, so if the fixture
+ever grows a corner the guard fails rather than the coverage silently vanishing.
+Worth remembering the general shape — adding a mechanism that fires everywhere
+can quietly satisfy the preconditions of tests for other mechanisms.
+
 ---
 
 ## Resolved

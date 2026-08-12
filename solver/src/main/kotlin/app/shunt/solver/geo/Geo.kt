@@ -239,3 +239,69 @@ fun stretchAhead(
     }
     return out
 }
+
+/**
+ * Where [polyline] genuinely changes direction: the along-route distance of each
+ * bend sharper than [minDegrees], measured over [spanMeters] either side.
+ *
+ * **These are the places a car can go wrong.** A route is only ambiguous where
+ * it leaves the road it is on; anywhere else, carrying straight on *is* the
+ * route. So the turns are where a waypoint has to exist for the route to be
+ * self-enforcing rather than dependent on the car's own router happening to
+ * agree with ours.
+ *
+ * Measured over a span rather than between adjacent vertices, because a dense
+ * polyline takes a corner as a dozen small deflections, none of which looks like
+ * a turn on its own. Clustered for the same reason: one corner is one decision,
+ * however many vertices it is drawn with, so consecutive over-threshold vertices
+ * within [spanMeters] collapse to the sharpest of them.
+ */
+fun turnsAlong(
+    polyline: List<GeoPoint>,
+    minDegrees: Double,
+    spanMeters: Double,
+): List<Double> {
+    if (polyline.size < 3) return emptyList()
+    val along = DoubleArray(polyline.size)
+    for (i in 1 until polyline.size) {
+        along[i] = along[i - 1] + haversineMeters(polyline[i - 1], polyline[i])
+    }
+
+    fun bendAt(j: Int): Double {
+        var a = j
+        while (a > 0 && along[j] - along[a] < spanMeters) a--
+        var b = j
+        while (b < polyline.lastIndex && along[b] - along[j] < spanMeters) b++
+        if (a == j || b == j) return 0.0
+        return abs(bearingDifference(bearingDegrees(polyline[a], polyline[j]), bearingDegrees(polyline[j], polyline[b])))
+    }
+
+    val out = mutableListOf<Double>()
+    var bestAlong = 0.0
+    var bestBend = 0.0
+    var open = false
+    for (j in polyline.indices) {
+        val bend = bendAt(j)
+        if (bend > minDegrees) {
+            if (!open || bend > bestBend) { bestAlong = along[j]; bestBend = bend }
+            open = true
+        } else if (open) {
+            out += bestAlong
+            open = false
+            bestBend = 0.0
+        }
+    }
+    if (open) out += bestAlong
+    return out
+}
+
+/** The point [target] metres along [polyline], or null past its end. */
+fun pointAtAlong(polyline: List<GeoPoint>, target: Double): GeoPoint? {
+    if (polyline.isEmpty()) return null
+    var along = 0.0
+    for (i in polyline.indices) {
+        if (i > 0) along += haversineMeters(polyline[i - 1], polyline[i])
+        if (along >= target) return polyline[i]
+    }
+    return null
+}

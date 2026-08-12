@@ -167,6 +167,17 @@ object WaypointRefiner {
         /** Shared grid; building one per call would undo the point of having it. */
         index: CameraIndex = CameraIndex(avoid),
         /**
+         * Pins that must survive pruning whatever the routing says.
+         *
+         * The turn pins from [WaypointExtractor]. Pruning asks BRouter whether
+         * the car would follow our line without a given pin, and drops it if the
+         * answer is yes — which is sound only as far as BRouter models Tesla's
+         * router. At a junction that assumption is exactly the one worth not
+         * making, so a pin placed *because* there is a turn there is not a pin
+         * to remove on the strength of a prediction.
+         */
+        protectedPins: Set<GeoPoint> = emptySet(),
+        /**
          * Stop and hand back what we have. Every pin costs a full routing pass,
          * and a long camera-dense trip can want dozens — which is how planning a
          * five-hour route came to take minutes.
@@ -244,7 +255,7 @@ object WaypointRefiner {
             }
             if (!inserted) break
         }
-        pruneIdlePins(chosen, current, avoidedIndex, outOfTime, carRoute)
+        pruneIdlePins(chosen, current, avoidedIndex, protectedPins, outOfTime, carRoute)
         return WaypointExtractor.spaceOut(current, density = index)
     }
 
@@ -288,6 +299,7 @@ object WaypointRefiner {
         chosen: List<GeoPoint>,
         pins: MutableList<GeoPoint>,
         avoidedIndex: CameraIndex,
+        protectedPins: Set<GeoPoint>,
         outOfTime: () -> Boolean,
         carRoute: suspend (from: GeoPoint, to: GeoPoint) -> List<GeoPoint>?,
     ) {
@@ -297,6 +309,7 @@ object WaypointRefiner {
         var i = 0
         while (i < pins.size) {
             if (outOfTime()) return
+            if (pins[i] in protectedPins) { i++; continue }
             val before = if (i == 0) chosen.first() else pins[i - 1]
             val after = if (i == pins.lastIndex) chosen.last() else pins[i + 1]
             val withoutIt = carRoute(before, after)
