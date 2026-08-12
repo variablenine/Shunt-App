@@ -803,6 +803,50 @@ style's own sprite sheet.
 **The size is the one thing that could be off** — it was chosen to match the
 21 px sprite it replaces and never seen on a screen from here.
 
+### F-13 · "Couldn't reach search" while typing
+*Observed: 2026-08-11. Fixed; unconfirmed in use.*
+
+> as I type I think I get rate limited because it will throw up an error message
+> if I type too fast and only fix itself if I add and remove a character
+
+Two separate things, and the headline one is not a rate limit at all.
+
+**Typing was reporting itself as a network failure.** `onQueryChange` cancels the
+search in flight when the next keystroke arrives, and the search is wrapped in
+`runCatching` — which catches `CancellationException` like any other throwable.
+So the cancelled coroutine fell into the failure branch and wrote
+`searchFailed = true`, and the UI said "Couldn't reach search — check your
+connection" about a search that was working perfectly.
+
+It looks like rate limiting because of *when* it appears. Typing straight
+through the 350 ms debounce cancels inside `delay`, which is outside the catch
+and therefore safe. Pausing mid-word — long enough for a request to actually go
+out, not long enough to see the answer — is what triggers it.
+
+Worth noting how it hid: the existing debounce test supersedes a query *before*
+the debounce fires, so it exercised precisely the safe path. And the banner is
+transient, cleared by the next search that completes, so a test asserting the
+settled state passes too. The test that catches it has to look at the moment
+just after the keystroke.
+
+Fixed with `ensureActive()` after the `runCatching`, plus a staleness guard: an
+answer to a query the box has moved on from is not written at all. Cancellation
+usually covers that, but it is a race, and a stale suggestion list is worse than
+a late one because it is wrong about what the user is looking at.
+
+**And the rate limit was real, just not the cause.** Photon threw on any
+non-2xx, including 429. `NominatimSearch` had treated 429/503 as "no answer this
+time, not a failure" since the same bug bit there — the reasoning was already
+written down, it had simply never been applied to the other client. Photon now
+matches, which also lets `PlaceSearch` fall through to the other geocoder when
+this one is briefly unwilling. A 500 still surfaces: throttling is temporary and
+expected, a server error is neither, and hiding it leaves someone staring at an
+empty list with no explanation.
+
+Measured before changing anything: ten Photon queries at the debounce interval
+produced no 429s at all from here, which is why this went in as the *second*
+fix rather than the first.
+
 ---
 
 ## Resolved

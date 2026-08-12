@@ -15,6 +15,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -92,6 +93,21 @@ class PlanViewModel(
             delay(searchDebounceMillis)
             val at = location.currentOrigin() ?: DEFAULT_BIAS
             val outcome = runCatching { search.suggest(query, at) }
+            // **Typing is not a network failure.** The next keystroke cancels
+            // the search in flight, and `runCatching` catches the resulting
+            // CancellationException like any other throwable — so without this,
+            // carrying on typing raised "Couldn't reach search — check your
+            // connection" against a search that was working fine.
+            //
+            // It reads as a rate limit because of when it shows up: only once a
+            // request is genuinely out, so typing *through* the debounce is
+            // safe and pausing mid-word is what triggers it.
+            ensureActive()
+            // And an answer to a query the box has moved on from is stale
+            // whatever it says. Cancellation usually covers this, but it is not
+            // guaranteed to win the race, and a stale list is worse than a late
+            // one: it is wrong about what the user is looking at.
+            if (_state.value.query != query) return@launch
             _state.update { state ->
                 outcome.fold(
                     onSuccess = { results ->

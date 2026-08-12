@@ -16,6 +16,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -126,6 +127,82 @@ class PlanViewModelTest {
         advanceUntilIdle()
         assertEquals(suggestions, model.state.value.suggestions)
         assertEquals("Civic", model.state.value.query)
+    }
+
+    @Test
+    fun `a keystroke that supersedes an in-flight search is not a search failure`() = runTest {
+        // Reported from use: typing raises "Couldn't reach search — check your
+        // connection", and it stays up until a character is added and removed.
+        //
+        // Nothing failed. The next keystroke cancels the search in flight, and
+        // `runCatching` catches CancellationException like any other throwable —
+        // so the act of typing was reporting itself as a network error. The
+        // existing debounce test misses it because superseding *before* the
+        // debounce fires cancels inside `delay`, which is outside the catch.
+        var inFlight = 0
+        val model = PlanViewModel(
+            search = { _, _ ->
+                inFlight++
+                kotlinx.coroutines.delay(1_000) // a real round trip
+                listOf(Suggestion("Civic Center", dest, "place"))
+            },
+            planner = { _, _, _ -> routes(fastest) },
+            tileDownloader = { _, _, _ -> true },
+            location = { origin },
+            cameras = { Freshness.NETWORK },
+            favoritesStore = InMemoryFavorites(),
+            vehicle = FakeVehicleNavClient(),
+            scope = this,
+        )
+
+        model.onQueryChange("Civ")
+        advanceTimeBy(500) // past the debounce: the request is now out
+        assertEquals(1, inFlight, "the search has to be in flight for this to test anything")
+        model.onQueryChange("Civic") // supersedes it mid-request
+
+        // Straight away, while the replacement search is still debouncing. The
+        // banner is transient, which is why it took a real person typing to
+        // notice it and why asserting only the settled state misses it.
+        advanceTimeBy(10)
+        assertTrue(!model.state.value.searchFailed, "typing is not a connection failure")
+
+        advanceUntilIdle()
+        assertTrue(!model.state.value.searchFailed)
+        assertEquals(1, model.state.value.suggestions.size, "and the newer search still answers")
+    }
+
+    @Test
+    fun `a superseded search cannot overwrite the newer one's results`() = runTest {
+        // The other half: even without the error, a stale answer must not land
+        // on top of a fresher one just because it finished later.
+        var call = 0
+        val model = PlanViewModel(
+            search = { query, _ ->
+                call++
+                // The first search is slow, the second quick — so the stale one
+                // completes last and would win on arrival order alone.
+                kotlinx.coroutines.delay(if (call == 1) 5_000 else 10)
+                listOf(Suggestion("result for $query", dest, "place"))
+            },
+            planner = { _, _, _ -> routes(fastest) },
+            tileDownloader = { _, _, _ -> true },
+            location = { origin },
+            cameras = { Freshness.NETWORK },
+            favoritesStore = InMemoryFavorites(),
+            vehicle = FakeVehicleNavClient(),
+            scope = this,
+        )
+
+        model.onQueryChange("Civ")
+        advanceTimeBy(500)
+        model.onQueryChange("Civic")
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf("result for Civic"),
+            model.state.value.suggestions.map { it.title },
+            "the box says Civic, so the list must be Civic's",
+        )
     }
 
     @Test

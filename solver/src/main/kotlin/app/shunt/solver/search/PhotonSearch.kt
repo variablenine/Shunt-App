@@ -37,13 +37,7 @@ class PhotonSearch(
             // (Note the direction: a *low* value biases less, not more.)
             .addQueryParameter("location_bias_scale", LOCATION_BIAS_SCALE)
             .build()
-        val body = withContext(Dispatchers.IO) {
-            http.newCall(Request.Builder().url(url).header("User-Agent", "Shunt").build()).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) throw IOException("Photon HTTP ${resp.code}: ${text.take(200)}")
-                text
-            }
-        }
+        val body = fetch(url) ?: return emptyList()
         return rankByProximity(parse(body), at)
     }
 
@@ -75,18 +69,36 @@ class PhotonSearch(
             .addQueryParameter("lang", "en")
             .apply { tags.forEach { addQueryParameter("osm_tag", it) } }
             .build()
-        val body = withContext(Dispatchers.IO) {
-            http.newCall(Request.Builder().url(url).header("User-Agent", "Shunt").build()).execute().use { resp ->
-                val text = resp.body?.string().orEmpty()
-                if (!resp.isSuccessful) throw IOException("Photon HTTP ${resp.code}: ${text.take(200)}")
-                text
-            }
-        }
+        val body = fetch(url) ?: return emptyList()
         return parse(body).sortedBy { haversineMeters(at, it.location) }
+    }
+
+    /**
+     * The response body, or null when the host asked us to slow down.
+     *
+     * **Being throttled is not a broken search**, and treating it as one is what
+     * made typing look like a connectivity problem: the geocoder answers a
+     * burst of keystrokes with a 429, Shunt threw, and the UI announced
+     * "Couldn't reach search — check your connection". `NominatimSearch` has
+     * always handled it this way; Photon simply never had the same care applied.
+     *
+     * Returning nothing lets [PlaceSearch] try the other geocoder, which is
+     * exactly what a caller wants when this one is temporarily unwilling.
+     */
+    private suspend fun fetch(url: okhttp3.HttpUrl): String? = withContext(Dispatchers.IO) {
+        http.newCall(Request.Builder().url(url).header("User-Agent", "Shunt").build()).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (resp.code in THROTTLED_CODES) return@use null
+            if (!resp.isSuccessful) throw IOException("Photon HTTP ${resp.code}: ${text.take(200)}")
+            text
+        }
     }
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+
+        /** Rate-limited / over capacity: no answer this time, not a failure. */
+        val THROTTLED_CODES = setOf(429, 503)
 
         /**
          * How hard to weight nearness over OSM "importance", 0..1. Nudged up

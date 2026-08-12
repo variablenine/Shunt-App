@@ -3,9 +3,44 @@ package app.shunt.solver.search
 import app.shunt.core.GeoPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.OkHttpClient
+import kotlinx.coroutines.test.runTest
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class PhotonSearchTest {
+
+    @Test
+    fun `being throttled is not a failed search`() = runTest {
+        // A burst of keystrokes can earn a 429. Throwing there is how the UI
+        // came to announce "Couldn't reach search — check your connection"
+        // against a geocoder that was merely asking us to slow down; the
+        // caller can then try the other one instead.
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(429))
+            val search = PhotonSearch(OkHttpClient(), server.url("/").toString().trimEnd('/'))
+            assertEquals(emptyList(), search.suggest("civic", GeoPoint(39.0, -98.0)))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `a real server error still surfaces`() = runTest {
+        // Throttling is temporary and expected; a 500 is neither, and hiding it
+        // would leave the user staring at an empty list with no explanation.
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
+            val search = PhotonSearch(OkHttpClient(), server.url("/").toString().trimEnd('/'))
+            assertFailsWith<java.io.IOException> { search.suggest("civic", GeoPoint(39.0, -98.0)) }
+        } finally {
+            server.shutdown()
+        }
+    }
 
     private fun at(title: String, lat: Double, lon: Double) =
         Suggestion(title, GeoPoint(lat, lon), "place")
