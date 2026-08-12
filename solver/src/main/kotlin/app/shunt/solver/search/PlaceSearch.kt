@@ -23,9 +23,29 @@ import app.shunt.core.GeoPoint
 class PlaceSearch(
     private val primary: suspend (String, GeoPoint) -> List<Suggestion>,
     private val fallback: suspend (String, GeoPoint) -> List<Suggestion>,
+    /**
+     * Places of a given kind near a point — the [PlaceCategories] path. Absent,
+     * behaviour is exactly as it was: everything is a name search.
+     */
+    private val nearby: (suspend (List<String>, GeoPoint) -> List<Suggestion>)? = null,
 ) {
     suspend fun suggest(query: String, at: GeoPoint): List<Suggestion> {
         if (query.isBlank()) return emptyList()
+
+        // A query that names a *kind* of place is a different question, and the
+        // name geocoders answer it with nonsense — "coffee" finds Coffee County,
+        // Alabama. Answer it by tag instead, and lead with it: someone who typed
+        // "coffee" wants the nearest cafe, not somewhere called Coffee.
+        val category = PlaceCategories.of(query)
+        val byCategory = nearby
+        if (category != null && byCategory != null) {
+            val found = runCatching { byCategory(category.tags, at) }.getOrDefault(emptyList())
+            // Falling through on an empty result is deliberate: out in open
+            // country there may genuinely be no cafe within reach, and a name
+            // search is a better answer than a blank screen.
+            if (found.isNotEmpty()) return found.take(MAX_RESULTS)
+        }
+
         val primaryResults = runCatching { primary(query, at) }
         val hits = primaryResults.getOrDefault(emptyList())
 

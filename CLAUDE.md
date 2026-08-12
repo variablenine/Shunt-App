@@ -124,6 +124,18 @@ The chosen direction is *stay keyless, maximise OSM*: rank nearby results first
 OpenStreetMap so they become searchable for everyone, permanently. Do not
 reintroduce a paid geocoder to paper over this.
 
+**Searching for a *kind* of place is a different query, and must not go through
+the name geocoders.** Asked for "coffee" they answer with Coffee County,
+Alabama; for "grocery", with shops called "Grocery" in Dubai. That is not a
+ranking fault to be tuned — a text geocoder is doing its job, and the job is the
+wrong one. `PlaceCategories` recognises the words a driver actually types and
+`PhotonSearch.nearby` answers them by OSM tag through Photon's *reverse*
+endpoint, which takes `osm_tag` filters and a radius and needs no query text at
+all. Same host, same keyless terms, about a second, and it returns real
+supermarkets a couple of miles away instead of Dubai. Overpass was measured for
+this and rejected: 30-40 s and frequent timeouts, which is fine for the one-shot
+Supercharger lookup and hopeless for a typeahead.
+
 **Never commit personal location data.** No real home or work coordinates, no
 local town or business names, no recorded API responses from routes actually
 driven (encoded polylines hide coordinates from a text search, so they are
@@ -949,7 +961,12 @@ Ordered roughly by what unblocks real use.
   them. Not a speed problem any more; a quality one, since a long route's pins
   currently share one budget between them.
 - **OSM coverage:** keep improving nearby-first ranking; add missing local
-  places to OpenStreetMap so they become searchable for everyone.
+  places to OpenStreetMap so they become searchable for everyone. Category
+  search (§3) covers the common "I want *a* coffee" case; the phrase list in
+  `PlaceCategories` is deliberately short and is the cheap place to extend.
+  The Nominatim fallback is the weak link left — measured, its public instance
+  answers "starbucks" with cafes 900 to 11,000 km away, so when Photon misses,
+  what rescues the query can be worse than nothing. Worth biasing or dropping.
 - **Charging fine-tuning:** the reserve (`RESERVE_METERS`, now the only margin
   on the car's range estimate), the charger corridor, and the probe cadences are
   first-pass numbers — worth revisiting against real drives.

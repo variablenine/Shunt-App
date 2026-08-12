@@ -62,6 +62,9 @@ class AppContainer(context: Context) {
     private val placeSearch = PlaceSearch(
         primary = { query, at -> photonSearch.suggest(query, at) },
         fallback = { query, at -> nominatimSearch.suggest(query, at) },
+        // "coffee", "gas", "restroom" — answered by OSM tag near the driver
+        // rather than by name, which is what made those searches useless.
+        nearby = { tags, at -> photonSearch.nearby(tags, at) },
     )
 
     /** BRouter's offline tiles + profile live under the app's private storage. */

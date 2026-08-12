@@ -12,6 +12,67 @@ class PlaceSearchTest {
     private val at = GeoPoint(39.0, -98.0)
     private val hit = Suggestion("Civic Center", GeoPoint(39.1, -98.1), "place")
 
+    // ---- Asking for a kind of place, not a name ---------------------------
+    //
+    // Measured against the public geocoders: "coffee" returns Coffee County,
+    // Alabama; "grocery" returns shops called "Grocery" in Dubai. They match
+    // names, and no ranking fixes that — it is the wrong question.
+
+    private val cafe = Suggestion("Nearby Cafe", GeoPoint(39.01, -98.01), "cafe")
+
+    @Test
+    fun `a category word is answered by kind, near the driver`() = runTest {
+        var nameSearched = false
+        var askedFor: List<String>? = null
+        val search = PlaceSearch(
+            primary = { _, _ -> nameSearched = true; listOf(hit) },
+            fallback = { _, _ -> emptyList() },
+            nearby = { tags, _ -> askedFor = tags; listOf(cafe) },
+        )
+
+        assertEquals(listOf(cafe), search.suggest("coffee", at))
+        assertEquals(listOf("amenity:cafe"), askedFor, "must ask for cafes, not for the word")
+        assertTrue(!nameSearched, "a name search for \"coffee\" is what produced Coffee County")
+    }
+
+    @Test
+    fun `a place that merely contains a category word is still a name search`() = runTest {
+        // "Bank of America Stadium" is not a request for the nearest cash
+        // machine, and "Food Lion" is a supermarket chain. Substring matching
+        // here would hijack real searches, so only the whole query counts.
+        var nearbyCalled = false
+        val search = PlaceSearch(
+            primary = { _, _ -> listOf(hit) },
+            fallback = { _, _ -> emptyList() },
+            nearby = { _, _ -> nearbyCalled = true; listOf(cafe) },
+        )
+        search.suggest("bank of america stadium", at)
+        search.suggest("food lion", at)
+        assertTrue(!nearbyCalled, "category search hijacked a search for a named place")
+    }
+
+    @Test
+    fun `nothing of that kind nearby falls back to searching the name`() = runTest {
+        // Out in open country there may genuinely be no cafe within reach, and
+        // a name search beats a blank screen.
+        val search = PlaceSearch(
+            primary = { _, _ -> listOf(hit) },
+            fallback = { _, _ -> emptyList() },
+            nearby = { _, _ -> emptyList() },
+        )
+        assertEquals(listOf(hit), search.suggest("coffee", at))
+    }
+
+    @Test
+    fun `a failing category lookup does not lose the search`() = runTest {
+        val search = PlaceSearch(
+            primary = { _, _ -> listOf(hit) },
+            fallback = { _, _ -> emptyList() },
+            nearby = { _, _ -> error("offline") },
+        )
+        assertEquals(listOf(hit), search.suggest("coffee", at))
+    }
+
     @Test
     fun `the fast typeahead index answers when it has results`() = runTest {
         var fallbackCalled = false

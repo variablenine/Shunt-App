@@ -47,6 +47,44 @@ class PhotonSearch(
         return rankByProximity(parse(body), at)
     }
 
+    /**
+     * Places of a given *kind* near [at], nearest first — the answer to "coffee"
+     * rather than to "Coffee County".
+     *
+     * Photon's reverse endpoint takes the same `osm_tag` filters as the search
+     * endpoint but needs no query text, so it can be asked for cafes near a
+     * point directly. That is the whole trick: the search endpoint always
+     * matches names, and no amount of ranking turns a name search into a
+     * category one. See [PlaceCategories].
+     *
+     * Sorted here rather than trusted from the response, because "nearest" is
+     * the entire value of the answer to someone who wants coffee now.
+     */
+    suspend fun nearby(
+        tags: List<String>,
+        at: GeoPoint,
+        radiusKm: Double = NEARBY_RADIUS_KM,
+        limit: Int = 10,
+    ): List<Suggestion> {
+        if (tags.isEmpty()) return emptyList()
+        val url = "$baseUrl/reverse".toHttpUrl().newBuilder()
+            .addQueryParameter("lat", at.lat.toString())
+            .addQueryParameter("lon", at.lon.toString())
+            .addQueryParameter("radius", radiusKm.toString())
+            .addQueryParameter("limit", limit.toString())
+            .addQueryParameter("lang", "en")
+            .apply { tags.forEach { addQueryParameter("osm_tag", it) } }
+            .build()
+        val body = withContext(Dispatchers.IO) {
+            http.newCall(Request.Builder().url(url).header("User-Agent", "Shunt").build()).execute().use { resp ->
+                val text = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) throw IOException("Photon HTTP ${resp.code}: ${text.take(200)}")
+                text
+            }
+        }
+        return parse(body).sortedBy { haversineMeters(at, it.location) }
+    }
+
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
 
@@ -64,6 +102,16 @@ class PhotonSearch(
          * you can drive to beats the famous one you can't.
          */
         const val LOCATION_BIAS_SCALE = "0.6"
+
+        /**
+         * How far out to look for a *kind* of place (~30 mi).
+         *
+         * Wide enough to find a charger or a rest area from open road, tight
+         * enough that "coffee" cannot answer with somewhere an hour away — which
+         * would be a worse answer than none, since the whole point is that the
+         * driver wants one now.
+         */
+        const val NEARBY_RADIUS_KM = 50.0
 
         /**
          * Results this much closer than another are ordered by distance;

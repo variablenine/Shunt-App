@@ -5,6 +5,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Path
+import android.graphics.Paint
+import android.graphics.Canvas
+import android.graphics.Bitmap
 import android.graphics.PointF
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -115,6 +119,16 @@ private const val CHARGER_LAYER = "route-charger-dots"
 /** The basemap's own one-way arrow layers. See [straightenOneWayArrows]. */
 private const val ONE_WAY_LAYER = "road_oneway"
 private const val ONE_WAY_REVERSED_LAYER = "road_oneway_opposite"
+private const val ONE_WAY_ICON = "shunt-oneway"
+
+/** Nominal size of our arrowhead, matching the sprite it replaces. */
+private const val ONE_WAY_ICON_DP = 14f
+
+/**
+ * How far apart the arrows sit. Tighter than the style's 200, so a roundabout
+ * carries several and reads as circulation rather than one stray mark.
+ */
+private const val ONE_WAY_SPACING_DP = 90f
 private const val NEARBY_SOURCE = "route-nearby-cameras"
 private const val NEARBY_LAYER = "route-nearby-camera-dots"
 private const val WAYPOINT_SOURCE = "route-waypoints"
@@ -207,7 +221,7 @@ fun RouteMap(
             else Style.Builder().fromJson(BLANK_STYLE)
             map.setStyle(builder) { loaded ->
                 style = loaded
-                straightenOneWayArrows(loaded)
+                straightenOneWayArrows(loaded, context)
                 // Report the viewport whenever the user stops moving the map so
                 // we can fetch the cameras now visible.
                 map.addOnCameraIdleListener {
@@ -480,15 +494,70 @@ private fun renderRoute(
  * which is a worse bug than the one being fixed, because nobody would be
  * looking for it.
  */
-private fun straightenOneWayArrows(style: Style) {
-    fun fix(id: String, broken: Float) {
+private fun straightenOneWayArrows(style: Style, context: Context) {
+    // Our own arrow, drawn pointing +X, replaces the basemap's.
+    //
+    // Two things wrong with theirs, and swapping the image fixes both at once.
+    // It points up, which is the quarter-turn above. And it is 21 px of mostly
+    // *tail* — fine on a straight road, poor on anything that curves, because
+    // MapLibre rotates each symbol to the local direction but the symbol itself
+    // stays a straight line. On a roundabout that is a long stroke cutting the
+    // chord of the circle rather than an arrow following it, which is what
+    // made those look wrong even once the rotation was right.
+    //
+    // A compact head has no tail to disagree with the curve, and closer spacing
+    // puts several around a roundabout so it reads as circulation rather than
+    // as one stray mark.
+    val icon = oneWayArrowBitmap(context)
+    runCatching { style.addImage(ONE_WAY_ICON, icon) }
+
+    fun apply(id: String, rotate: Float) {
         val layer = runCatching { style.getLayerAs<SymbolLayer>(id) }.getOrNull() ?: return
-        val current = layer.iconRotate.value ?: return
-        if (current != broken) return
-        runCatching { layer.setProperties(PropertyFactory.iconRotate(current + 90f)) }
+        runCatching {
+            layer.setProperties(
+                PropertyFactory.iconImage(ONE_WAY_ICON),
+                // Absolute, not relative: we author the icon along +X, so these
+                // are the whole truth about its orientation and stay correct
+                // whatever the upstream style does with its own sprite later.
+                PropertyFactory.iconRotate(rotate),
+                PropertyFactory.iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                PropertyFactory.symbolSpacing(ONE_WAY_SPACING_DP),
+            )
+        }
     }
-    fix(ONE_WAY_LAYER, 0f)
-    fix(ONE_WAY_REVERSED_LAYER, 180f)
+    apply(ONE_WAY_LAYER, 0f)
+    apply(ONE_WAY_REVERSED_LAYER, 180f)
+}
+
+/**
+ * A small solid arrowhead pointing **+X (right)**, which is the axis MapLibre
+ * aligns with the direction of a line.
+ *
+ * Drawn at the display's density and tagged with it, so MapLibre scales it the
+ * way it scales the style's own sprite sheet and it comes out the same size on
+ * screen on every device.
+ */
+private fun oneWayArrowBitmap(context: Context): Bitmap {
+    val density = context.resources.displayMetrics.density
+    val size = (ONE_WAY_ICON_DP * density).toInt().coerceAtLeast(8)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    bitmap.density = context.resources.displayMetrics.densityDpi
+    val canvas = Canvas(bitmap)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+    // A triangle spanning most of the width, centred vertically: tip at the
+    // right, base at the left.
+    val inset = size * 0.18f
+    val path = Path().apply {
+        moveTo(size - inset, size / 2f)
+        lineTo(inset, inset)
+        lineTo(inset, size - inset)
+        close()
+    }
+    canvas.drawPath(path, paint)
+    return bitmap
 }
 
 private fun renderChargers(style: Style, chargers: List<MapCharger>) {

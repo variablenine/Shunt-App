@@ -707,6 +707,78 @@ The general lesson: a 180° guess would have looked plausible, shipped, and been
 wrong. Rendering the actual sprite against a line of known bearing took a few
 minutes and gave a number instead of a hypothesis.
 
+### F-11 · Searching for places is a headache
+*Observed: 2026-08-11. Category search added; wants using in anger.*
+
+> let's try to find a different way to query places because it's genuinely a
+> headache with how it is now. Is Google really going to be the only option or
+> is there a privacy preserving option?
+
+Short answer: no, Google is not the only option, and the problem turned out not
+to be coverage.
+
+Measured against the public instances from a neutral point in Kansas. For
+**brand names** the keyless stack is already good — Photon put Walmart,
+Starbucks, Taco Bell and QuikTrip within 0-7 km, which is what you want. For a
+**kind of place** it collapses:
+
+| typed | Photon | Nominatim |
+|---|---|---|
+| `coffee` | — | Coffee County, Alabama (1,490 km) |
+| `gas station` | "Gas Station (Not)", a farm track (219 km), then Korea | Gas Station, 8,987 km |
+| `grocery` | shops called "Grocery" in Dubai (12,465 km) | Grocery, 2,039 km |
+
+That is not a ranking bug. Both are *text* geocoders and both answered the
+question asked: find things named that. The question a driver meant — a cafe,
+near me, now — was never being put to anything.
+
+Three keyless ways to ask it properly, and only one survived:
+
+- **Overpass**, which the app already uses for Superchargers. Rejected on
+  measurement: 30-40 s per query and frequent 504s/resets across three public
+  endpoints. Fine for a one-shot charger lookup, hopeless for a typeahead.
+- **Photon's search endpoint with `osm_tag`.** The filter works — every result
+  really was `amenity=cafe` — but `q` is still matched against *names*, so it
+  returned cafes that happen to be called "Coffee". Wrong question, narrower.
+- **Photon's `/reverse` endpoint with `osm_tag`.** Takes the filters *and* a
+  radius and needs no query text at all. `grocery` → Dillons 2.6 km, La Tapatia
+  3.7 km. `toilets` → the restrooms 1.2 km away. About a second, same host,
+  same keyless terms.
+
+So `PlaceCategories` maps the words a driver types to OSM tags and
+`PhotonSearch.nearby` asks the reverse endpoint. Whole-query matching only:
+"Bank of America Stadium" is not a request for a cash machine and "Food Lion" is
+a supermarket chain, so a substring rule would hijack real searches. An empty
+result falls through to the name search rather than showing a blank screen —
+in open country there may genuinely be no cafe within reach.
+
+**Left open, and worth knowing.** The Nominatim fallback is poor: asked for
+"starbucks" its public instance returned cafes 666 to 11,500 km away, including
+one in Japan. It only runs when Photon finds nothing, so it is the "I typed a
+real address and got nothing" rescue — but as measured it can be worse than
+nothing. Biasing it to the viewport, or dropping it, is the next thing to look
+at here.
+
+### F-12 · Roundabout arrows
+*Observed: 2026-08-11, after the one-way rotation fix. Changed; unverified on a device.*
+
+With the rotation corrected the arrows sit along the road, but roundabouts still
+looked wrong, and for a second reason: the basemap's sprite is 21 px of mostly
+*tail*. MapLibre rotates each symbol to the local direction of the line, but the
+symbol itself is a straight stroke — so on a tight curve it cuts the chord of
+the circle instead of following it. At the style's 200 px spacing a small
+roundabout also gets exactly one, which reads as a stray mark rather than as
+circulation.
+
+Shunt now supplies its own arrowhead: compact, no tail to disagree with the
+curve, drawn pointing +X so the rotation is correct by construction rather than
+by patching someone else's value, and spaced closer so a roundabout carries
+several. Drawn at display density and tagged with it so it scales like the
+style's own sprite sheet.
+
+**The size is the one thing that could be off** — it was chosen to match the
+21 px sprite it replaces and never seen on a screen from here.
+
 ---
 
 ## Resolved
