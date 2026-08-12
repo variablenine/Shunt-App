@@ -18,7 +18,7 @@ class PhotonSearchTest {
             at("Summit Peak", 44.0, -110.0), // far
             at("Summit Diner", 39.2, -98.1), // ~24 km, local
         )
-        val ranked = PhotonSearch.rankByProximity(photonOrder, user)
+        val ranked = rankByProximity(photonOrder, user)
         assertEquals("Summit Diner", ranked.first().title)
     }
 
@@ -32,7 +32,7 @@ class PhotonSearchTest {
             at("Springfield, Massachusetts", 42.10, -72.59),
             at("Springfield, Missouri", 37.21, -93.29),
         )
-        val ranked = PhotonSearch.rankByProximity(photonOrder, user)
+        val ranked = rankByProximity(photonOrder, user)
         assertEquals("Springfield, Missouri", ranked.first().title)
     }
 
@@ -45,7 +45,7 @@ class PhotonSearchTest {
             // Same distance band as Near Cafe: Photon's order must survive.
             at("Also Near Cafe", 39.06, -98.0),
         )
-        val ranked = PhotonSearch.rankByProximity(photonOrder, user)
+        val ranked = rankByProximity(photonOrder, user)
         assertEquals(
             listOf("Near Cafe", "Also Near Cafe", "Far Cafe"),
             ranked.map { it.title },

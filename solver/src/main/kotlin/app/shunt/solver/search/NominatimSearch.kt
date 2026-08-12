@@ -37,15 +37,49 @@ class NominatimSearch(
     private val throttle = Mutex()
     private var lastCallMillis = 0L
 
+    /**
+     * Search near the user first, and only widen to the world if that finds
+     * nothing.
+     *
+     * **A `viewbox` alone does almost nothing here.** It expresses a preference,
+     * and for anything with many namesakes the preference loses: measured
+     * against the public instance from a point in Kansas, "starbucks" came back
+     * as cafes 889, 920 and 1,869 km away — one of them in Japan — while the
+     * ones a few blocks from the search point never appeared at all. No amount
+     * of re-ordering rescues results that were never in the response.
+     *
+     * `bounded=1` fixes that completely (0 km, 5 km, 5 km on the same query) and
+     * would be the obvious answer, except that it breaks the other half of what
+     * this fallback is for. Same measurement: "Fontano's Subs Chicago" and
+     * "Willis Tower", typed from Kansas, return **nothing** bounded and resolve
+     * correctly unbounded at ~950 km. Someone planning a drive is often naming
+     * somewhere far away on purpose — that is the whole point of the app.
+     *
+     * So: bounded first, and widen only on an empty result. The near search
+     * answers "a real place down the road that Photon didn't have", the wide one
+     * answers "the place in the city I'm driving to", and the second request is
+     * only spent when the first came back empty.
+     */
     suspend fun suggest(query: String, at: GeoPoint, limit: Int = 6): List<Suggestion> {
         if (query.isBlank()) return emptyList()
+        val near = search(query, at, limit, bounded = true)
+        if (near.isNotEmpty()) return rankByProximity(near, at)
+        return rankByProximity(search(query, at, limit, bounded = false), at)
+    }
+
+    private suspend fun search(
+        query: String,
+        at: GeoPoint,
+        limit: Int,
+        bounded: Boolean,
+    ): List<Suggestion> {
         val url = "$baseUrl/search".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("format", "jsonv2")
             .addQueryParameter("addressdetails", "1")
             .addQueryParameter("limit", limit.toString())
-            // Bias toward the user without excluding anywhere else.
             .addQueryParameter("viewbox", viewboxAround(at))
+            .apply { if (bounded) addQueryParameter("bounded", "1") }
             .build()
 
         awaitTurn()
@@ -116,9 +150,19 @@ class NominatimSearch(
         /** Rate-limited / over capacity: no answer this time, not a failure. */
         val THROTTLED_CODES = setOf(429, 503)
 
-        /** Roughly ±1° around the user — a bias box, results outside still rank. */
+        /**
+         * Half-width of the "near me" box, in degrees (~165 km of latitude).
+         *
+         * Comfortably wider than [LOCAL_RADIUS_METERS], so anything the ranking
+         * would call local is inside it, and still small enough that a bounded
+         * search means something. It is a box rather than a circle only because
+         * that is the shape Nominatim's API takes.
+         */
+        const val NEAR_BOX_DEGREES = 1.5
+
         private fun viewboxAround(at: GeoPoint): String =
-            "${at.lon - 1},${at.lat + 1},${at.lon + 1},${at.lat - 1}"
+            "${at.lon - NEAR_BOX_DEGREES},${at.lat + NEAR_BOX_DEGREES}," +
+                "${at.lon + NEAR_BOX_DEGREES},${at.lat - NEAR_BOX_DEGREES}"
 
         private val json = Json { ignoreUnknownKeys = true }
 

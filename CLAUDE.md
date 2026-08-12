@@ -120,7 +120,7 @@ telemetry, no account. Location permission is while-in-use only —
 **Search coverage is OSM-limited by design.** Being keyless means some
 businesses that Google or HERE would find are simply missing from OpenStreetMap.
 The chosen direction is *stay keyless, maximise OSM*: rank nearby results first
-(`PhotonSearch.rankByProximity`) and add genuinely missing places to
+(`rankByProximity`, shared by both geocoders) and add genuinely missing places to
 OpenStreetMap so they become searchable for everyone, permanently. Do not
 reintroduce a paid geocoder to paper over this.
 
@@ -964,9 +964,11 @@ Ordered roughly by what unblocks real use.
   places to OpenStreetMap so they become searchable for everyone. Category
   search (§3) covers the common "I want *a* coffee" case; the phrase list in
   `PlaceCategories` is deliberately short and is the cheap place to extend.
-  The Nominatim fallback is the weak link left — measured, its public instance
-  answers "starbucks" with cafes 900 to 11,000 km away, so when Photon misses,
-  what rescues the query can be worse than nothing. Worth biasing or dropping.
+  The Nominatim fallback now searches near the driver first and only widens to
+  the world when that finds nothing — a `viewbox` alone is merely a preference
+  and loses against a name with thousands of namesakes, while `bounded=1` alone
+  would make a deliberately distant destination unfindable. See
+  `NominatimSearch.suggest` and field note F-11.
 - **Charging fine-tuning:** the reserve (`RESERVE_METERS`, now the only margin
   on the car's range estimate), the charger corridor, and the probe cadences are
   first-pass numbers — worth revisiting against real drives.

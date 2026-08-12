@@ -89,14 +89,6 @@ class PhotonSearch(
         private val json = Json { ignoreUnknownKeys = true }
 
         /**
-         * How near a result must be to count as "local" and get promoted above
-         * far-away namesakes (~75 mi — a day-trip radius). Photon ranks by OSM
-         * "importance," so a famous distant landmark outranks a nearby place of
-         * the same name; a driving app wants the reachable one first.
-         */
-        const val LOCAL_RADIUS_METERS = 120_000.0
-
-        /**
          * How hard to weight nearness over OSM "importance", 0..1. Nudged up
          * from Photon's 0.2 default because this is a driving app: the place
          * you can drive to beats the famous one you can't.
@@ -112,34 +104,6 @@ class PhotonSearch(
          * driver wants one now.
          */
         const val NEARBY_RADIUS_KM = 50.0
-
-        /**
-         * Results this much closer than another are ordered by distance;
-         * within a bucket, Photon's own relevance order is kept. Sorting
-         * strictly by distance would put a random hut ahead of the town you
-         * actually typed.
-         */
-        const val PROXIMITY_BUCKET_METERS = 25_000.0
-
-        /**
-         * Order results the way someone planning a drive wants them: anything
-         * within [LOCAL_RADIUS_METERS] first, then roughly nearest-first, with
-         * Photon's relevance breaking ties inside each distance band.
-         *
-         * Both keys matter. The tier alone left a pile of far-flung namesakes
-         * in importance order, so a search could fill up with places nowhere
-         * near the driver; distance alone would throw away relevance entirely.
-         */
-        fun rankByProximity(results: List<Suggestion>, at: GeoPoint): List<Suggestion> =
-            results.withIndex()
-                .sortedWith(
-                    compareBy<IndexedValue<Suggestion>> {
-                        if (haversineMeters(at, it.value.location) <= LOCAL_RADIUS_METERS) 0 else 1
-                    }
-                        .thenBy { (haversineMeters(at, it.value.location) / PROXIMITY_BUCKET_METERS).toInt() }
-                        .thenBy { it.index }, // stable: Photon's own relevance order
-                )
-                .map { it.value }
 
         fun parse(body: String): List<Suggestion> =
             json.decodeFromString<FeatureCollection>(body).features.mapNotNull { feature ->

@@ -752,12 +752,36 @@ a supermarket chain, so a substring rule would hijack real searches. An empty
 result falls through to the name search rather than showing a blank screen —
 in open country there may genuinely be no cafe within reach.
 
-**Left open, and worth knowing.** The Nominatim fallback is poor: asked for
-"starbucks" its public instance returned cafes 666 to 11,500 km away, including
-one in Japan. It only runs when Photon finds nothing, so it is the "I typed a
-real address and got nothing" rescue — but as measured it can be worse than
-nothing. Biasing it to the viewport, or dropping it, is the next thing to look
-at here.
+**The Nominatim fallback, fixed the same day.** It was returning cafes 666 to
+11,500 km away for "starbucks", including one in Japan — and it only runs when
+Photon finds nothing, so it was worst exactly when it was the last resort.
+
+It already sent a `viewbox`, which turns out to buy almost nothing: a viewbox is
+a *preference*, and against a name with thousands of namesakes the preference
+loses. The local Starbucks were not ranked badly, they were **not in the
+response at all**, so no amount of re-ordering could have rescued them.
+
+`bounded=1` fixes that outright — 0 km, 5 km, 5 km on the same query — and would
+have been the obvious one-word change, except that measuring the other half of
+the job showed it breaks it:
+
+| query, typed from Kansas | bounded | unbounded |
+|---|---|---|
+| `starbucks` | 0 km, 5 km, 5 km | 889 km, 920 km, 1,869 km |
+| `Fontano's Subs Chicago` | **nothing** | found, 948 km |
+| `Willis Tower` | **nothing** | found, 950 km |
+
+Someone planning a drive names somewhere far away *on purpose* — that is the
+app. So it is bounded first and unbounded only when that comes back empty: the
+near search answers "a real place down the road that Photon didn't have", the
+wide one answers "the place in the city I'm driving to", and the second
+rate-limited request is only spent when the first found nothing.
+
+Both geocoders now also share `rankByProximity`, which had been Photon's alone.
+
+The general shape, worth keeping: the obvious fix and the correct fix differed,
+and what separated them was checking the case the change would *break* rather
+than the case it would fix.
 
 ### F-12 · Roundabout arrows
 *Observed: 2026-08-11, after the one-way rotation fix. Changed; unverified on a device.*
