@@ -56,6 +56,32 @@ assign is_avoided_motorway and avoid_motorways highway=motorway|motorway_link
 #
 assign isresidentialorliving = or highway=residential|living_street living_street=yes
 
+#
+# SHUNT CHANGE — emergency-only crossings of a divided highway.
+#
+# The gap in a motorway or trunk median that exists so a patrol car can turn
+# around is usually mapped `highway=service` + `service=emergency_access`, very
+# often with no access tag at all. BRouter's untouched rule grants cars every
+# `highway=service` way that carries no access tag, so those gaps were routable
+# — and a router hunting for a shorter way past a camera will take one. Turning
+# across a fast carriageway through an emergency-vehicle gap is not a manoeuvre
+# this app may ever suggest, whatever it saves.
+#
+# This deliberately tests the tag and nothing else, which is what keeps the
+# Michigan left. A median U-turn open to the public is an ordinary road or a
+# `*_link`, and on the rare occasion it is mapped as a service road it says so
+# with `motorcar=yes` / `access=yes` — both of which are read before this and
+# still win, because an explicit permission is better evidence than our guess.
+#
+# `service=crossover` is in here for completeness and is close to unused for
+# roads (one way in the whole planet histogram in `lookups.dat`, against 8,290
+# for `emergency_access`); it costs nothing and covers the mapper who reaches
+# for it. What this cannot cover is the crossover mapped as a bare
+# `highway=service` with no tag at all to distinguish it — there is no signal
+# there to act on, and the honest answer is to tag it in OpenStreetMap.
+#
+assign is_emergency_only_service = service=emergency_access|crossover
+
 assign caraccess
        switch motorcar=
               switch motor_vehicle=
@@ -71,7 +97,7 @@ assign caraccess
                                    switch and highway=road use_offroad         1
                                    switch route=ferry                          1
                                    switch isresidentialorliving                1
-                                   switch highway=service                      1
+                                   switch highway=service  not is_emergency_only_service
                                    0
                                    access=yes|permissive|designated|destination
                             vehicle=yes|designated|destination

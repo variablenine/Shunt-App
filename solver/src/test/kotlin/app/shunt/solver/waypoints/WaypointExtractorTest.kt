@@ -263,6 +263,177 @@ class WaypointExtractorTest {
         assertTrue(waypoints.distinct().size == waypoints.size, "duplicate pins")
     }
 
+    // ---- Holding the route past a camera it squeezes by -------------------
+    //
+    // Reported from a real plan: a detour around a camera with no pin anywhere
+    // near the squeeze — "a route that the car could easily still route through
+    // a camera, I don't trust that". Everything else that guards this stretch
+    // asks BRouter what the car would do, and that is the one place where being
+    // wrong costs the exposure the whole route exists to prevent.
+
+    private val metresNorth = 1.0 / 111_320.0
+
+    private val metresEast = 1.0 / (111_320.0 * kotlin.math.cos(Math.toRadians(39.0)))
+
+    /**
+     * A detour running 4 km east, a bit over 2 km north of the fast line, with a
+     * 50 m bulge in the middle so the shape pass has one unambiguous peak to pin.
+     *
+     * Deliberately straight enough to have no turn in it: with a corner, turn
+     * pins would be placing waypoints here whatever the cameras said, and these
+     * tests would pass without the thing they are testing existing.
+     */
+    private fun offsetDetour(): Pair<List<GeoPoint>, List<GeoPoint>> {
+        val n = 200
+        val lengthMeters = 4_000.0
+        val fastest = (0..n).map { GeoPoint(39.0, -98.0 + lengthMeters * metresEast * it / n) }
+        val chosen = (0..n).map {
+            val t = it.toDouble() / n
+            GeoPoint(
+                39.0 + (2_000.0 + 50.0 * kotlin.math.sin(Math.PI * t)) * metresNorth,
+                -98.0 + lengthMeters * metresEast * t,
+            )
+        }
+        return chosen to fastest
+    }
+
+    private fun emptyIndex() = app.shunt.solver.brouter.CameraIndex(emptyList())
+
+    private fun indexOf(vararg cameras: CameraVision) =
+        app.shunt.solver.brouter.CameraIndex(cameras.toList())
+
+    private fun lengthOf(line: List<GeoPoint>): Double =
+        (1 until line.size).sumOf { app.shunt.solver.geo.haversineMeters(line[it - 1], line[it]) }
+
+    @Test
+    fun `a camera the route squeezes past is bracketed by two pins`() {
+        val (chosen, fastest) = offsetDetour()
+        val middle = chosen[chosen.size / 2]
+        // 300 m off the line: well outside the camera's 150 m reach, well
+        // inside the guard radius. The car only has to wander a block.
+        val camera = cameraAt(GeoPoint(middle.lat + 300 * metresNorth, middle.lon))
+        assertTrue(!camera.seesRoute(chosen), "the route itself must clear the camera")
+
+        val pins = WaypointExtractor.cameraGuardPins(
+            chosen = chosen,
+            avoided = indexOf(camera),
+            density = emptyIndex(),
+            fastest = app.shunt.solver.geo.PolylineIndex(fastest),
+        )
+
+        val at = lengthOf(chosen) / 2
+        val guard = WaypointRefiner.PAST_FORK_METERS
+        assertEquals(2, pins.size, "a squeeze wants a pin on each side of it, got $pins")
+        assertTrue(pins.min() < at && pins.max() > at, "the pins must straddle the camera: $pins")
+        // Within a sample step of the bracket, which is all the precision the
+        // closest-approach sweep claims.
+        assertTrue(
+            kotlin.math.abs(pins.min() - (at - guard)) < WaypointExtractor.GUARD_SAMPLE_METERS * 2,
+            "near pin ${pins.min()} is not a fork distance before $at",
+        )
+        assertTrue(
+            kotlin.math.abs(pins.max() - (at + guard)) < WaypointExtractor.GUARD_SAMPLE_METERS * 2,
+            "far pin ${pins.max()} is not a fork distance after $at",
+        )
+    }
+
+    @Test
+    fun `a camera beside the road the car would have taken anyway is not guarded`() {
+        // The whole cost control. A straight run through a metro passes hundreds
+        // of cameras a street over that it never goes near; bracketing each one
+        // would put a pin every couple of hundred metres on a road with no
+        // decision on it. Where our route *is* the fastest route, the car has no
+        // reason to leave it.
+        val (_, fastest) = offsetDetour()
+        val middle = fastest[fastest.size / 2]
+        val camera = cameraAt(GeoPoint(middle.lat + 300 * metresNorth, middle.lon))
+
+        assertEquals(
+            emptyList(),
+            WaypointExtractor.cameraGuardPins(
+                chosen = fastest,
+                avoided = indexOf(camera),
+                density = emptyIndex(),
+                fastest = app.shunt.solver.geo.PolylineIndex(fastest),
+            ),
+        )
+    }
+
+    @Test
+    fun `a camera the route is nowhere near is not guarded`() {
+        val (chosen, fastest) = offsetDetour()
+        val middle = chosen[chosen.size / 2]
+        val faraway = cameraAt(
+            GeoPoint(middle.lat + (WaypointExtractor.CAMERA_GUARD_RADIUS_METERS + 500) * metresNorth, middle.lon),
+        )
+
+        assertEquals(
+            emptyList(),
+            WaypointExtractor.cameraGuardPins(
+                chosen = chosen,
+                avoided = indexOf(faraway),
+                density = emptyIndex(),
+                fastest = app.shunt.solver.geo.PolylineIndex(fastest),
+            ),
+        )
+    }
+
+    @Test
+    fun `extraction adds the guard pins, and nothing else would have`() {
+        val (chosen, fastest) = offsetDetour()
+        // A quarter of the way along, so the bracket lands clear of the pin the
+        // shape pass puts at the bulge's peak and spacing has nothing to collapse.
+        val squeeze = chosen[chosen.size / 4]
+        val camera = cameraAt(GeoPoint(squeeze.lat + 300 * metresNorth, squeeze.lon))
+
+        // The fixture is straight and parallel, so nothing else can react to
+        // this camera: no turn to pin, and the only chord the car could cut is
+        // the route itself, which the camera does not see.
+        assertEquals(
+            emptyList(),
+            app.shunt.solver.geo.turnsAlong(
+                chosen, WaypointExtractor.TURN_DEGREES, WaypointExtractor.TURN_SPAN_METERS,
+            ),
+            "the fixture must not turn, or turn pins would be doing this work",
+        )
+        assertTrue(
+            !camera.seesRoute(listOf(chosen.first(), chosen.last())),
+            "the whole-route chord must be clear, or the shortcut pass would close it",
+        )
+
+        val without = WaypointExtractor.extract(chosen, fastest)
+        val with = WaypointExtractor.extract(chosen, fastest, avoid = listOf(camera))
+
+        assertTrue(
+            with.size > without.size,
+            "the squeeze went unpinned: ${with.size} pins with the camera, ${without.size} without",
+        )
+        assertTrue(
+            with.any { it.lon < squeeze.lon } && with.any { it.lon > squeeze.lon },
+            "the new pins must sit either side of the camera, not just anywhere: $with",
+        )
+        assertTrue(with.all { it in chosen }, "every pin is a point on the chosen route")
+    }
+
+    @Test
+    fun `guard pins are protected from pruning`() {
+        // They exist because pruning's own test — "BRouter says the car would
+        // stay on our line" — is the prediction they are there to stop relying
+        // on. Letting it run on them would undo them one at a time.
+        val (chosen, fastest) = offsetDetour()
+        val middle = chosen[chosen.size / 2]
+        val camera = cameraAt(GeoPoint(middle.lat + 300 * metresNorth, middle.lon))
+
+        val protectedPins = WaypointExtractor.protectedPins(
+            chosen = chosen,
+            fastest = fastest,
+            index = indexOf(camera),
+            avoided = indexOf(camera),
+        )
+        assertEquals(2, protectedPins.size, "both sides of the squeeze must be protected")
+        assertTrue(protectedPins.all { it in chosen }, "a protected pin must be a point on the route")
+    }
+
     // ---- Pinning tightly where the roads are dense -----------------------
     //
     // One spacing everywhere was justified by "the car cannot meaningfully

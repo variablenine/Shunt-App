@@ -304,26 +304,29 @@ class BrouterPlanner(
         deadline: Long,
         carPaths: MutableMap<Pair<GeoPoint, GeoPoint>, List<GeoPoint>?>,
     ): List<GeoPoint> {
+        // One sweep of the line against the camera grid, shared by everything
+        // below that needs to know which cameras this route dodges.
+        val avoided = WaypointExtractor.avoidedIndex(chosen, visions, index)
         val candidates = WaypointExtractor.extract(
             chosen = chosen,
             fastest = fastest,
             avoid = visions,
             index = index,
             outOfTime = { nowMillis() >= deadline },
+            avoided = avoided,
         )
-        // Pins that exist because the route turns there, which pruning must not
-        // second-guess: dropping one means trusting BRouter's model of the car
-        // at exactly the point where being wrong costs a wrong road.
-        val atTurns = WaypointExtractor.turnPins(chosen, index)
-            .mapNotNull { app.shunt.solver.geo.pointAtAlong(chosen, it) }
-            .toSet()
+        // Pins that exist because of the route's geometry — its turns, and the
+        // cameras it squeezes past — which pruning must not second-guess:
+        // dropping one means trusting BRouter's model of the car at exactly the
+        // points where being wrong costs a wrong road or an exposure.
+        val instructed = WaypointExtractor.protectedPins(chosen, fastest, index, avoided)
         return runCatching {
             WaypointRefiner.refine(
                 chosen = chosen,
                 pins = candidates,
                 avoid = visions,
                 index = index,
-                protectedPins = atTurns,
+                protectedPins = instructed,
                 outOfTime = { nowMillis() >= deadline },
                 carRoute = { from, to -> carPathBetween(from, to, carPaths, deadline) },
             )

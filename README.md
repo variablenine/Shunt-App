@@ -102,7 +102,17 @@ options; a hard nogo backs the fewest-cameras choice where a clear path exists.
 Because it's one shortest-path pass, it **never reports infeasibility when a
 route exists** — the greedy backtracking failure below simply can't happen.
 Shunt's wrapper is `:solver`'s `BrouterRouter` / `BrouterPlanner`; waypoints for
-the vehicle are extracted where the chosen route diverges from the fastest.
+the vehicle are extracted where the chosen route diverges from the fastest, past
+every turn it takes, and either side of every avoided camera it squeezes past —
+the last two placed geometrically rather than from a prediction of what the car
+would do, because a junction and a camera are the two places where guessing
+wrong is expensive.
+
+The shipped routing profile is `app/src/main/assets/brouter/car-vario.brf`,
+BRouter's stock car profile with one Shunt rule added: an emergency-only median
+crossover (`service=emergency_access`) is not a road this app will turn a car
+across, however much time it saves. An explicit `motorcar=yes` still wins, so
+public median U-turns — the Michigan left — are untouched.
 
 Offline **map tiles** — BRouter's 5°×5° `.rd5` cells, ~11 MB each — download
 lazily per region from the BRouter CDN, cache on disk, and can be pre-pinned for
@@ -241,7 +251,12 @@ These were seen on actual drives and are the current priorities. Details and
 subsequent findings live in [docs/field-notes.md](docs/field-notes.md).
 
 - **Long routes are too slow to plan** — a ~5-hour route can take minutes, which
-  is unusable in practice and worse for mid-drive re-planning.
+  is unusable in practice and worse for mid-drive re-planning. *Largely fixed;
+  one case remains, below.*
+- **A very long trip can come back with the fastest road alone** — if the routes
+  detour outside the area cameras were gathered from, the whole search runs
+  again, and past roughly 580 km the second round runs out of time. Reproducible
+  in the repository's own benchmark.
 - **Charging re-route does not fire on long trips** — when the car inserts a
   Supercharger of its own accord, Shunt does not yet notice and re-plan the leg
   to it.
@@ -302,6 +317,12 @@ until parked there, and under driver assistance will actually stop. So as the
 car approaches each waypoint the monitor calls `advanceTo` with the remaining
 chain to drop the one being passed, fired **early** (a configurable ~18 s time
 lead, with a distance floor for crawling traffic), not at the pin.
+
+Two rules keep that from firing at the wrong moment. "How far away" is measured
+**along the route**, not straight-line, so a waypoint on the far side of a
+cloverleaf isn't triggered by the car passing near it; and a waypoint that sits
+just past a turn is never dropped until the turn is behind the car, so Shunt
+cannot pull a car out of a turn lane at a red light.
 
 **Every failure is loud, and works offline.** Camera-approach warnings, an
 `advanceTo` failure, and arrival all raise escalating haptics plus a local

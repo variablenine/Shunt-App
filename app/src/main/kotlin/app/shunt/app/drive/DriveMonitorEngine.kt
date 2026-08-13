@@ -3,6 +3,7 @@ package app.shunt.app.drive
 import app.shunt.core.GeoPoint
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.geo.bearingDegrees
+import app.shunt.solver.geo.METERS_PER_DEGREE_LAT
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointToSegmentMeters
 
@@ -98,11 +99,21 @@ class DriveMonitorEngine(
      */
     private val commitAlong: DoubleArray = DoubleArray(chain.size) { Double.NEGATIVE_INFINITY }
 
+    /**
+     * How far along the route each waypoint sits.
+     *
+     * Found by walking forward from the previous waypoint rather than searching
+     * the whole line, which is what keeps a route that crosses itself from
+     * matching a waypoint to the wrong passage.
+     */
+    private val pinAlong: DoubleArray = DoubleArray(chain.size) { Double.MAX_VALUE }
+
     init {
         if (routePolyline.size >= 2) {
             var cursor = 0
             for (i in chain.indices) {
                 cursor = nearestVertex(chain[i], from = cursor)
+                pinAlong[i] = alongAt[cursor]
                 commitAlong[i] = commitPointFor(cursor)
             }
         }
@@ -272,26 +283,78 @@ class DriveMonitorEngine(
 
         val speed = update.speedMetersPerSec ?: config.assumedSpeedMetersPerSec
         val lead = maxOf(config.waypointLeadMinMeters, speed * config.waypointLeadSeconds)
-        if (distance > lead) return null
+        // **How far there is left to drive, not how far away it is.**
+        //
+        // Straight-line distance is the wrong question wherever the route comes
+        // back near itself — a cloverleaf, a switchback, a frontage road beside
+        // the carriageway. The car can sit tens of metres from a waypoint it has
+        // not reached yet and will not reach for another mile, and measuring
+        // with a ruler says it has arrived. Distance along the route says it has
+        // a mile to go, which is the truth the waypoint was placed against.
+        if (metersLeftTo(targetIndex, update.point) > lead) return null
         // Close enough to advance — but not until the turn this waypoint exists
         // to force is actually behind the car. Sitting at a light in a turn lane
         // is inside the lead and stationary, and advancing there hands the car a
         // target it can reach by going straight on. See [commitAlong].
         //
-        // The distance check is the safety valve: if the car somehow never
+        // Being on top of the waypoint is the safety valve: if the car never
         // registers as past the commit point, it must still not be left aiming
-        // at a waypoint it is sitting on, because the car would stop there.
-        if (!pastCommitPoint() && distance > config.arrivalRadiusMeters) return null
+        // at a waypoint it is sitting on, because the car would stop there. The
+        // along-route test above still has to pass, so this cannot fire from the
+        // other side of a loop.
+        if (!pastCommitPoint(update.point) && distance > config.arrivalRadiusMeters) return null
         targetIndex++
         return DriveSignal.ApproachingWaypoint(chain.subList(targetIndex, chain.size).toList())
     }
 
+    /**
+     * Metres of route still to drive before the waypoint at [index], or the
+     * straight-line distance when there is no route line to measure along.
+     *
+     * Negative would mean the car is already past it, so it is clamped to zero —
+     * past is as arrived as it gets.
+     */
+    private fun metersLeftTo(index: Int, at: GeoPoint): Double {
+        val target = chain.getOrNull(index) ?: return Double.MAX_VALUE
+        if (routePolyline.size < 2 || alongAt.isEmpty()) return haversineMeters(at, target)
+        val there = pinAlong.getOrNull(index) ?: return haversineMeters(at, target)
+        return (there - alongOf(at)).coerceAtLeast(0.0)
+    }
+
+    /**
+     * How far along the route the car is: the vertex before it, plus how far it
+     * has travelled *into* that segment.
+     *
+     * The projection is the whole of it. Rounding back to the segment's start
+     * vertex is exact on a dense line and wildly wrong on a sparse one — a
+     * re-planned leg or a straight hop between junctions is two points a
+     * kilometre or two apart, and then the car reads as being at the start of
+     * that hop until it reaches the far end. Every waypoint inside the hop is
+     * then a kilometre further off than it really is, and none of them
+     * advances. The same trap `sampleSpine` fell into in the planner: a
+     * polyline's vertices say nothing about the road between them.
+     */
+    private fun alongOf(p: GeoPoint): Double {
+        val i = nearestSegment.coerceIn(0, routePolyline.size - 2)
+        val a = routePolyline[i]
+        val b = routePolyline[i + 1]
+        val metersPerLon = METERS_PER_DEGREE_LAT * kotlin.math.cos(Math.toRadians(a.lat))
+        val abEast = (b.lon - a.lon) * metersPerLon
+        val abNorth = (b.lat - a.lat) * METERS_PER_DEGREE_LAT
+        val apEast = (p.lon - a.lon) * metersPerLon
+        val apNorth = (p.lat - a.lat) * METERS_PER_DEGREE_LAT
+        val lengthSquared = abEast * abEast + abNorth * abNorth
+        if (lengthSquared <= 0.0) return alongAt[i]
+        val t = ((apEast * abEast + apNorth * abNorth) / lengthSquared).coerceIn(0.0, 1.0)
+        return alongAt[i] + t * kotlin.math.sqrt(lengthSquared)
+    }
+
     /** Whether the car is past the turn that the current waypoint depends on. */
-    private fun pastCommitPoint(): Boolean {
+    private fun pastCommitPoint(at: GeoPoint): Boolean {
         val commit = commitAlong.getOrNull(targetIndex) ?: return true
         if (commit == Double.NEGATIVE_INFINITY) return true
         if (routePolyline.size < 2) return true
-        return alongAt[nearestSegment] >= commit
+        return alongOf(at) >= commit
     }
 
     private fun cameraWarnings(update: LocationUpdate): List<DriveSignal> {

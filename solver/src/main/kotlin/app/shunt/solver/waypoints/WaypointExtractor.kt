@@ -137,6 +137,37 @@ object WaypointExtractor {
     /** Distance either side of a point used to measure how sharply it bends. */
     const val TURN_SPAN_METERS = 40.0
 
+    /**
+     * How close an avoided camera has to come to the route before the route is
+     * pinned either side of it.
+     *
+     * Reported from a real plan: a route that dodged a camera by taking the
+     * next street over, with no pin anywhere near the squeeze — *"a route that
+     * the car could easily still route through a camera, I don't trust that."*
+     * Nothing was wrong with the route; what was missing is that the stretch
+     * was held only by **prediction**, and the same objection applies here as
+     * at a turn. Every existing check asks BRouter whether the car would stray:
+     * the chord test in [pinAgainstShortcuts] and the leg routing in
+     * [WaypointRefiner]. Where BRouter's model of Tesla's router is wrong, the
+     * leg looks clean and the car drives past the camera anyway.
+     *
+     * Six hundred metres is deliberately about one open-road pin spacing. A
+     * camera further off our line than that needs the car to deviate half a
+     * kilometre to reach, which is a different and larger failure — the one
+     * turn pins and the refiner exist for. Nearer than that and the camera is
+     * a street away, which is precisely the geometry in the report.
+     */
+    const val CAMERA_GUARD_RADIUS_METERS = 600.0
+
+    /**
+     * Sampling used to find where the route passes closest to a camera.
+     *
+     * The answer positions a bracket hundreds of metres wide, so this is as
+     * fine as it needs to be, and a cross-state route is walked once per
+     * option.
+     */
+    const val GUARD_SAMPLE_METERS = 25.0
+
     fun extract(
         chosen: List<GeoPoint>,
         fastest: List<GeoPoint>,
@@ -156,16 +187,31 @@ object WaypointExtractor {
          * they are two halves of deciding the same pins.
          */
         outOfTime: () -> Boolean = { false },
+        /**
+         * The cameras this route stays clear of, indexed. Computing it means
+         * sweeping the whole line against the camera grid, and the planner has
+         * already done that — passing it in stops every option paying for it
+         * twice. Omitted, it is derived here exactly as it used to be.
+         */
+        avoided: CameraIndex = avoidedIndex(chosen, avoid, index),
     ): List<GeoPoint> {
         if (chosen.size < 2 || fastest.size < 2) return emptyList()
 
-        val shape = shapeIndices(chosen, fastest, maxWaypoints, thresholdMeters)
-        val pinned = pinAgainstShortcuts(chosen, avoid, shape, maxWaypoints, index, outOfTime)
+        // Built once: both the shape pass and the camera guards ask the same
+        // question of it — how far is this point from the road the car would
+        // have taken anyway.
+        val fastestIndex = PolylineIndex(fastest)
+        val shape = shapeIndices(chosen, fastestIndex, maxWaypoints, thresholdMeters)
+        val pinned = pinAgainstShortcuts(chosen, shape, maxWaypoints, avoided, outOfTime)
         // Merged in route order — spacing walks the list in order, so an
         // out-of-order pin would be measured against the wrong neighbour.
         val along = DoubleArray(chosen.size)
         for (i in 1 until chosen.size) along[i] = along[i - 1] + haversineMeters(chosen[i - 1], chosen[i])
-        val merged = (turnPins(chosen, index) + pinned.map { along[it] }).sorted()
+        val merged = (
+            turnPins(chosen, index) +
+                cameraGuardPins(chosen, avoided, index, fastestIndex, thresholdMeters) +
+                pinned.map { along[it] }
+            ).sorted()
         val spaced = spaceOut(merged.mapNotNull { pointAtAlong(chosen, it) }.distinct(), density = index)
         // An explicit cap stays a cap. Production passes NO_LIMIT — see that
         // constant for why — but a caller that asks for a ceiling gets one.
@@ -204,6 +250,92 @@ object WaypointExtractor {
             val at = pointAtAlong(chosen, turnAlong) ?: return@mapNotNull null
             turnAlong + WaypointRefiner.pastForkAt(at, density)
         }
+
+    /**
+     * A pin either side of every avoided camera the route squeezes past.
+     *
+     * Same argument as [turnPins], applied to the other place where being wrong
+     * is expensive. The refiner and the shortcut check both decide a stretch is
+     * safe by asking BRouter what the car would do; near a camera we are
+     * deliberately dodging, "BRouter thinks the car stays on our road" is the
+     * one answer that is not good enough, because the cost of it being wrong is
+     * the exposure the whole route exists to prevent.
+     *
+     * So the stretch is *instructed* instead. The near pin puts the car on our
+     * line before the camera's neighbourhood; the far one holds it there past
+     * the camera rather than letting it rejoin immediately. Both are placed at
+     * the density-aware fork distance, which is the smallest offset the drive
+     * monitor can still treat as a separate constraint.
+     *
+     * These are protected from pruning ([protectedPins]) for the same reason
+     * they exist: pruning drops a pin on BRouter's word.
+     *
+     * **Only where the route has left the fastest one**, which is what keeps
+     * this from flooding a city. A straight run through a metro passes hundreds
+     * of cameras a few streets over that it never goes near, and bracketing
+     * every one of them would put a pin every couple of hundred metres on a
+     * road with no decision on it — dozens of pushes to the car for nothing.
+     * Where the route *is* the fastest route the car has no reason to leave it,
+     * exactly as carrying straight on is never a wrong answer to a route that
+     * goes straight on. The camera worth guarding is the one our line detoured
+     * around, and on that stretch the two lines are apart by construction.
+     */
+    internal fun cameraGuardPins(
+        chosen: List<GeoPoint>,
+        avoided: CameraIndex,
+        density: CameraIndex,
+        fastest: PolylineIndex?,
+        thresholdMeters: Double = DIVERGENCE_THRESHOLD_METERS,
+    ): List<Double> =
+        avoided.closestApproachAlong(chosen, CAMERA_GUARD_RADIUS_METERS, GUARD_SAMPLE_METERS)
+            .values
+            .flatMap { at ->
+                val p = pointAtAlong(chosen, at) ?: return@flatMap emptyList<Double>()
+                if (fastest != null && fastest.distanceMeters(p) <= thresholdMeters) {
+                    return@flatMap emptyList<Double>()
+                }
+                val guard = WaypointRefiner.pastForkAt(p, density)
+                listOf(at - guard, at + guard)
+            }
+            .filter { it > 0.0 }
+
+    /**
+     * The cameras [chosen] stays clear of, indexed.
+     *
+     * Only these are worth pinning against — a camera the route knowingly
+     * passes is already reported to the user, and no waypoint changes that.
+     */
+    fun avoidedIndex(
+        chosen: List<GeoPoint>,
+        avoid: List<CameraVision>,
+        index: CameraIndex = CameraIndex(avoid),
+    ): CameraIndex {
+        if (avoid.isEmpty()) return CameraIndex(emptyList())
+        val seen = index.seeing(chosen).toSet()
+        return CameraIndex(avoid.filterNot { it in seen })
+    }
+
+    /**
+     * The pins on [chosen] that exist because of its geometry rather than
+     * because BRouter predicted the car would need them — past every turn, and
+     * either side of every avoided camera the route squeezes past.
+     *
+     * Pruning must not second-guess these. It removes a pin when routing the
+     * leg without it says the car would stay on our line anyway, which is the
+     * same prediction these two exist to stop relying on; letting it run on
+     * them would undo them one at a time.
+     */
+    fun protectedPins(
+        chosen: List<GeoPoint>,
+        fastest: List<GeoPoint>,
+        index: CameraIndex,
+        avoided: CameraIndex,
+    ): Set<GeoPoint> {
+        val fastestIndex = if (fastest.size >= 2) PolylineIndex(fastest) else null
+        return (turnPins(chosen, index) + cameraGuardPins(chosen, avoided, index, fastestIndex))
+            .mapNotNull { pointAtAlong(chosen, it) }
+            .toSet()
+    }
 
     /**
      * Drop pins that sit on top of one another. Keeps the first of each cluster
@@ -245,7 +377,7 @@ object WaypointExtractor {
     /** Indices of the most divergent point of each stretch off the fastest route. */
     private fun shapeIndices(
         chosen: List<GeoPoint>,
-        fastest: List<GeoPoint>,
+        fastestIndex: PolylineIndex,
         maxWaypoints: Int,
         thresholdMeters: Double,
     ): List<Int> {
@@ -267,7 +399,6 @@ object WaypointExtractor {
         // segment of the other, which on two forty-thousand-point lines is over
         // a billion distance calculations and was the single slowest thing in a
         // long plan.
-        val fastestIndex = PolylineIndex(fastest)
         for (i in chosen.indices) {
             val d = fastestIndex.distanceMeters(chosen[i])
             if (d > thresholdMeters) {
@@ -294,21 +425,12 @@ object WaypointExtractor {
      */
     private fun pinAgainstShortcuts(
         chosen: List<GeoPoint>,
-        avoid: List<CameraVision>,
         shape: List<Int>,
         maxWaypoints: Int,
-        index: CameraIndex,
+        avoidedIndex: CameraIndex,
         outOfTime: () -> Boolean,
     ): List<Int> {
-        if (avoid.isEmpty()) return shape
-
-        // Only cameras our own route genuinely stays clear of are worth pinning
-        // against — one the route knowingly passes is already reported to the
-        // user, and no waypoint will change that.
-        val seen = index.seeing(chosen).toSet()
-        val avoided = avoid.filterNot { it in seen }
-        if (avoided.isEmpty()) return shape
-        val avoidedIndex = CameraIndex(avoided)
+        if (avoidedIndex.isEmpty) return shape
 
         // Work over the full chain including the endpoints, which bound the
         // first and last shortcuts.

@@ -25,6 +25,9 @@ class CameraIndex(private val cameras: List<CameraVision>) {
     /** The widest range any camera here reaches, so a query never looks too narrowly. */
     private val maxRange = cameras.maxOfOrNull { it.range } ?: 0.0
 
+    /** Nothing to test against — every question below has a trivial answer. */
+    val isEmpty: Boolean get() = cameras.isEmpty()
+
     /** Every camera whose field of view [polyline] enters. */
     fun seeing(polyline: List<GeoPoint>): List<CameraVision> {
         if (cameras.isEmpty() || polyline.size < 2) return emptyList()
@@ -79,6 +82,50 @@ class CameraIndex(private val cameras: List<CameraVision>) {
             false
         }
         return cameras.filter { it in hits }
+    }
+
+    /**
+     * For every camera that comes within [meters] of [polyline], how far along
+     * the line it is at its closest.
+     *
+     * The along-distance is the point of it. "Which cameras are near the route"
+     * is already answered by [within]; this says *where*, which is what lets a
+     * pin be placed either side of the squeeze rather than somewhere on the
+     * route that happens to be convenient.
+     *
+     * Sampled at [stepMeters] rather than the usual ten, because the answer
+     * feeds a bracket hundreds of metres wide and paying for decimetre
+     * precision on a cross-state route would be waste.
+     */
+    fun closestApproachAlong(
+        polyline: List<GeoPoint>,
+        meters: Double,
+        stepMeters: Double = SAMPLE_METERS,
+    ): Map<CameraVision, Double> {
+        if (cameras.isEmpty() || polyline.size < 2) return emptyMap()
+        val nearest = HashMap<CameraVision, Double>()
+        val alongOfNearest = HashMap<CameraVision, Double>()
+        var along = 0.0
+        for (i in 0 until polyline.size - 1) {
+            val a = polyline[i]
+            val b = polyline[i + 1]
+            val span = haversineMeters(a, b)
+            val steps = (span / stepMeters).toInt().coerceAtLeast(1)
+            for (s in 0 until steps) {
+                val t = s.toDouble() / steps
+                val p = GeoPoint(a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t)
+                val here = along + span * t
+                for (camera in index.near(p, meters)) {
+                    val d = haversineMeters(p, camera.location)
+                    if (d <= meters && d < (nearest[camera] ?: Double.MAX_VALUE)) {
+                        nearest[camera] = d
+                        alongOfNearest[camera] = here
+                    }
+                }
+            }
+            along += span
+        }
+        return alongOfNearest
     }
 
     /**

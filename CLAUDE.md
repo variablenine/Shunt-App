@@ -80,6 +80,13 @@ passes run concurrently, which takes the same 615 km benchmark trip from 57 s to
 43 s; that part is from the repository's benchmark and wants confirming on a
 phone. See §7.4.
 
+**One caveat on that, found in the benchmark and still open.** A trip long
+enough to make the routes escape the camera corridor pays for the whole chooser
+twice, and at ~580 km the second round runs out of budget — leaving the driver
+the fastest road and nothing else. See §7.8 and field note F-16. Under that
+length it is fine; nobody has hit it in the wild yet, and it should not be
+shipped without an answer.
+
 Working but **not proven on real vehicles**:
 
 - Everything that talks to the car. See §6 and §7 — there are known, reproduced
@@ -157,7 +164,7 @@ rather than fail silently.
 | Module | Platform | Purpose |
 |---|---|---|
 | `:core` | Pure JVM | Shared value types (`GeoPoint`), zero dependencies |
-| `:brouter` | Pure JVM | Vendored BRouter engine (MIT). Upstream except `NogoIndex.java` and one loop in `RoutingContext.calcDistance` — see §7 |
+| `:brouter` | Pure JVM | Vendored BRouter engine (MIT). Upstream except `NogoIndex.java` and one loop in `RoutingContext.calcDistance` (§7); also republishes the shipped routing profile onto the JVM classpath |
 | `:solver` | Pure JVM | Camera source, BRouter router/planner, waypoints, search, charging range |
 | `:tesla` | Pure JVM | Vehicle seam: `VehicleNavClient`, fake, Tessie client, capability probe |
 | `:app` | Android | Compose UI, drive-monitor foreground service, DI (`AppContainer`) |
@@ -178,6 +185,14 @@ Key files, by the question they answer:
   will actually honour).
 - *What does a camera "see"?* `solver/brouter/CameraVision.kt`,
   indexed by `solver/brouter/CameraIndex.kt` over `solver/geo/SpatialIndex.kt`.
+- *What roads may the router use at all?* `app/src/main/assets/brouter/car-vario.brf`
+  — the shipped routing profile, and its **only** copy. `:brouter` republishes
+  those bytes onto the JVM classpath at build time (`bundledBrouterData`), so
+  tests and the benchmark route against exactly what a phone routes against; it
+  used to be a second checked-in file that could drift. The one Shunt rule in
+  it is marked `SHUNT CHANGE` — see §6, emergency-only crossovers —
+  and `CarProfileAccessTest` evaluates the profile against tag combinations
+  directly, which is the only routing check in CI that needs no `.rd5` tile.
 - *What happens while driving?* `app/drive/DriveMonitorEngine.kt` (pure decision
   logic), `app/drive/DriveMonitor.kt` (coordination), `DriveMonitorService.kt`
   (the Android shell). `DriveMonitorBounds` holds the numbers the monitor is
@@ -398,6 +413,46 @@ the camera and shortcut logic — two existing tests started passing for the wro
 reason. `gentleArc` in `WaypointExtractorTest` exists for that: a divergence with
 no turn in it, guarded by its own test asserting `turnsAlong` finds nothing.
 
+### And every camera the route squeezes past gets two
+
+The same argument as turn pins, aimed at the other place where prediction being
+wrong is expensive. Reported from a real plan, looking at the map:
+
+> in the first pic it shows a route that the car could easily still route
+> through a camera, I don't trust that.
+
+Nothing was wrong with the route. What was missing is that the stretch beside
+that camera was held **only by prediction** — the chord test in
+`pinAgainstShortcuts` and the leg routing in `WaypointRefiner` both decide a
+stretch is safe by asking BRouter what the car would do. Everywhere else that is
+a reasonable bet. Next to a camera the route deliberately dodged it is the one
+answer that is not good enough, because the cost of BRouter and Tesla's router
+disagreeing there is exactly the exposure the whole route exists to prevent.
+
+`WaypointExtractor.cameraGuardPins` therefore brackets it: for every avoided
+camera whose closest approach to the route is inside `CAMERA_GUARD_RADIUS_METERS`
+(600 m — about one open-road pin spacing), a pin one fork distance before that
+point and another one after. The near pin puts the car on our line before the
+camera's neighbourhood; the far one holds it there rather than letting it rejoin
+immediately. Both are in `protectedPins`, for the same reason they exist:
+pruning drops a pin on BRouter's word.
+
+**Only where the route has left the fastest one**, and that gate is what keeps
+this from flooding a city. A straight run through a metro passes hundreds of
+cameras a street or two over that it never goes near; bracketing each would put a
+pin every couple of hundred metres on a road with no decision on it. Where our
+route *is* the fastest route the car has no reason to leave it — the same
+reasoning that limits turn pins to turns.
+
+Measured on a 330 km benchmark trip into dense metro country, over real tiles
+and the real DeFlock set, and cheap:
+
+| | before | with guard pins |
+|---|---|---|
+| balanced | 73 pins | 113 |
+| fewest-cameras | 59 pins | 110 |
+| pin phase | 5.6 s | 6.6 s |
+
 ### Pins have to earn their place
 
 Pins arrive from two places and only one of them checked its work.
@@ -425,6 +480,40 @@ spacing. **What it costs is a deeper reliance on BRouter modelling the car
 correctly**, since a pin is now dropped on BRouter's word that the car would
 follow the road anyway. That is the assumption to suspect first if a car strays
 somewhere a pin used to sit.
+
+### Not through the gap the police use
+
+> i do not want it making turns on a highway using the turn lane dedicated for
+> emergency vehicles, often times that's recommended by low end nav apps and I
+> don't want that. Have to be able to distinguish the Michigan left type turn
+> though.
+
+The gap in a motorway or trunk median that exists so a patrol car can turn round
+is usually mapped `highway=service` + `service=emergency_access`, very often with
+no access tag at all. BRouter's untouched profile grants cars **every**
+`highway=service` way that carries no access tag, so those gaps were routable —
+and a router hunting for a shorter way past a camera will take one. That is a
+manoeuvre this app may never suggest, whatever it saves.
+
+`car-vario.brf` now tests that one tag and nothing else, which is exactly what
+keeps the Michigan left. A public median U-turn is an ordinary road or a
+`*_link`, and on the rare occasion it is mapped as a service road it says so with
+`motorcar=yes` / `access=yes` — both read *before* this rule, so an explicit
+permission still wins over our inference. `access=no|private` and
+`motor_vehicle=emergency` were already excluded upstream and still are.
+
+What it cannot cover is the crossover mapped as a bare `highway=service` with
+nothing to distinguish it. There is no signal there to act on, and the honest
+answer is to tag it in OpenStreetMap — the same answer as the search-coverage
+problem in §3.
+
+This is the **second** divergence from upstream BRouter (the first being
+`NogoIndex`), and the only one in the profile rather than the engine. It is
+marked `SHUNT CHANGE` and held by `CarProfileAccessTest`, which evaluates the
+shipped profile against tag combinations with no tiles and no search — the same
+expression engine BRouter runs per link, handed the tags by hand. That test is
+worth knowing about: it is the only way the profile's access rules are checkable
+in CI at all.
 
 ### 6.1 The driver always wins
 
@@ -475,6 +564,41 @@ otherwise — advancing early is still right, because the car treats a waypoint 
 a *stop* and will slow for it. There is one safety valve: within
 `arrivalRadiusMeters` it advances regardless, so a car that never registers as
 past the commit point is not left aiming at a pin it is sitting on.
+
+### How far away a waypoint is, is a question about the road
+
+The monitor used to answer it with a ruler: straight-line distance from the car
+to the pin. Reported from looking at a planned route:
+
+> When a route passes right next to a waypoint it isn't going to, it could
+> trigger that waypoint prematurely, or even if that's a waypoint it is
+> currently navigating to.
+
+Which is right, and it is not a rare shape. Any cloverleaf, switchback, or
+frontage road beside the carriageway brings the line back within metres of
+itself, so a pin on the far pass sits right beside the car while still being a
+mile off *along the route*. A ruler calls that arrival; the road says keep
+going. Advancing there is the §6.1 failure in miniature — the car is handed a
+target it has already passed by, and the pin that was meant to hold the next
+turn is gone before the turn.
+
+`DriveMonitorEngine` precomputes `pinAlong` (how far along the route each pin
+sits, walked forward from the previous pin so a route crossing itself matches
+the right passage) and `advanceOrArrive` gates on `metersLeftTo`, which is
+along-route distance. The arrival-radius valve from the section above still
+applies, and is still safe: it is reached only after the along-route test has
+passed, so it cannot fire from the other side of a loop.
+
+**One trap, and it cost two existing tests.** Along-route position needs the
+car's projection *into* the current segment, not the segment's start vertex.
+Rounding back to the vertex is exact on a dense line and hopeless on a sparse
+one — a re-planned leg or a straight hop between junctions is two points a
+couple of kilometres apart, and rounded back the car reads as sitting at the
+start of that hop until it reaches the far end, so nothing inside it ever
+advances. This is the same trap `sampleSpine` fell into in the planner: **a
+polyline's vertices say nothing about the road between them.** `alongOf`
+projects; `a sparse route line still measures progress inside a long hop` holds
+it there.
 
 ### It doesn't plan charging until it's put into drive
 
@@ -576,6 +700,39 @@ them, and add new observations as they come in. Detail lives in
    the camera count, and finally pin selection — which had no ceiling at all and
    turned out to be five times the cost of routing. Same 615 km trip: 20 min+ →
    403 s → **72.8 s**. See below.
+5. **The route the car could still cut through a camera.** *Fixed, unconfirmed
+   on a drive.* From looking at a planned route on the map: a detour around a
+   camera with no pin anywhere near the squeeze. The stretch was held only by
+   BRouter's prediction of what the car would do, which is the one place that
+   bet is not good enough. Camera guard pins bracket it — §6, "And every camera
+   the route squeezes past gets two".
+6. **A waypoint could trigger while the route was still a mile from it.**
+   *Fixed, unconfirmed on a drive.* The monitor measured how far away a pin was
+   with a ruler, and any cloverleaf or frontage road brings the line back within
+   metres of itself. §6, "How far away a waypoint is, is a question about the
+   road".
+7. **It would turn across a divided highway through the emergency-vehicle gap.**
+   *Fixed, unconfirmed on a drive.* BRouter's stock profile grants cars every
+   untagged `highway=service` way, which is how those gaps are usually mapped.
+   §6, "Not through the gap the police use".
+8. **A widen can still cost the driver every camera-avoiding option.** *Open,
+   newly reproduced in the repository's own benchmark.* On a 583 km trip over
+   real tiles, the routes escaped the 60 km corridor, the whole chooser ran a
+   second time out of the same plan budget, and the second round ran out —
+   `blocked` and `fewest` gave up, `balanced` was skipped, and **the only option
+   returned was the fastest road, passing 43 cameras.** The fixed-point loop
+   behaved correctly and the outcome is still the one thing this app exists not
+   to hand anyone. The same trip at 330 km widens too, but has budget left and
+   comes back with all three.
+
+   Nothing here is a bug to fix in place; it is a design question about what to
+   do when the widen round runs out. The option that looks right and has not been
+   built: keep the *previous* round's routes and re-label them against the wider
+   camera set. That stays inside the rule the loop exists to enforce — a route is
+   never labelled against cameras it was not measured against — while giving up
+   only the claim that the route is *optimal*, which is a far smaller loss than
+   showing the fastest road alone. It needs saying plainly in the UI if it is
+   done.
 
 ### Where planning time actually goes
 
@@ -890,9 +1047,15 @@ wrong (grouping cameras by site was expected to help and moved the number by
 
 **Watch the heap.** The Gradle test JVM defaults to `-Xmx512m`, and BRouter
 builds a `NodesCache` over tiles that are tens of megabytes each, so the
-benchmark is memory-bound in a way a phone may not be. Raise it before drawing
-conclusions, and remember the same constraint is what makes concurrent routing
-a memory question rather than a correctness one (§7).
+benchmark is memory-bound in a way a phone may not be. `-PshuntTestHeap=3g`
+raises it. Do that before drawing conclusions, and remember the same constraint
+is what makes concurrent routing a memory question rather than a correctness one
+(§7).
+
+**Pick the region tile that actually contains the trip.** DeFlock's regions are
+20° squares named by their south-west corner, so a trip at 33°N, −97° is in
+`20/-100.json`, not `40/-100.json`. Put exactly one `cams*.json` in the bench
+directory — the benchmark takes the first it finds.
 
 ### Testing when the Android SDK is unavailable
 
@@ -996,12 +1159,18 @@ Ordered roughly by what unblocks real use.
   concurrency (43 s vs 57 s on the benchmark) or the density-aware pins. The
   concurrency in particular wants watching for memory pressure on a real
   device rather than a container with 16 GB.
+- **[high] Don't hand the driver the fastest road when the widen runs out** —
+  §7.8 and field note F-16. This is the one open problem where the app's own
+  measured behaviour is the opposite of its purpose, and it is reproducible in
+  the repository's benchmark rather than needing a car.
 - **[high] Charging re-route on long trips** — §7.1.
 - **[high] Waypoint fidelity on the car** — §7.2. Getting a coarse location is
   worse than getting none, because it looks like it worked.
 - **[high] Confirm the August 2026 vehicle fixes on a real drive.** Charging
-  re-route, waypoint fidelity, standing down, and the abandoned-road block were
-  all diagnosed from field reports and none has been seen working in a car.
+  re-route, waypoint fidelity, standing down, the abandoned-road block, the
+  camera guard pins, along-route waypoint advancement, and the emergency-crossover
+  gate were all diagnosed from field reports or the map, and none has been seen
+  working in a car.
 - **Pin refinement, done lazily** — compute the next few pins rather than all of
   them. Not a speed problem any more; a quality one, since a long route's pins
   currently share one budget between them.

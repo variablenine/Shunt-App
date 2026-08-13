@@ -29,3 +29,7 @@ captures/
 
 # --- OS ---
 .DS_Store
+
+# Benchmark working directory: .rd5 tiles and a DeFlock dump, hundreds of
+# megabytes, and exactly the place a real trip's data would end up. See CLAUDE.md §8.
+bench/

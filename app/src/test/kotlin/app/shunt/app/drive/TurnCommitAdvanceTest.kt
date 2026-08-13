@@ -99,6 +99,74 @@ class TurnCommitAdvanceTest {
     }
 
     @Test
+    fun `passing close to a waypoint the route has not reached does not trigger it`() {
+        // Spotted on a planned route through a cloverleaf: the line comes back
+        // within metres of itself, so a waypoint on the far pass sits right
+        // beside the car while still being a long way off *along the route*.
+        // A ruler reads that as arrival; the road says two kilometres to go.
+        //
+        // The approach to the waypoint is deliberately straight for well over
+        // `turnCommitLookbackMeters`, so the turn-commit gate is inactive and
+        // the only thing that can prevent the trigger is along-route progress.
+        val m = metresNorth
+        val e = metresEast
+        val loop = buildList {
+            for (i in 0..100) add(GeoPoint(39.0, -98.0 + i * 10 * e))            // east 1 km
+            for (i in 1..40) add(GeoPoint(39.0 + i * 10 * m, -98.0 + 1000 * e))  // north 400 m
+            for (i in 1..40) add(GeoPoint(39.0 + 400 * m, -98.0 + (1000 - i * 10) * e)) // west 400 m
+            for (i in 1..100) add(GeoPoint(39.0 + (400 - i * 10) * m, -98.0 + 600 * e)) // south 1 km
+        }
+        // 300 m south of where the route crossed its own outbound leg — so 300 m
+        // from the car by ruler, about 1.9 km by road.
+        val late = GeoPoint(39.0 - 300 * m, -98.0 + 600 * e)
+        val engine = DriveMonitorEngine(
+            chain = listOf(late, GeoPoint(39.0 - 550 * m, -98.0 + 600 * e)),
+            cameras = emptyList(),
+            routePolyline = loop,
+        )
+
+        // On the outbound leg at speed, passing directly north of that waypoint.
+        val signals = engine.onLocation(
+            LocationUpdate(GeoPoint(39.0, -98.0 + 600 * e), speedMetersPerSec = 25.0),
+        )
+
+        assertTrue(
+            signals.none { it is DriveSignal.ApproachingWaypoint },
+            "a waypoint ~1.9 km further along the route was triggered by proximity: $signals",
+        )
+    }
+
+    @Test
+    fun `a sparse route line still measures progress inside a long hop`() {
+        // Measuring along the route means knowing where along it the car is, and
+        // rounding that back to the last vertex is exact on a dense line and
+        // hopeless on a sparse one. A re-planned leg or a straight hop between
+        // junctions is two points a couple of kilometres apart; rounded back,
+        // the car reads as sitting at the start of that hop until it reaches the
+        // far end, and every waypoint inside it looks kilometres away and never
+        // advances. Same trap the planner's `sampleSpine` fell into.
+        val hop = listOf(
+            GeoPoint(39.0, -98.0),
+            GeoPoint(39.0, -98.0 + 2000 * metresEast),
+        )
+        val atTheEnd = GeoPoint(39.0, -98.0 + 2000 * metresEast)
+        val engine = DriveMonitorEngine(
+            chain = listOf(atTheEnd, GeoPoint(39.0, -98.0 + 3000 * metresEast)),
+            cameras = emptyList(),
+            routePolyline = hop,
+        )
+
+        // 300 m short of the waypoint at 25 m/s: a 450 m lead, so this advances.
+        val signals = engine.onLocation(
+            LocationUpdate(GeoPoint(39.0, -98.0 + 1700 * metresEast), speedMetersPerSec = 25.0),
+        )
+        assertTrue(
+            signals.any { it is DriveSignal.ApproachingWaypoint },
+            "300 m from the waypoint inside a 2 km hop and it did not advance: $signals",
+        )
+    }
+
+    @Test
     fun `a straight approach is unaffected`() {
         // No turn to commit to, so nothing should change for the ordinary case.
         val straight = (0..200).map { GeoPoint(39.0, -98.0 + it * 10 * metresEast) }

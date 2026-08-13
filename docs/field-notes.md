@@ -893,6 +893,136 @@ ever grows a corner the guard fails rather than the coverage silently vanishing.
 Worth remembering the general shape — adding a mechanism that fires everywhere
 can quietly satisfy the preconditions of tests for other mechanisms.
 
+### F-15 · Three things from looking at a planned route
+*Raised: 2026-08-13, from the map rather than from a drive. All three addressed; none confirmed in a car.*
+
+> Okay, the pins are almost perfect just a couple things I'd like to flag. First,
+> in the first pic it shows a route that the car could easily still route through
+> a camera, I don't trust that. […] Second, […] When a route passes right next to
+> a waypoint it isn't going to, it could trigger that waypoint prematurely, or
+> even if that's a waypoint it is currently navigating to. […] Also i do not want
+> it making turns on a highway using the turn lane dedicated for emergency
+> vehicles […] Have to be able to distinguish the Michigan left type turn though.
+
+Three unrelated reports that happened to arrive together. Each turned out to be a
+different kind of thing, which is worth separating.
+
+**The camera the car could still cut through — the same argument as F-14, one
+step further.** F-14 established that a turn is a place where relying on
+BRouter's prediction can cost a wrong road. This is the other such place, and the
+cost is higher: next to a camera the route deliberately dodged, "BRouter thinks
+the car would stay on our line" is not good enough, because being wrong there is
+the exposure the whole route exists to prevent. Every avoided camera whose
+closest approach to the route is within 600 m now gets a pin one fork distance
+before it and another after — instructed rather than predicted — and both are
+protected from pruning, since pruning's own test is that prediction.
+
+The gate that keeps this affordable is that it only applies **where the route has
+left the fastest one**. A straight run through a metro passes hundreds of cameras
+a street over that it never goes near, and bracketing all of them would mean a
+pin every couple of hundred metres on a road with no decision on it. Where our
+route *is* the fastest route, the car has no reason to leave it.
+
+Measured on a 330 km benchmark trip into dense metro country, over real tiles
+and the real DeFlock set: balanced 73 → 113 pins, fewest-cameras 59 → 110, pin phase
+5.6 s → 6.6 s.
+
+**The premature trigger was a units problem, not a tuning one.** The monitor
+asked "how far is the car from this waypoint" and answered with a ruler. Any
+cloverleaf, switchback, or frontage road beside the carriageway brings the route
+back within metres of itself, so a pin on the far pass sits beside the car while
+still being a mile off *along the road*. That is not a threshold to tighten; the
+question was wrong. `DriveMonitorEngine` now measures along the route.
+
+The interesting part was what that broke. Along-route position needs the car's
+projection *into* the current segment; rounding it back to the segment's start
+vertex is exact on a dense line and hopeless on a sparse one — a re-planned leg
+or a straight hop between junctions is two points a couple of kilometres apart,
+and rounded back the car reads as sitting at the start of that hop until it
+reaches the far end, so nothing inside it ever advances. Two existing
+`DriveMonitorTest` cases caught it immediately, which is the system working.
+**This is the third time the same trap has been sprung in this project** — after
+`sampleSpine` dropping cameras between sparse vertices, and `straysFrom` checking
+a car path's vertices rather than the road between them. A polyline's vertices
+say nothing about what happens between them; if code treats a vertex as a
+position, check what happens when the vertices are kilometres apart.
+
+**The emergency crossover was a data question with a clean answer.** The gap in a
+divided highway's median that exists for patrol cars is usually mapped
+`highway=service` + `service=emergency_access`, and BRouter's stock car profile
+grants cars *every* `highway=service` way that carries no access tag — so those
+gaps were routable, and a router looking for a shorter way past a camera would
+take one.
+
+Distinguishing the Michigan left needed no cleverness once the tags were read.
+`lookups.dat`'s planet histogram has 8,290 ways tagged `service=emergency_access`
+and one tagged `service=crossover`; a public median U-turn is an ordinary road or
+a `*_link`, and where it is a service road it says `motorcar=yes` / `access=yes`
+— which the profile reads *before* our rule, so an explicit permission still
+wins. `access=no|private` and `motor_vehicle=emergency` were already excluded
+upstream. The change is one `assign` and one line of `caraccess` in
+`car-vario.brf`, marked `SHUNT CHANGE`.
+
+What it cannot cover is the crossover mapped as a bare `highway=service` with
+nothing to tell it apart. There is no signal there, and the answer is the same as
+for search coverage: tag it in OpenStreetMap.
+
+Two things came out of this that were not asked for:
+
+- **The profile had two checked-in copies** — `app/src/main/assets/brouter/` for
+  the phone and `brouter/src/main/resources/brouter-data/` for JVM tests — which
+  had stayed identical by luck. They can drift, and when they do the benchmark
+  measures and the tests vouch for a profile no user is running. The second copy
+  is gone; `:brouter` copies the shipped one onto the classpath at build time.
+- **The profile's access rules are now testable in CI.** `CarProfileAccessTest`
+  evaluates `car-vario.brf` against tag combinations using BRouter's own
+  expression engine, with no tiles and no search. Everything else about routing
+  needs an `.rd5` file too large to commit, so this is the only routing
+  behaviour CI can actually check.
+
+### F-16 · A widen can cost the driver every camera-avoiding option
+*Raised: 2026-08-13, from the repository's own benchmark. Open.*
+
+Not a field report — this came out of running the benchmark on a new trip while
+measuring something else, which is why it is worth writing down before it is
+seen in the wild.
+
+A 583 km trip over real tiles: the routes escaped the 60 km camera corridor, so
+the fixed-point loop widened and ran the whole chooser again out of the same plan
+budget. The second round ran out — `blocked` and `fewest (fallback)` gave up,
+`balanced` was skipped over budget — and the plan came back with **one option:
+the fastest road, 583.5 km, 43 cameras.** Total 75 s.
+
+```
+  fastest (spine)                       6.6 s
+  fastest                               3.3 s
+  blocked                              22.1 s
+  balanced                             19.8 s
+  fastest (widen 2)                     3.5 s
+  blocked (gave up — out of time) (widen 2)     11.4 s
+  fewest (fallback) (gave up — out of time) (widen 2)      7.6 s
+  balanced (skipped — over budget) (widen 2)      0.0 s
+```
+
+Every part behaved as designed. The corridor check is what keeps labels honest,
+the budget is what stops a plan running forever, and giving up a pass is
+supposed to be safer than corrupting one. The *outcome* is still the worst one
+available: a driver who asked for a camera-avoiding route is shown the fastest
+road and 43 cameras. The 330 km version of the same trip also widens, but has
+budget left over and returns all three options.
+
+The direction that looks right and has not been built: when the widen round runs
+out, fall back to the **previous** round's routes and re-label them against the
+wider camera set. That keeps the rule the loop exists to enforce — a route is
+never labelled against cameras it was not measured against — and gives up only
+the claim that the route is *optimal*, which is a much smaller loss. It would
+need saying plainly on the result sheet.
+
+Worth noting what is *not* the answer: widening `CAMERA_CORRIDOR_METERS` further.
+It is already at 60 km, matching the route bounding box, and a route that detours
+60 km sideways on a 330 km trip is not an anomaly to size around — it is what a
+camera-free route across dense country looks like.
+
 ---
 
 ## Resolved
