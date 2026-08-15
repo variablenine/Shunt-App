@@ -145,6 +145,26 @@ supermarkets a couple of miles away instead of Dubai. Overpass was measured for
 this and rejected: 30-40 s and frequent timeouts, which is fine for the one-shot
 Supercharger lookup and hopeless for a typeahead.
 
+**Overpass is also not the answer to "the place exists and Shunt can't find
+it", and this was measured rather than assumed.** The idea is tempting and
+keeps coming back: both geocoders answer from a pre-built index tuned for
+worldwide name lookup, so a small local business loses to its namesakes and a
+recently mapped one is missing entirely, while Overpass queries OSM itself
+minutes behind live. Built and measured as a last-resort tier — used only once
+both geocoders had failed, where the alternative was telling the driver no such
+place exists — a name query came back in **72-79 s** with a `nwr[name~…,i]`
+regex, and *narrowing the radius from 50 km to 5 km did not help*, because a
+case-insensitive regex on `name` cannot use any index and scans the whole area
+either way. One call in three was rate-limited outright. It was written, tested,
+measured, and deleted; do not rebuild it.
+
+What *does* work for a place the map data doesn't name is already in the app:
+press and hold it on the map. It is reverse-geocoded, routed to, and kept in
+Recents — and Recents are now matched as the driver types, so a place saved that
+way is findable by name from then on. That is keyless, instant, works offline,
+and cannot be missing. The other half of the answer is unchanged: add the place
+to OpenStreetMap so it is searchable for everyone.
+
 **Never commit personal location data.** No real home or work coordinates, no
 local town or business names, no recorded API responses from routes actually
 driven (encoded polylines hide coordinates from a text search, so they are

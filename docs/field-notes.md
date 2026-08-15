@@ -1083,6 +1083,49 @@ precisely that the last thing it was told was the destination. The fixture also
 needed its own geometry, far enough short of the first pin that nothing advances,
 so that every call the vehicle sees comes from the charging path.
 
+### F-18 · "All of the missing locations"
+*Raised: 2026-08-15. Partly addressed; the tempting fix was measured and thrown away.*
+
+> I am really not liking all of the missing locations that needs to be fixed.
+
+The obvious diagnosis is the keyless constraint, and it is wrong. Both geocoders
+already read OpenStreetMap; the trouble is that they read a *pre-built index*
+tuned for "what place in the world is named this", so a small local business is
+ranked against every namesake on the planet and loses. Photon's public index also
+trails OSM by weeks, so somewhere mapped last month simply is not in it.
+
+**The tempting fix, measured and discarded.** Overpass queries OSM itself,
+minutes behind live, so `nwr["name"~"birch",i](around:…)` finds the local shop
+neither geocoder will rank. Built as a last-resort tier — one query per settled
+search, only after both geocoders had already failed, only where the alternative
+was "no such place exists". Measured against the public endpoint:
+
+| query | time | results |
+|---|---|---|
+| 50 km radius | rate-limited (HTTP error) | — |
+| 15 km radius | 73.8 s | 0 |
+| 5 km radius | 72.0 s | 0 |
+
+Narrowing the radius by a factor of a hundred in area changed nothing, which is
+the tell: a case-insensitive regex on `name` cannot use an index, so Overpass
+scans the area whatever its size. The code was written, unit-tested, measured,
+and deleted. **CLAUDE.md §3 already said Overpass was 30-40 s and hopeless for
+search; the lesson is that "but a name query is cheaper than a tag sweep" was a
+guess, and it was worse, not better.**
+
+**What actually helps, and shipped instead.** Recents are now matched as the
+driver types, not just offered on an empty box. That matters more than it sounds,
+because press-and-hold on the map already reverse-geocodes a point, routes to it,
+and files it in Recents — so **any** place the map data cannot name by name can be
+pinned once and is findable by name from then on. It is instant, works with no
+signal, and cannot be missing, which is the opposite of every other row in the
+search results.
+
+The empty-search message now says so, rather than reading as a dead end.
+
+The other half of the answer is the one CLAUDE.md §3 has always given: add the
+place to OpenStreetMap, so it is searchable for everyone and not just here.
+
 ---
 
 ## Resolved

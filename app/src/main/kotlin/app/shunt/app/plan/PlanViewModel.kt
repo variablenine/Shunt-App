@@ -171,9 +171,16 @@ class PlanViewModel(
         }
     }
 
-    /** Route to a place picked from the recents list. */
+    /**
+     * Route to a place picked from the recents list.
+     *
+     * Indexes [PlanUiState.recentsShown] — the same list the screen drew — so
+     * the row that was tapped is the place that gets planned. Indexing the full
+     * history here instead would send the driver somewhere else entirely the
+     * moment the list was filtered by what they had typed.
+     */
     fun onRecentSelected(index: Int) {
-        _state.value.recents.getOrNull(index)?.let { planTo(it) }
+        _state.value.recentsShown.getOrNull(index)?.let { planTo(it) }
     }
 
     private fun planTo(destination: Destination) {

@@ -73,7 +73,7 @@ data class PlanUiState(
     /** Destination search couldn't be reached (offline / service error). */
     val searchFailed: Boolean = false,
     val favorites: Favorites = Favorites(),
-    /** Places routed to before, newest first; shown when the query is empty. */
+    /** Places routed to before, newest first. See [recentsShown]. */
     val recents: List<Destination> = emptyList(),
     val cameraDataFreshness: Freshness? = null,
     /**
@@ -108,6 +108,38 @@ data class PlanUiState(
 ) {
     /** Camera data came only from the bundled offline snapshot. */
     val usingOfflineCameraData: Boolean get() = cameraDataFreshness == Freshness.BUNDLED
+
+    /**
+     * The recent places worth offering right now: all of them before a key is
+     * pressed, and the matching ones once there is something to match.
+     *
+     * Recents are the one search result that costs nothing and cannot be
+     * missing. A keyless geocoder takes about a second and does not know the
+     * local diner; somewhere the driver has already been is known instantly and
+     * for certain. Since this app is used on the same handful of trips, that is
+     * the fastest path to most destinations — and it keeps working with no
+     * signal at all, which nothing else in search does.
+     *
+     * One list rather than two so the row a finger lands on is the row that gets
+     * used: the UI shows this and the selection callback indexes the same thing.
+     */
+    val recentsShown: List<Destination>
+        get() = if (query.isBlank()) recents else recents.filter { it.matches(query) }
+}
+
+/**
+ * Whether this place is a plausible answer to [query] — every word typed
+ * appears somewhere in its title.
+ *
+ * Word-wise and unordered on purpose. Someone looking for "Birch Street Diner"
+ * types "diner birch" as readily as the full name, and a prefix match on the
+ * whole string would find neither.
+ */
+private fun Destination.matches(query: String): Boolean {
+    val words = query.trim().lowercase().split(' ').filter { it.isNotBlank() }
+    if (words.isEmpty()) return false
+    val haystack = title.lowercase()
+    return words.all { it in haystack }
 }
 
 /** Where the plan flow is: browse → solve → choose → push. */

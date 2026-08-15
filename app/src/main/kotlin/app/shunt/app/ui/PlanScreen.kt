@@ -1,5 +1,6 @@
 package app.shunt.app.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,11 +14,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -27,7 +32,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -42,6 +48,9 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.shunt.app.plan.Destination
@@ -121,15 +130,43 @@ fun PlanScreen(
             onLongPress = actions.onMapLongPress.takeIf { state.phase is Phase.Browsing },
         )
 
-        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+        // Whether the search panel is expanded over the map.
+        //
+        // Held here rather than inside the panel because the scrim below needs
+        // it too: the results used to be shown whenever there were any, so there
+        // was no way to put them away — tapping the map did nothing, and the
+        // list sat over the route until the query was cleared by hand.
+        var searchOpen by remember { mutableStateOf(false) }
+        val focusManager = LocalFocusManager.current
+        fun closeSearch() {
+            searchOpen = false
+            focusManager.clearFocus()
+        }
+
+        // Tapping off the panel puts it away. The scrim only exists while the
+        // panel is open, so it never stands between a finger and the map the
+        // rest of the time.
+        if (searchOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
+                    .pointerInput(Unit) { detectTapGestures { closeSearch() } },
+            )
+        }
+
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
             if (state.usingOfflineCameraData) {
                 Banner("Using offline camera snapshot — data may be out of date.")
                 Spacer(Modifier.height(8.dp))
             }
             if (state.phase is Phase.Browsing) {
                 SearchAndFavorites(
-                    state,
-                    actions,
+                    state = state,
+                    actions = actions,
+                    open = searchOpen,
+                    onOpen = { searchOpen = true },
+                    onClose = { closeSearch() },
                     onOpenVehicleSettings = vehicleSettings?.let { { showVehicleSettings = true } },
                 )
             }
@@ -185,90 +222,163 @@ fun PlanScreen(
     }
 }
 
+/**
+ * The search bar, and what it expands into.
+ *
+ * Two states rather than one crowded panel. **Closed** it is a single rounded
+ * bar over the map with the favourite chips under it — the map is the point of
+ * this screen and everything else was competing with it. **Open** it takes the
+ * space it needs for results and dims the map behind, which is both easier to
+ * read and the thing that makes "tap away to dismiss" obvious.
+ */
 @Composable
 private fun SearchAndFavorites(
     state: PlanUiState,
     actions: PlanActions,
+    open: Boolean,
+    onOpen: () -> Unit,
+    onClose: () -> Unit,
     onOpenVehicleSettings: (() -> Unit)?,
 ) {
-    Surface(tonalElevation = 2.dp, shadowElevation = 6.dp, modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp)) {
+    Surface(
+        tonalElevation = 2.dp,
+        shadowElevation = 6.dp,
+        shape = RoundedCornerShape(if (open) 20.dp else 28.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
             if (state.stops.isNotEmpty()) {
                 StopsList(state.stops, actions.onRemoveStop)
-                Spacer(Modifier.height(8.dp))
             }
-            // Recents belong to the search box, not to the map screen: they only
-            // appear once it's actually tapped, so an idle screen stays a map.
-            var searchFocused by remember { mutableStateOf(false) }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
+                IconButton(onClick = { if (open) onClose() else onOpen() }) {
+                    Icon(
+                        if (open) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.Search,
+                        contentDescription = if (open) "Close search" else null,
+                    )
+                }
+                TextField(
                     value = state.query,
-                    onValueChange = actions.onQueryChange,
+                    onValueChange = { actions.onQueryChange(it); onOpen() },
                     singleLine = true,
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     placeholder = { Text("Where to?") },
+                    // Borderless: the Surface is already the visible container,
+                    // and a text field drawing its own outline inside it read as
+                    // a box inside a box.
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
                     modifier = Modifier
                         .weight(1f)
-                        .onFocusChanged { searchFocused = it.isFocused },
+                        .onFocusChanged { if (it.isFocused) onOpen() },
                 )
-                if (onOpenVehicleSettings != null) {
+                if (state.query.isNotEmpty()) {
+                    IconButton(onClick = { actions.onQueryChange("") }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                    }
+                } else if (onOpenVehicleSettings != null && !open) {
                     IconButton(onClick = onOpenVehicleSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Vehicle settings")
                     }
                 }
             }
 
-            if (state.suggestions.isNotEmpty()) {
-                LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {
-                    items(state.suggestions) { suggestion ->
-                        val index = state.suggestions.indexOf(suggestion)
-                        SuggestionRow(
-                            suggestion = suggestion,
-                            onClick = { actions.onSuggestionSelected(index) },
-                            onAddStop = { actions.onSuggestionAddedAsStop(index) },
-                        )
-                        HorizontalDivider()
-                    }
-                }
-            } else if (state.searching) {
-                SearchStatus("Searching…")
-            } else if (state.searchFailed && state.query.isNotBlank()) {
-                SearchStatus(
-                    "Couldn't reach search — check your connection.",
-                    color = MaterialTheme.colorScheme.error,
-                )
-            } else if (state.query.isNotBlank()) {
-                // Distinguish "no such place in the map data" from a silent blank,
-                // so an unmatched query reads as a result, not a broken search.
-                SearchStatus("No matching places found. Try a fuller name or a nearby town.")
-            } else if (searchFocused && state.recents.isNotEmpty()) {
-                // Search box tapped, nothing typed yet: offer where you went
-                // last. Typing into a keyless geocoder is the slowest part of
-                // setting off, and this app is used on the same handful of trips.
-                RecentPlaces(state.recents, actions.onRecentSelected)
-            }
-
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Tip: press and hold anywhere on the map to route there.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            val favorites = state.favorites
-            if (favorites.home != null || favorites.work != null) {
-                Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    favorites.home?.let {
-                        FavoriteChip("Home", Icons.Filled.Home) { actions.onFavoriteSelected(FavoriteSlot.HOME) }
-                    }
-                    favorites.work?.let {
-                        FavoriteChip("Work", Icons.Filled.LocationOn) { actions.onFavoriteSelected(FavoriteSlot.WORK) }
-                    }
-                }
+            if (open) {
+                SearchResults(state, actions)
             }
         }
     }
+
+    val favorites = state.favorites
+    if (!open && (favorites.home != null || favorites.work != null)) {
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            favorites.home?.let {
+                FavoriteChip("Home", Icons.Filled.Home) { actions.onFavoriteSelected(FavoriteSlot.HOME) }
+            }
+            favorites.work?.let {
+                FavoriteChip("Work", Icons.Filled.LocationOn) { actions.onFavoriteSelected(FavoriteSlot.WORK) }
+            }
+        }
+    }
+}
+
+/**
+ * What the open search shows: places already visited that match, then whatever
+ * the geocoders found, then an honest account of why there is nothing.
+ *
+ * Recents lead deliberately. They are instant, they work with no signal, and
+ * they cannot be missing — which is the opposite of every other row here.
+ */
+@Composable
+private fun SearchResults(state: PlanUiState, actions: PlanActions) {
+    val recents = state.recentsShown
+    HorizontalDivider()
+    LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+        if (recents.isNotEmpty()) {
+            item { SectionLabel(if (state.query.isBlank()) "Recent" else "Recent, matching") }
+            itemsIndexed(recents) { index, place ->
+                PlaceRow(
+                    title = place.title,
+                    subtitle = "Been here before",
+                    icon = Icons.Filled.Refresh,
+                    onClick = { actions.onRecentSelected(index) },
+                )
+                HorizontalDivider()
+            }
+        }
+        if (state.suggestions.isNotEmpty()) {
+            if (recents.isNotEmpty()) item { SectionLabel("Search results") }
+            itemsIndexed(state.suggestions) { index, suggestion ->
+                PlaceRow(
+                    title = suggestion.title,
+                    subtitle = suggestion.resultType,
+                    icon = Icons.Filled.LocationOn,
+                    onClick = { actions.onSuggestionSelected(index) },
+                    onAddStop = { actions.onSuggestionAddedAsStop(index) },
+                )
+                HorizontalDivider()
+            }
+        }
+        item {
+            when {
+                state.searching -> SearchStatus("Searching…")
+                state.searchFailed && state.query.isNotBlank() -> SearchStatus(
+                    "Couldn't reach search — check your connection.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+                // Distinguish "no such place in the map data" from a silent
+                // blank, so an unmatched query reads as a result rather than as
+                // a broken search.
+                // Not a dead end, and it must not read as one. The map data
+                // may simply not name this place — press and hold it on the map
+                // and it is named, routed to, and in Recent from then on, which
+                // is the only fix that works for a place OSM has not got.
+                state.query.isNotBlank() && state.suggestions.isEmpty() && recents.isEmpty() ->
+                    SearchStatus(
+                        "No match in the map data. Try a fuller name or a nearby town — " +
+                            "or press and hold the spot on the map, and it'll be in Recent next time.",
+                    )
+                state.query.isBlank() && recents.isEmpty() ->
+                    SearchStatus("Search for somewhere, or press and hold the map to route there.")
+                else -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp),
+    )
 }
 
 @Composable
@@ -281,22 +391,42 @@ private fun SearchStatus(message: String, color: androidx.compose.ui.graphics.Co
     )
 }
 
+/**
+ * One place in the list. [onAddStop] adds the + button that queues it as a stop
+ * rather than the destination; recents don't get one, because a place you have
+ * driven to before is a destination, not a waypoint.
+ */
 @Composable
-private fun SuggestionRow(suggestion: Suggestion, onClick: () -> Unit, onAddStop: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 12.dp),
-        ) {
-            Text(suggestion.title, style = MaterialTheme.typography.bodyLarge)
+private fun PlaceRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    onAddStop: (() -> Unit)? = null,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp).width(20.dp),
+        )
+        Column(modifier = Modifier.weight(1f).padding(vertical = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
             Text(
-                suggestion.resultType,
+                subtitle,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
             )
         }
-        // Tapping the row goes there; the + queues it as a stop on the way.
-        IconButton(onClick = onAddStop) {
-            Icon(Icons.Filled.Add, contentDescription = "Add \"${suggestion.title}\" as a stop")
+        if (onAddStop != null) {
+            IconButton(onClick = onAddStop) {
+                Icon(Icons.Filled.Add, contentDescription = "Add \"$title\" as a stop")
+            }
         }
     }
 }
@@ -304,7 +434,7 @@ private fun SuggestionRow(suggestion: Suggestion, onClick: () -> Unit, onAddStop
 /** The stops queued before the destination, in order, each removable. */
 @Composable
 private fun StopsList(stops: List<Destination>, onRemove: (Int) -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp)) {
         Text(
             "Stops on the way",
             style = MaterialTheme.typography.labelMedium,
@@ -315,6 +445,7 @@ private fun StopsList(stops: List<Destination>, onRemove: (Int) -> Unit) {
                 Text(
                     "${index + 1}. ${stop.title}",
                     style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = { onRemove(index) }) {
@@ -322,6 +453,7 @@ private fun StopsList(stops: List<Destination>, onRemove: (Int) -> Unit) {
                 }
             }
         }
+        HorizontalDivider()
     }
 }
 
@@ -333,36 +465,6 @@ private fun FavoriteChip(label: String, icon: androidx.compose.ui.graphics.vecto
         leadingIcon = { Icon(icon, contentDescription = null, Modifier.width(18.dp)) },
         colors = AssistChipDefaults.assistChipColors(),
     )
-}
-
-/** Where you went last, offered before a single key is pressed. */
-@Composable
-private fun RecentPlaces(recents: List<Destination>, onSelect: (Int) -> Unit) {
-    Spacer(Modifier.height(4.dp))
-    Text(
-        "Recent",
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    recents.forEachIndexed { index, place ->
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onSelect(index) }
-                .padding(vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.Search,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.height(18.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(place.title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-        }
-        HorizontalDivider()
-    }
 }
 
 @Composable
