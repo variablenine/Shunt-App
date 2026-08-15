@@ -248,7 +248,9 @@ the vehicle side is under active repair.
 ### Known issues from real-world driving
 
 These were seen on actual drives and are the current priorities. Details and
-subsequent findings live in [docs/field-notes.md](docs/field-notes.md).
+subsequent findings live in [docs/field-notes.md](docs/field-notes.md), and
+[docs/verification.md](docs/verification.md) tracks what has been fixed but not
+yet confirmed in a car — which is most of the vehicle path.
 
 - **Long routes are too slow to plan** — a ~5-hour route can take minutes, which
   is unusable in practice and worse for mid-drive re-planning. *Largely fixed;

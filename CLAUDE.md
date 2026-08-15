@@ -1251,6 +1251,10 @@ maintainer loses access to a given AI account or tool. Specifically:
 - `README.md` — anything user- or contributor-facing.
 - `docs/field-notes.md` — real-world observations and what they turned out to
   mean.
+- `docs/verification.md` — the list of things believed fixed and never seen
+  working in a car, with how to provoke each one. **When a fix lands without a
+  drive to confirm it, it goes in there in the same commit.** Losing track of
+  that list is how a beta ships with a bug that was already reported once.
 - §7 above — mark problems fixed, add new ones.
 
 If you finish a change and have not touched documentation, check again whether
