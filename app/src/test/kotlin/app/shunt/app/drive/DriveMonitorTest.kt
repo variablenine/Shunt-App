@@ -726,4 +726,95 @@ class DriveMonitorTest {
             "the new plan's cameras must be the ones warned about; alerts=${alerter.alerts}",
         )
     }
+
+    // ---- Extending a drive with a leg planned while moving ----------------
+    //
+    // A long trip is handed over as its first leg so the driver can set off in
+    // seconds rather than minutes; the rest arrives while the car is moving.
+    // The property that matters is that appending changes nothing about the part
+    // already driven.
+
+    @Test
+    fun `a leg that lands mid-drive extends the chain without losing progress`() = runTest {
+        val vehicle = FakeVehicleNavClient()
+        val boundary = GeoPoint(33.0, -96.94)
+        val realEnd = GeoPoint(33.0, -96.90)
+        val firstLeg = DrivePlan(
+            destination = Destination("Boundary", dest),
+            chain = chain,
+            cameras = emptyList(),
+            polyline = chain,
+            remaining = listOf(dest, realEnd),
+        )
+        val nextLeg = DrivePlan(
+            destination = Destination("Home", realEnd),
+            chain = listOf(boundary, realEnd),
+            cameras = emptyList(),
+            polyline = listOf(dest, boundary, realEnd),
+        )
+        val extensions = kotlinx.coroutines.channels.Channel<DrivePlan>(kotlinx.coroutines.channels.Channel.CONFLATED)
+        val published = mutableListOf<DrivePlan>()
+
+        val monitor = DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            onPlanChanged = { published += it },
+            extensions = extensions,
+        )
+        // Set off and pass w1 *before* the next leg lands — building the fixes
+        // eagerly would deliver it on the first fix, when there is no progress
+        // to preserve and the test proves nothing.
+        val locations = kotlinx.coroutines.flow.flow {
+            emit(fix(west(w1, 1000.0)))
+            emit(fix(west(w1, 300.0)))
+            extensions.trySend(nextLeg)
+            emit(fix(west(w2, 300.0)))
+            emit(fix(west(dest, 300.0)))
+        }
+        monitor.run(firstLeg, locations)
+
+        val extended = published.single()
+        assertEquals(
+            Destination("Home", realEnd),
+            extended.destination,
+            "the extension must restore the real destination the first leg stood in for",
+        )
+        assertTrue(
+            w1 !in extended.chain,
+            "a pin already driven past came back into the chain: ${extended.chain}",
+        )
+        assertEquals(
+            listOf(boundary, realEnd),
+            extended.chain.takeLast(2),
+            "the new leg's chain must be appended in order",
+        )
+        assertTrue(extended.remaining.isEmpty(), "this extension reaches the destination")
+    }
+
+    @Test
+    fun `reaching a leg boundary with nothing beyond it is not an arrival`() = runTest {
+        // Vanishingly rare by design — the boundary is an hour's driving away and
+        // the next leg plans in seconds — but announcing arrival in open country
+        // is worse than admitting the app is behind.
+        val alerter = RecordingAlerter()
+        val partial = DrivePlan(
+            destination = Destination("Boundary", dest),
+            chain = chain,
+            cameras = emptyList(),
+            polyline = chain,
+            remaining = listOf(dest, GeoPoint(33.0, -96.90)),
+        )
+
+        DriveMonitor(FakeVehicleNavClient(), alerter)
+            .run(partial, flowOf(*approach.map { fix(it) }.toTypedArray()))
+
+        assertTrue(
+            alerter.alerts.any { it is Alert.LegBoundaryReached },
+            "the driver must be told the route is unfinished: ${alerter.alerts}",
+        )
+        assertTrue(
+            alerter.alerts.none { it is Alert.Arrived },
+            "a leg boundary was announced as the destination",
+        )
+    }
 }

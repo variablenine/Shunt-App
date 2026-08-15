@@ -68,6 +68,15 @@ class DriveMonitor(
      */
     private val onPlanChanged: (DrivePlan) -> Unit = {},
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    /**
+     * Legs planned after the drive began, appended as they land.
+     *
+     * A long trip is handed over as its first leg so the driver can set off in
+     * seconds instead of minutes; the rest arrives here while the car is already
+     * moving. Conflated, because only the newest matters — an extension is
+     * always the whole of what is left, not a delta.
+     */
+    private val extensions: kotlinx.coroutines.channels.ReceiveChannel<DrivePlan>? = null,
 ) {
     /**
      * Whether the car is being steered pin by pin (see [DrivePlan.steerByWaypoints]).
@@ -94,6 +103,18 @@ class DriveMonitor(
                 // Worked out before `previous` moves on, so it compares this fix
                 // with the one before it rather than with itself.
                 val heading = headingOf(previous, update)
+                // Take any leg that landed since the last fix, before deciding
+                // anything from this one — the chain it adds may be what the
+                // current position should be measured against.
+                extensions?.tryReceive()?.getOrNull()?.let { next ->
+                    current = extend(current, next, engine)
+                    // Inherits what has already been announced: an extension is
+                    // the same drive continuing, so a camera warned about on the
+                    // first leg must not be warned about again.
+                    engine = newEngine(current, engine)
+                    totalPins = (current.chain.size - 1).coerceAtLeast(0)
+                    onPlanChanged(current)
+                }
                 for (signal in engine.onLocation(update)) {
                     when (signal) {
                         is DriveSignal.ApproachingWaypoint -> advance(signal.remaining)
@@ -140,7 +161,15 @@ class DriveMonitor(
                             // On a charging leg this is the charger, not the
                             // trip's end: the drive continues after charging.
                             val stop = charging?.chargeStopUnderWay()
-                            if (stop == null) {
+                            if (current.isPartial) {
+                                // A leg boundary the next leg has not reached yet.
+                                // Announcing arrival here would be a plain lie —
+                                // the driver is in open country, not where they
+                                // were going. This should be vanishingly rare:
+                                // the boundary is at least an hour's driving from
+                                // the start and the next leg plans in seconds.
+                                alerter.alert(Alert.LegBoundaryReached)
+                            } else if (stop == null) {
                                 arrived = true
                                 alerter.alert(Alert.Arrived)
                                 onStatus(DriveStatus.Arrived)
@@ -371,6 +400,32 @@ class DriveMonitor(
      */
     private fun aim(chain: List<GeoPoint>): List<GeoPoint> =
         if (steering && chain.isNotEmpty()) listOf(chain.first()) else chain
+
+    /**
+     * [current] with [next] appended: the leg that just landed, joined onto what
+     * is left of the one being driven.
+     *
+     * **The chain deliberately starts from the pin the car is aiming at, not
+     * from the beginning.** Rebuilding an engine over the whole chain would
+     * reset it to the first pin, which is behind the driver — the car would be
+     * handed a target it passed an hour ago. Dropping the pins already behind
+     * makes the join a plain append, and everything that follows is correct by
+     * construction rather than by careful index arithmetic.
+     *
+     * Nothing is pushed to the car here. The pin it is aiming at is unchanged —
+     * it is still the head of the chain — so an extension is invisible to the
+     * vehicle, which is exactly what it should be.
+     */
+    private fun extend(current: DrivePlan, next: DrivePlan, engine: DriveMonitorEngine): DrivePlan =
+        current.copy(
+            // The real destination, which the first leg only stood in for.
+            destination = next.destination,
+            chain = engine.remainingChain() + next.chain,
+            cameras = (current.cameras + next.cameras).distinctBy { it.id },
+            polyline = current.polyline + next.polyline,
+            stopPoints = current.stopPoints + next.stopPoints,
+            remaining = next.remaining,
+        )
 
     /** Stamp the steering mode on a route that replaces the current one. */
     private fun inForce(plan: DrivePlan): DrivePlan =

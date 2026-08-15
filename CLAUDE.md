@@ -841,6 +841,28 @@ competing with the UI for the same cores.
 `LegSplitter` cuts the trip instead. The first leg is planned and handed over;
 the rest are planned while the car is already moving.
 
+**How it reaches the driver.** `BrouterPlanner` returns the leg's options plus
+`remaining`; `PlanViewModel` carries that onto the `DrivePlan`; the result sheet
+says plainly that its numbers describe the first stretch only, with the whole
+trip's direct distance beside it. On Go, `AppContainer.planRemainingLegs` plans
+the rest **to the destination** rather than one leg at a time — the phone is idle
+while the car moves, and finishing early gives a slow leg hours of slack instead
+of minutes — and pushes each result through a conflated channel to the monitor.
+
+`DriveMonitor.extend` appends it, and the one thing that makes that safe is that
+**the new chain starts from the pin the car is aiming at, not from the
+beginning.** Rebuilding over the whole chain would reset the monitor to the first
+pin, which is an hour behind the driver. Dropping what is already passed makes
+the join a plain append, and nothing is pushed to the car — the pin it is aimed
+at is still the head of the chain, so an extension is invisible to the vehicle.
+The engine inherits which cameras have already been announced, because an
+extension is the same drive continuing.
+
+Arriving at a boundary with no leg beyond it raises `Alert.LegBoundaryReached`
+rather than announcing arrival. It should be close to unreachable — the boundary
+is at least `MIN_LEG_METERS` of driving away and a leg plans in seconds — but
+announcing arrival in open country is the worse failure.
+
 **Where the cut goes is the entire problem, and it is not a distance.** A leg
 boundary is a hard waypoint both legs must touch, so it costs the difference
 between the best route *through that point* and the best route overall. Cutting
@@ -1319,14 +1341,9 @@ Ordered roughly by what unblocks real use.
   concurrency (43 s vs 57 s on the benchmark) or the density-aware pins. The
   concurrency in particular wants watching for memory pressure on a real
   device rather than a container with 16 GB.
-- **[high] Wire leg planning through the app.** The solver splits and the
-  measurements are strong (§6, "Cutting a long trip into legs"), but
-  `maxLegMeters` defaults to *off* until the app can extend a drive in progress:
-  a caller that ignores `PlanOutcome.Routes.remaining` would drive someone to a
-  point in open country and call it their destination. Needs `DrivePlan` to
-  carry the remainder, `DriveMonitor` to accept an extension without losing
-  progress or re-announcing cameras, and the result sheet to say plainly that it
-  is showing a leg.
+- **[high] Confirm leg planning on a real long drive.** Wired through and
+  measured in the benchmark (§6, "Cutting a long trip into legs"), never driven.
+  The things to watch are in `docs/verification.md` B4.
 - **[high] Don't hand the driver the fastest road when the widen runs out** —
   §7.10 and field note F-16. This is the one open problem where the app's own
   measured behaviour is the opposite of its purpose, and it is reproducible in

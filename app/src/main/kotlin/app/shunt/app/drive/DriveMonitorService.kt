@@ -95,6 +95,7 @@ class DriveMonitorService : Service() {
             charging = container.chargeStopCoordinator(plan),
             // Republish the route in force so the map draws what is being
             // driven, not the line that was abandoned.
+            extensions = container.legExtensions,
             onPlanChanged = {
                 container.liveDrivePlan.value = it
                 container.diagnostics.record(

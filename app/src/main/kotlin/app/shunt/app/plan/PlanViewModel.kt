@@ -256,7 +256,13 @@ class PlanViewModel(
                 rangeReady = gate
                 _state.update {
                     it.copy(
-                        phase = Phase.Solved(destination, outcome.options, timings = outcome.timings),
+                        phase = Phase.Solved(
+                            destination,
+                            outcome.options,
+                            timings = outcome.timings,
+                            remaining = outcome.remaining,
+                            wholeTripMeters = outcome.wholeTripMeters,
+                        ),
                         chargeStopSearchFailed = false,
                         checkingRange = gate != null,
                     )
@@ -509,7 +515,7 @@ class PlanViewModel(
     fun onGo() {
         val solved = _state.value.phase as? Phase.Solved ?: return
         val option = solved.chosen
-        val plan = drivePlanFor(option, solved.destination)
+        val plan = drivePlanFor(option, solved.destination, solved.remaining)
         _state.update { it.copy(phase = Phase.Pushing(solved.destination, option)) }
         workScope.launch {
             // Let the range read land before deciding how to drive this trip.
@@ -647,7 +653,11 @@ class PlanViewModel(
      * followed by the destination itself. Cameras are the ones this route
      * passes, to warn about — empty for a camera-free route.
      */
-    private fun drivePlanFor(option: PlannedRoute, destination: Destination): DrivePlan =
+    private fun drivePlanFor(
+        option: PlannedRoute,
+        destination: Destination,
+        remaining: List<GeoPoint> = emptyList(),
+    ): DrivePlan =
         DrivePlan(
             destination = destination,
             chain = option.waypoints + destination.location,
@@ -656,6 +666,7 @@ class PlanViewModel(
             // The driver's own stops are in the chain too, but must not be shed
             // on approach the way shaping pins are — they're where they're going.
             stopPoints = _state.value.stops.map { it.location }.toSet(),
+            remaining = remaining,
         )
 
     /**

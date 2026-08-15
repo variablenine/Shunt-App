@@ -187,13 +187,27 @@ a couple of hundred metres where the streets and cameras are dense.
 town that the app is pushing a new one every few seconds.
 
 ### B4 · Long trips are cut into legs
-*Solver done and measured; **not yet wired into the app**, so there is nothing
-to test here until it is. Left in the list so it is not forgotten.*
+*Wired through 2026-08-15 and measured in the benchmark; never driven.*
 
-When it lands, the things to check are: the first leg arrives quickly enough to
-set off on; the boundary is in open country rather than in a town; the rest of the
-route appears while driving without interrupting anything; and arriving at a
-boundary that has not been extended yet says so rather than announcing arrival.
+**Setup.** Plan a trip of 300 km or more, ideally one whose fastest line passes
+through a town or two.
+
+**Pass.** The chooser appears in well under half a minute and says plainly that
+it is showing the first part of the trip, with the whole trip's distance beside
+it. Tapping Go starts driving normally. Somewhere in the first few minutes the
+route on the map grows to reach the real destination, with no interruption to the
+drive and no re-announcement of cameras already passed. The boundary — where the
+route grew from — should be out in open country, not in the middle of a town.
+
+**Fail.** Any of: the chooser taking minutes; the sheet showing a leg's distance
+as if it were the trip's; the map never growing; the car being re-pushed a
+waypoint it already passed as the route grows; cameras announced twice; or the
+drive announcing arrival at the boundary.
+
+**The one genuinely bad outcome** is reaching the boundary before the next leg
+lands — you would hear "still working out the rest of the route". It should be
+impossible in practice (the boundary is over an hour's driving away and a leg
+plans in seconds), so if it happens, that is worth reporting in detail.
 
 ---
 

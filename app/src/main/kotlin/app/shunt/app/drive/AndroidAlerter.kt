@@ -95,6 +95,7 @@ class AndroidAlerter(
             "Your car is detouring to ${alert.name} and Shunt could not route it. Drive as if unprotected."
         is Alert.ChargingUpdateFailed -> "Charging route update failed. Check the route on the car."
         Alert.Arrived -> "Arrived."
+        Alert.LegBoundaryReached -> "Still working out the rest of the route. Carry on when you can."
     }
 
     private fun plural(n: Int) = if (n == 1) "" else "s"
@@ -213,6 +214,11 @@ class AndroidAlerter(
                 "Check the route on the car before continuing.",
         )
         Alert.Arrived -> Triple(ARRIVED_NOTIF, "Arrived", "You've reached your destination.")
+        Alert.LegBoundaryReached -> Triple(
+            ARRIVED_NOTIF,
+            "End of the planned stretch",
+            "The rest of the route is still being worked out.",
+        )
     }
 
     private fun vibrate(severity: Alert.Severity) {

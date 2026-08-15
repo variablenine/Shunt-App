@@ -25,7 +25,15 @@ import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.app.diag.DiagnosticLog
+import app.shunt.solver.brouter.LegSplitter
+import app.shunt.solver.brouter.PlanOutcome
 import app.shunt.solver.camera.PracticeCameras
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
 import app.shunt.solver.search.PlaceSearch
@@ -311,6 +319,73 @@ class AppContainer(context: Context) {
     val liveDrivePlan = MutableStateFlow<DrivePlan?>(null)
 
     /**
+     * Legs planned after the driver set off, on their way to the drive monitor.
+     *
+     * Conflated because only the newest matters: each extension carries the
+     * whole of what is left, not a delta, so a monitor that misses one and takes
+     * the next has lost nothing.
+     */
+    val legExtensions = Channel<DrivePlan>(Channel.CONFLATED)
+
+    private var legJob: Job? = null
+
+    /**
+     * For work that outlives a screen but not the process — planning the later
+     * legs of a trip in particular, which must survive the plan screen going
+     * away when the driving sheet takes over.
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Plan the rest of a trip while its first leg is being driven.
+     *
+     * Runs to the destination rather than one leg at a time: the phone is idle
+     * while the car moves, and finishing early means a slow leg has hours of
+     * slack rather than minutes. Each result is sent to the monitor, which
+     * appends it to what is left of the chain.
+     *
+     * Everything here is best-effort. A leg that fails to plan leaves the driver
+     * on the route they already have, heading for a boundary that will announce
+     * itself as unfinished — which is bad, but is not the same as being stranded,
+     * and is far better than blocking Go on the whole trip.
+     */
+    fun planRemainingLegs(plan: DrivePlan) {
+        legJob?.cancel()
+        if (!plan.isPartial) return
+        legJob = appScope.launch(Dispatchers.Default) {
+            var points = plan.remaining
+            val destination = plan.destination
+            while (points.size >= 2 && isActive) {
+                diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
+                val outcome = runCatching { brouterPlanner.plan(points, maxLegMeters = LegSplitter.MAX_LEG_METERS) }
+                    .getOrNull()
+                if (outcome !is PlanOutcome.Routes || outcome.options.isEmpty()) {
+                    diagnostics.record(DiagnosticLog.Kind.PLAN, "next leg failed to plan")
+                    return@launch
+                }
+                // The same preference the driver expressed on the chooser, which
+                // for every leg after the first is "as few cameras as possible" —
+                // they already accepted the trade when they picked it.
+                val chosen = outcome.options.minByOrNull { it.camerasPassed } ?: return@launch
+                val legPlan = DrivePlan(
+                    destination = destination,
+                    chain = chosen.waypoints + points.last(),
+                    cameras = chosen.passedCameras,
+                    polyline = chosen.polyline,
+                    remaining = outcome.remaining,
+                )
+                legExtensions.trySend(legPlan)
+                diagnostics.record(
+                    DiagnosticLog.Kind.PLAN,
+                    "next leg ready: ${chosen.distanceMeters / 1000} km, ${chosen.camerasPassed} cameras",
+                )
+                if (outcome.remaining.size < 2) return@launch
+                points = outcome.remaining
+            }
+        }
+    }
+
+    /**
      * Every known camera in a map viewport, for the DeFlock-style display.
      * Reuses the same cached DeFlock source the router draws on, so panning the
      * map is cheap once tiles are warm.
@@ -346,7 +421,16 @@ class AppContainer(context: Context) {
             // thread — which is the main one — so a long trip froze the UI and
             // tripped Android's "isn't responding" dialog.
             withContext(Dispatchers.Default) {
-                brouterPlanner.plan(points, onProgress, heading)
+                // Cut a long trip into legs and hand back only the first, so the
+                // driver waits ten seconds rather than two minutes. The rest is
+                // planned by [planRemainingLegs] once they set off. See
+                // LegSplitter for why the boundary lands where it does.
+                brouterPlanner.plan(
+                    points = points,
+                    onProgress = onProgress,
+                    headingDegrees = heading,
+                    maxLegMeters = LegSplitter.MAX_LEG_METERS,
+                )
             }.also { outcome ->
                 // Keep the tiles we actually route through fresh against eviction.
                 if (outcome is app.shunt.solver.brouter.PlanOutcome.Routes) {

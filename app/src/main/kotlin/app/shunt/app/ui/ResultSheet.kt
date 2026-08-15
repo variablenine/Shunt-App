@@ -193,6 +193,35 @@ private fun SolvedContent(
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
     )
+    if (phase.remaining.isNotEmpty()) {
+        // These options cover the first leg only, and every number below is a
+        // number about that leg. Presenting them as the whole trip would be a
+        // plain lie — the distance, the time and the camera count are all short.
+        Spacer(Modifier.height(6.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                    "Showing the first part of the trip",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    phase.wholeTripMeters?.let {
+                        "This trip is about ${it / 1000} km. Planning it all at once takes " +
+                            "minutes, so Shunt plans the first stretch now and the rest while " +
+                            "you drive — the figures below are for that first stretch."
+                    } ?: "Shunt plans the first stretch now and the rest while you drive; " +
+                        "the figures below are for that first stretch.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+    }
     Spacer(Modifier.height(12.dp))
 
     // Choose a route. With only one option (no cameras nearby) this is a single

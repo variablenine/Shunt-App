@@ -214,6 +214,18 @@ sealed interface Alert {
         override val severity get() = Severity.INFO
     }
 
+    /**
+     * The end of a leg, with the next one not planned yet.
+     *
+     * Should be close to unreachable — a boundary is at least an hour's driving
+     * from where the trip started and the next leg plans in seconds — but the
+     * alternative if it happens is announcing arrival somewhere the driver was
+     * not going, which is worse than admitting the app is behind.
+     */
+    data object LegBoundaryReached : Alert {
+        override val severity get() = Severity.WARNING
+    }
+
     enum class Severity { INFO, WARNING, URGENT }
 }
 

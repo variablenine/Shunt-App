@@ -110,6 +110,12 @@ class MainActivity : ComponentActivity() {
                     livePlan?.let { vm.onRouteReplanned(it) }
                 }
 
+                // A trip too long to plan in one go is handed over as its first
+                // leg; the rest is planned while the car is already moving.
+                LaunchedEffect(state.phase) {
+                    (state.phase as? Phase.Driving)?.plan?.let { container.planRemainingLegs(it) }
+                }
+
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
                         vm.onArrived()

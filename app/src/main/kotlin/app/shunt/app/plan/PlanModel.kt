@@ -52,7 +52,20 @@ data class DrivePlan(
      * trip clearly doesn't need a charge.
      */
     val steerByWaypoints: Boolean = false,
-)
+    /**
+     * The rest of the trip, when this plan is only its first leg: the points
+     * from this plan's destination to the real one, still to be planned.
+     *
+     * A long trip is cut at a camera-free point on the direct road so the driver
+     * can set off in ten seconds instead of two minutes (see `LegSplitter`), and
+     * the remainder is planned while the car is already moving. Empty means this
+     * plan reaches the destination.
+     */
+    val remaining: List<GeoPoint> = emptyList(),
+) {
+    /** Whether this plan stops short of where the driver is actually going. */
+    val isPartial: Boolean get() = remaining.isNotEmpty()
+}
 
 /**
  * The single screen state. [phase] drives what's shown; [query]/[suggestions]
@@ -178,6 +191,13 @@ sealed interface Phase {
         val selected: Int = 0,
         /** Where planning time went. Temporary diagnostic — see [PlanTimings]. */
         val timings: app.shunt.solver.brouter.PlanTimings? = null,
+        /**
+         * The rest of the trip when these options are only its first leg, and
+         * the trip's whole length by the direct road. Both null/empty for a trip
+         * planned in one go. See `LegSplitter`.
+         */
+        val remaining: List<GeoPoint> = emptyList(),
+        val wholeTripMeters: Int? = null,
     ) : Phase {
         val chosen: PlannedRoute get() = options[selected.coerceIn(options.indices)]
     }
