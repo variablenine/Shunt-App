@@ -29,11 +29,12 @@ class DriveMonitorTest {
 
     private fun fix(p: GeoPoint) = LocationUpdate(p, speedMetersPerSec = 25.0, bearingDegrees = 90.0)
 
-    private fun plan(cameras: List<Camera> = emptyList()) = DrivePlan(
+    private fun plan(cameras: List<Camera> = emptyList(), steered: Boolean = false) = DrivePlan(
         destination = Destination("Home", dest),
         chain = chain,
         cameras = cameras,
         polyline = chain,
+        steerByWaypoints = steered,
     )
 
     private class RecordingAlerter : Alerter {
@@ -520,8 +521,10 @@ class DriveMonitorTest {
         vehicle: FakeVehicleNavClient,
         reads: MutableList<app.shunt.tesla.ActiveRoute?>,
         chargerPlan: DrivePlan?,
+        steering: Boolean = false,
     ) = ChargeStopCoordinator(
         vehicle = vehicle,
+        steering = steering,
         readActiveRoute = { reads.removeFirstOrNull() },
         planLeg = { _, _, to, _ -> if (to.location == charger) chargerPlan else null },
         // Cadence is covered in ChargeStopCoordinatorTest; here every fix is
@@ -589,6 +592,95 @@ class DriveMonitorTest {
         val unroutable = alerter.alerts.filterIsInstance<Alert.ChargeStopUnroutable>().single()
         assertEquals("Supercharger Anytown", unroutable.name)
         assertEquals(Alert.Severity.URGENT, unroutable.severity, "no avoidance in force is urgent")
+    }
+
+    @Test
+    fun `a charging check always leaves a steered car aimed at the next pin`() = runTest {
+        // Observed on a real drive. A charging probe has to redirect the car at
+        // the final destination to ask its question, and putting the aim back was
+        // left to the coordinator — which does it on the paths it knows about and
+        // cannot on the rest. Here the car reports it has dropped the charger, so
+        // the coordinator tries to resume to the destination, and the re-plan for
+        // that comes back empty (no tile out there, engine busy, whatever). It
+        // reports "nothing changed" and the car is left holding the *destination*.
+        //
+        // A car holding the destination drives to it. The driver leaves the
+        // shaped route, which reads as off-route, which re-plans — and they end
+        // up on a road with cameras on it that they had a clean route around.
+        // That is the whole failure, and it starts here.
+        //
+        // Its own geometry, deliberately: the car sits far short of the next pin
+        // so nothing advances, and every call the vehicle sees comes from the
+        // charging path. Otherwise a stale advance from earlier in the drive is
+        // the last call and the assertion passes without meaning anything.
+        val start = GeoPoint(33.0, -97.0)
+        val line = (0..50).map { west(start, -it * 100.0) } // 5 km east, every 100 m
+        val pin = line[40]
+        val far = line[50]
+        val vehicle = FakeVehicleNavClient()
+        val chargerLeg = DrivePlan(
+            destination = Destination("Supercharger Anytown", charger),
+            chain = listOf(charger),
+            cameras = emptyList(),
+            polyline = listOf(line[2], charger),
+        )
+        val charging = chargingCoordinator(
+            vehicle,
+            // First the car reports the charger it inserted, then that it has
+            // gone back to heading for the destination.
+            mutableListOf(
+                navigatingTo(charger, "Supercharger Anytown"),
+                navigatingTo(far, "Home"),
+            ),
+            chargerLeg,
+            steering = true,
+        )
+
+        DriveMonitor(vehicle, RecordingAlerter(), charging = charging).run(
+            DrivePlan(
+                destination = Destination("Home", far),
+                chain = listOf(pin, far),
+                cameras = emptyList(),
+                polyline = line,
+                steerByWaypoints = true,
+            ),
+            flowOf(fix(line[2]), fix(line[3])),
+        )
+
+        // What matters is the *last* thing the car was told, because that is what
+        // it drives to.
+        val last = vehicle.calls().last()
+        assertIs<FakeVehicleNavClient.Call.AdvanceTo>(
+            last,
+            "the probe's own redirect to the destination was the last word to the car: $last",
+        )
+        assertEquals(
+            listOf(charger),
+            last.waypoints,
+            "the car must end up aimed at the pin in force, not the trip's destination",
+        )
+    }
+
+    @Test
+    fun `a free read costs the car no extra commands`() = runTest {
+        // The other half of the rule above. A car that holds the destination can
+        // be read without touching it, so there is nothing to put back and
+        // re-sending its own destination would be pure traffic on a rate-limited
+        // API. Only the two ordinary waypoint advances.
+        val vehicle = FakeVehicleNavClient()
+        val charging = chargingCoordinator(
+            vehicle,
+            mutableListOf(navigatingTo(dest, "Home")),
+            chargerPlan = null,
+        )
+
+        DriveMonitor(vehicle, RecordingAlerter(), charging = charging)
+            .run(plan(), flowOf(*approach.map { fix(it) }.toTypedArray()))
+
+        assertEquals(
+            listOf(listOf(w2, dest), listOf(dest)),
+            vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>().map { it.waypoints },
+        )
     }
 
     @Test

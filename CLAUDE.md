@@ -600,6 +600,37 @@ polyline's vertices say nothing about the road between them.** `alongOf`
 projects; `a sparse route line still measures progress inside a long hop` holds
 it there.
 
+### After touching the car's destination, put the aim back — always
+
+**From a real drive, and the most instructive kind of bug: every piece worked
+and the whole did not.** A charging probe has to redirect the car at the final
+destination to ask its question — that *is* the question, "given the whole trip,
+what do you intend?" — and the coordinator was left to restore the steering aim
+afterwards. It does, on the paths it knows about. It cannot on the others: a
+re-assert that reports failure after the car has already taken it, a resume whose
+re-plan comes back empty, an exception on the way out. On any of those the car is
+left holding the trip's destination.
+
+A car holding the destination drives to it. So the driver leaves the shaped
+route, which reads as off-route, which re-plans — and the re-plan put them on a
+road with cameras on it that they had a clean route around. The camera exposure
+is four steps downstream of a missing push.
+
+`DriveMonitor.reaim` therefore asserts the aim rather than trusting it: every
+charging check that changes nothing ends with the car pointed where the monitor
+believes it is pointed. That is the only claim worth making after touching the
+car's destination, and it costs one rate-limited command every 45 s at worst.
+
+Two conditions on it, both load-bearing:
+
+- **Only while steering.** A car that holds the destination is read for free —
+  no push, no redirect, nothing to put back — so re-sending its own destination
+  would be pure traffic. A steered car never holds the destination, so every
+  probe redirects it and every probe owes it an aim.
+- **Never after standing down.** "Unconditional" means whatever the *probe*
+  concluded, not whatever the *driver* wants. §6.1 covers this path like every
+  other.
+
 ### It doesn't plan charging until it's put into drive
 
 Reading at the moment Go is tapped always answers "no charging stop". The check
@@ -715,7 +746,16 @@ them, and add new observations as they come in. Detail lives in
    *Fixed, unconfirmed on a drive.* BRouter's stock profile grants cars every
    untagged `highway=service` way, which is how those gaps are usually mapped.
    §6, "Not through the gap the police use".
-8. **A widen can still cost the driver every camera-avoiding option.** *Open,
+8. **A charging check left the car aimed at the destination, and the recovery
+   drove past a camera.** *Fixed, unconfirmed on a drive.* Reported with
+   screenshots from a real drive: after a charging check the shaped route was
+   abandoned, the car left the route, and the re-plan came back through a camera
+   when a camera-free route existed. Two distinct faults in a chain — the aim was
+   not restored on every path (fixed, §6, "After touching the car's destination")
+   and a mid-drive re-plan is given less time than one avoidance pass needs on a
+   long trip, so it can come back as the plain fastest road. The second is the
+   known budget tension below and is *not* fixed.
+9. **A widen can still cost the driver every camera-avoiding option.** *Open,
    newly reproduced in the repository's own benchmark.* On a 583 km trip over
    real tiles, the routes escaped the 60 km corridor, the whole chooser ran a
    second time out of the same plan budget, and the second round ran out —

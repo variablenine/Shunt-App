@@ -1023,6 +1023,58 @@ It is already at 60 km, matching the route bounding box, and a route that detour
 60 km sideways on a 330 km trip is not an anomaly to size around — it is what a
 camera-free route across dense country looks like.
 
+### F-17 · A charging check handed the car back to the destination
+*Observed: 2026-08-15, on a real drive, with screenshots. Fixed; unconfirmed in a car.*
+
+> after checking for charging, shunt does not automatically send the waypoint
+> back to the car after doing so. […] After the car leaves the route, a new route
+> is chosen that goes through a camera when a camera free route still exists.
+
+Two separate faults in one chain, and worth separating because only one of them
+is fixed.
+
+**The first is the missing push, and it is the interesting one.** A charging
+probe cannot be asked without redirecting the car: the question is "given the
+whole trip, what do you intend", so the car has to be holding the whole trip to
+answer it. `ChargeStopCoordinator` therefore pushes the final destination, reads,
+and restores the steering aim. It restores on the paths it was written for. It
+does not on the rest — a re-assert that reports failure after the car has already
+taken it, a resume whose re-plan comes back empty, an exception on the way out —
+and on every one of those the car is left holding the destination.
+
+Nothing looks wrong at that moment. The failure only appears three steps later:
+the car drives to the destination it is holding, that reads as off-route, the
+off-route handler re-plans, and the driver is somewhere they never chose. **The
+missing push and the camera are four steps apart**, which is why this survived
+the last round of charging fixes — the restore code exists and is correct, and
+it was the paths that skip it that mattered.
+
+The fix moves the responsibility rather than adding another branch to it.
+`DriveMonitor` now re-aims after *any* charging check that changes nothing,
+instead of trusting the coordinator to have done it. The monitor is the thing
+that knows where the car should be pointed, and asserting it costs a rate-limited
+command every 45 s at worst.
+
+**The second fault is not fixed, and needs saying plainly**: the re-plan came
+back through a camera *when a camera-free route existed*. That is the mid-drive
+budget tension already recorded in CLAUDE.md §7 — a re-plan gets
+`REPLAN_PASS_BUDGET_MILLIS` (12 s) while one avoidance pass on a long trip costs
+around 20 s, so a re-plan early in a long drive can only return the fastest road.
+This is the first time it has been seen happening rather than predicted. Leg
+splitting should help a great deal, since what gets re-planned is then a leg
+rather than a cross-state trip, but that wants confirming with a measurement
+before anyone believes it.
+
+**A trap this laid for the test suite**, worth recording because it took three
+attempts. The obvious test — drive a steered plan through a probe, assert the car
+ends up aimed at a pin — passes without the fix, because an ordinary waypoint
+advance earlier in the drive is *also* an aim at a pin, and asserting on "the
+last advance" finds that one. The assertion has to be on the last call of any
+kind: what the car is driving to is the last thing it was told, and the bug is
+precisely that the last thing it was told was the destination. The fixture also
+needed its own geometry, far enough short of the first pin that nothing advances,
+so that every call the vehicle sees comes from the charging path.
+
 ---
 
 ## Resolved

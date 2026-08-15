@@ -177,13 +177,16 @@ class DriveMonitor(
                     headingDegrees = heading,
                 )
                 onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
-                applyLeg(change, finalDestination)?.let { fresh ->
-                    current = fresh
+                val afterCharging = applyLeg(change, finalDestination)
+                if (afterCharging != null) {
+                    current = afterCharging
                     // Deliberately NOT inheriting what has already been
                     // announced. A charging leg is a different stretch of road,
                     // often an hour later, and a camera met again there is a new
                     // encounter — under-warning is the worse mistake here.
-                    engine = newEngine(fresh)
+                    engine = newEngine(afterCharging)
+                } else {
+                    reaim(engine.remainingChain())
                 }
             }
         } finally {
@@ -381,6 +384,47 @@ class DriveMonitor(
             .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
         if (pushed is PushResult.Failed) {
             alerter.alert(Alert.AdvanceFailed(sending, pushed.reason, pushed.retryable))
+        }
+    }
+
+    /**
+     * Put the car back on the pin we are steering to, after a charging check.
+     *
+     * **Observed on a real drive**, and the reason this is unconditional. A
+     * charging probe has to redirect the car at the final destination to ask its
+     * question — that is the only way to read what the car intends — and the
+     * coordinator was left to put the aim back itself. It does, on the paths it
+     * knows about. It cannot on the others: a re-assert that reports failure
+     * after the car has already taken it, a resume whose re-plan finds nothing,
+     * an exception on the way out. On every one of those the car is left holding
+     * the trip's destination, and a car holding the destination drives to it —
+     * off our route, which is then reported as off-route, re-planned, and the
+     * driver ends up on a road with cameras on it that they had a clean route
+     * around.
+     *
+     * So the monitor asserts it instead of trusting it. Every probe that changes
+     * nothing ends with the car aimed where the monitor believes it is aimed,
+     * which is the only claim worth making after touching the car's destination.
+     * A wasted command is a rate-limited call every 45 s at worst; the failure it
+     * replaces is silent camera exposure.
+     *
+     * Unconditional here means *whatever the probe concluded*, not *whatever the
+     * driver wants*: [stoodDown] still stops it, because a monitor that kept
+     * pushing after standing down would be back to fighting the driver (§6.1).
+     *
+     * Limited to steering because that is exactly when a probe has to move the
+     * car. A car that holds the final destination can be read for free — no
+     * push, no redirect, nothing to put back — and re-sending its own
+     * destination to it would be pure traffic. A steered car never holds the
+     * destination, so every probe redirects it and every probe owes it an aim.
+     */
+    private suspend fun reaim(remaining: List<GeoPoint>) {
+        if (!steering || stoodDown || remaining.isEmpty()) return
+        val sending = aim(remaining)
+        val result = runCatching { vehicle.advanceTo(sending) }
+            .getOrElse { e -> PushResult.Failed("re-aim threw: ${e.message}", retryable = true) }
+        if (result is PushResult.Failed) {
+            alerter.alert(Alert.AdvanceFailed(sending, result.reason, result.retryable))
         }
     }
 
