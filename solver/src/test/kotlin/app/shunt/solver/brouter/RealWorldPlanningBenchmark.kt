@@ -101,6 +101,123 @@ class RealWorldPlanningBenchmark {
     }
 
     /**
+     * A long trip planned the way a driver actually gets it: the first leg now,
+     * the rest while they drive.
+     *
+     * What this is for is the *shape* of the numbers, not the total. The total
+     * is worse than a single whole-trip plan would be if a whole-trip plan
+     * worked — several spines, several camera sets — but the number that matters
+     * to a driver is the first one, because that is how long they sit looking at
+     * a spinner before they can set off. Everything after it happens while the
+     * car is moving, with an hour of driving to land in.
+     *
+     * It also answers the question splitting was supposed to settle: whether the
+     * legs together avoid as many cameras as one big plan would, or whether
+     * holding the route to the boundaries costs exposure. Compare the summed
+     * camera counts against the same trip planned with `maxLegMeters = null`.
+     */
+    @Test
+    fun `plan a long trip leg by leg, as a driver would receive it`() = runTest(timeout = 30.minutes) {
+        val from = point("SHUNT_BENCH_FROM")
+        val to = point("SHUNT_BENCH_TO")
+        val all = cameras()
+        val router = BrouterRouter(segmentDir = File(benchDir, "segments"), profileDir = benchDir)
+        val planner = BrouterPlanner(
+            route = { request -> router.route(request) },
+            missingTiles = { emptyList() },
+            camerasIn = { bbox -> all.filter { bbox.contains(it.location) } },
+            lastPassTimings = { router.lastPassTimings },
+        )
+
+        println("=".repeat(66))
+        var points = listOf(from, to)
+        var leg = 1
+        var wallTotal = 0L
+        var distanceTotal = 0.0
+        var camerasTotal = 0
+        var pinsTotal = 0
+        while (true) {
+            val startedAt = System.currentTimeMillis()
+            val outcome = planner.plan(points, maxLegMeters = LegSplitter.MAX_LEG_METERS)
+            val wall = System.currentTimeMillis() - startedAt
+            wallTotal += wall
+            if (outcome !is PlanOutcome.Routes) {
+                println("leg $leg FAILED: $outcome")
+                break
+            }
+            // What the driver would be steering: the fewest-cameras option where
+            // there is one, which is the choice this app exists to offer.
+            val chosen = outcome.options.minByOrNull { it.camerasPassed } ?: break
+            distanceTotal += chosen.distanceMeters
+            camerasTotal += chosen.camerasPassed
+            pinsTotal += chosen.waypoints.size
+            println(
+                "leg %d  %6.1f s  %6.1f km  %3d cameras  %3d pins%s".format(
+                    leg, wall / 1000.0, chosen.distanceMeters / 1000.0,
+                    chosen.camerasPassed, chosen.waypoints.size,
+                    if (outcome.isPartial) "  (more to come)" else "  (destination)",
+                ),
+            )
+            if (!outcome.isPartial) break
+            points = outcome.remaining
+            leg++
+        }
+        println(
+            "total  %6.1f s over %d legs, %.1f km, %d cameras, %d pins".format(
+                wallTotal / 1000.0, leg, distanceTotal / 1000.0, camerasTotal, pinsTotal,
+            ),
+        )
+        println("=".repeat(66))
+    }
+
+    /**
+     * The same trip planned whole, with a budget no phone would spend, purely so
+     * the legged result above can be compared against something.
+     *
+     * Exposure is the comparison that matters and it is usually settled without
+     * this — zero cameras cannot be beaten. What this adds is the distance: how
+     * much further the legged route drives for having been held to its
+     * boundaries. If that gap is ever large, the cut rule is choosing badly.
+     */
+    @Test
+    fun `plan the same trip whole, for comparison`() = runTest(timeout = 60.minutes) {
+        val all = cameras()
+        val patient = BrouterRouter(
+            segmentDir = File(benchDir, "segments"),
+            profileDir = benchDir,
+            passBudgetMillis = 15 * 60_000L,
+        )
+        val planner = BrouterPlanner(
+            route = { request -> patient.route(request) },
+            missingTiles = { emptyList() },
+            camerasIn = { bbox -> all.filter { bbox.contains(it.location) } },
+            lastPassTimings = { patient.lastPassTimings },
+            refineBudgetMillis = 60_000L,
+        )
+        val startedAt = System.currentTimeMillis()
+        val outcome = planner.plan(
+            points = listOf(point("SHUNT_BENCH_FROM"), point("SHUNT_BENCH_TO")),
+            routeBudgetMillis = 45 * 60_000L,
+            maxLegMeters = null,
+        )
+        val wall = System.currentTimeMillis() - startedAt
+        println("=".repeat(66))
+        println("whole trip, unsplit, in ${wall / 1000.0} s")
+        if (outcome is PlanOutcome.Routes) {
+            outcome.options.forEach {
+                println(
+                    "  %-16s %6.1f km  %3d cameras  %d pins".format(
+                        it.choice, it.distanceMeters / 1000.0, it.camerasPassed, it.waypoints.size,
+                    ),
+                )
+            }
+        } else {
+            println("  $outcome")
+        }
+        println("=".repeat(66))
+    }
+
+    /**
      * How long each avoidance pass needs when it is allowed to finish, and how
      * that scales with the size of the camera set.
      *

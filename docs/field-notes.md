@@ -1011,6 +1011,14 @@ available: a driver who asked for a camera-avoiding route is shown the fastest
 road and 43 cameras. The 330 km version of the same trip also widens, but has
 budget left over and returns all three options.
 
+**Update, 2026-08-15.** Long trips are now cut into legs before this can happen
+(CLAUDE.md §6), and a leg is short enough that its routes rarely leave the
+corridor — the same 583 km trip now returns a camera-free first leg in 9.4 s
+instead of the fastest road in 75 s. That does not *fix* this: a single leg
+through dense country can still escape and still lose its options. It makes it
+rare rather than routine, which is a reason to keep the entry open rather than
+close it.
+
 The direction that looks right and has not been built: when the widen round runs
 out, fall back to the **previous** round's routes and re-label them against the
 wider camera set. That keeps the rule the loop exists to enforce — a route is

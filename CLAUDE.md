@@ -80,12 +80,14 @@ passes run concurrently, which takes the same 615 km benchmark trip from 57 s to
 43 s; that part is from the repository's benchmark and wants confirming on a
 phone. See §7.4.
 
-**One caveat on that, found in the benchmark and still open.** A trip long
-enough to make the routes escape the camera corridor pays for the whole chooser
-twice, and at ~580 km the second round runs out of budget — leaving the driver
-the fastest road and nothing else. See §7.8 and field note F-16. Under that
-length it is fine; nobody has hit it in the wild yet, and it should not be
-shipped without an answer.
+**Longer than that, the answer is to stop planning it in one go.** A trip whose
+routes escape the camera corridor pays for the whole chooser twice, and at
+~580 km the second round ran out of budget and handed the driver the fastest road
+and nothing else (§7.10, F-16). `LegSplitter` cuts such a trip at a camera-free
+point on the direct road and plans the first leg alone: the same 583 km trip goes
+from 75 s and 43 cameras to **9.4 s and a camera-free first leg**. The solver
+side is done and measured; it is *off by default* until the app can extend a
+drive in progress. See §6, "Cutting a long trip into legs".
 
 Working but **not proven on real vehicles**:
 
@@ -746,7 +748,17 @@ them, and add new observations as they come in. Detail lives in
    *Fixed, unconfirmed on a drive.* BRouter's stock profile grants cars every
    untagged `highway=service` way, which is how those gaps are usually mapped.
    §6, "Not through the gap the police use".
-8. **A charging check left the car aimed at the destination, and the recovery
+8. **The screen stalls while a long trip is planned.** *Believed relieved by
+   legs, unconfirmed on a phone.* Reported as "kind of a screen freezing issue
+   again on longer distances". Planning already runs off the main thread
+   (`AppContainer`'s `RoutePlanner` wraps the whole plan in `Dispatchers.Default`,
+   not just the routing), so this is contention rather than a blocked UI thread:
+   two routing threads at full tilt for a minute or more, plus the GC pressure of
+   two tile caches. Cutting the trip into legs takes the foreground plan from 75 s
+   to about 9, which is the structural fix; if it still stalls after that, the
+   next thing to try is running the routing threads at background priority so the
+   UI thread preempts them.
+9. **A charging check left the car aimed at the destination, and the recovery
    drove past a camera.** *Fixed, unconfirmed on a drive.* Reported with
    screenshots from a real drive: after a charging check the shaped route was
    abandoned, the car left the route, and the re-plan came back through a camera
@@ -755,8 +767,10 @@ them, and add new observations as they come in. Detail lives in
    and a mid-drive re-plan is given less time than one avoidance pass needs on a
    long trip, so it can come back as the plain fastest road. The second is the
    known budget tension below and is *not* fixed.
-9. **A widen can still cost the driver every camera-avoiding option.** *Open,
-   newly reproduced in the repository's own benchmark.* On a 583 km trip over
+10. **A widen can still cost the driver every camera-avoiding option.** *Open,
+   but far less reachable now that long trips are cut into legs — a leg is short
+   enough that its routes rarely leave the corridor. Still the correct thing to
+   fix, because a leg through dense country can still do it.* On a 583 km trip over
    real tiles, the routes escaped the 60 km corridor, the whole chooser ran a
    second time out of the same plan budget, and the second round ran out —
    `blocked` and `fewest` gave up, `balanced` was skipped, and **the only option
@@ -773,6 +787,67 @@ them, and add new observations as they come in. Detail lives in
    only the claim that the route is *optimal*, which is a far smaller loss than
    showing the fastest road alone. It needs saying plainly in the UI if it is
    done.
+
+### Cutting a long trip into legs
+
+Planning cost grows faster than distance, and past roughly 500 km it stops
+producing a usable answer at all: the routes escape the camera corridor, the
+whole chooser runs a second time out of one budget, the second round times out,
+and the driver is handed the fastest road (§7.9). Meanwhile the phone is
+unresponsive for the minute or two it takes, because two routing threads are
+competing with the UI for the same cores.
+
+`LegSplitter` cuts the trip instead. The first leg is planned and handed over;
+the rest are planned while the car is already moving.
+
+**Where the cut goes is the entire problem, and it is not a distance.** A leg
+boundary is a hard waypoint both legs must touch, so it costs the difference
+between the best route *through that point* and the best route overall. Cutting
+at a fixed fraction puts it wherever it lands — and on a long trip the fastest
+line runs through metros, because that is where the roads are. The maintainer put
+the objection before a line was written:
+
+> a leg ending […] somewhere in the middle of [a city] along the fastest line is
+> going to end up getting dragged through a bunch of turns and stuff when it
+> would be faster and easier to avoid.
+
+So the rule is **cut where there is nothing to avoid.** A boundary is free
+wherever every plausible route goes the same way anyway, and that is exactly a
+stretch with no cameras near it: with nothing to dodge, the fastest road *is* the
+fewest-cameras road, and pinning the route to a point on it constrains nothing
+that was going to happen differently. Candidates are the spine points between
+`MIN_LEG_METERS` and `MAX_LEG_METERS` along; the winner is the one with fewest
+cameras within `QUIET_RADIUS_METERS`, ties going to the later one because every
+boundary is a constraint nobody asked for. The city is then planned as one whole
+leg with full freedom to route around it.
+
+Camera count is the proxy for "nothing to decide here" — the same proxy and the
+same argument as `WaypointExtractor.DENSITY_RADIUS_METERS`, and the only signal
+available without planning the very routes the cut exists to make cheap.
+
+`MIN_LEG_METERS` is really a deadline: it is how far the driver must travel
+before the next leg is needed, and at 120 km/h 120 km is over an hour against a
+leg that plans in about ten seconds. Arriving at a boundary with nothing beyond
+it is the one genuinely bad outcome of splitting, and it should never be close.
+
+**Measured on the 583 km benchmark trip that used to fail outright:**
+
+| | whole trip | in legs |
+|---|---|---|
+| before the driver can set off | 75 s | **9.4 s** |
+| what they get | fastest road, 43 cameras | 218 km, **0 cameras** |
+| whole trip, all legs | — | 62.5 s, 776 km, 0 cameras |
+
+And against the same trip planned whole with a 45-minute budget no phone would
+ever spend — 130.7 s, 688.7 km, 0 cameras — legs cost **+12.7% distance** for the
+same zero exposure. That is the real price of the boundaries, and it is worth
+knowing before anyone tunes `MAX_LEG_METERS`: raising it means fewer boundaries
+and less added distance, at the cost of a longer wait before the first leg.
+
+One thing the tiles make non-negotiable: **the trip's whole bounding box is
+checked for missing tiles up front**, not the first leg's. Later legs are planned
+while moving, possibly with no signal, so everything has to be on disk before the
+driver sets off.
 
 ### Where planning time actually goes
 
@@ -1199,8 +1274,16 @@ Ordered roughly by what unblocks real use.
   concurrency (43 s vs 57 s on the benchmark) or the density-aware pins. The
   concurrency in particular wants watching for memory pressure on a real
   device rather than a container with 16 GB.
+- **[high] Wire leg planning through the app.** The solver splits and the
+  measurements are strong (§6, "Cutting a long trip into legs"), but
+  `maxLegMeters` defaults to *off* until the app can extend a drive in progress:
+  a caller that ignores `PlanOutcome.Routes.remaining` would drive someone to a
+  point in open country and call it their destination. Needs `DrivePlan` to
+  carry the remainder, `DriveMonitor` to accept an extension without losing
+  progress or re-announcing cameras, and the result sheet to say plainly that it
+  is showing a leg.
 - **[high] Don't hand the driver the fastest road when the widen runs out** —
-  §7.8 and field note F-16. This is the one open problem where the app's own
+  §7.10 and field note F-16. This is the one open problem where the app's own
   measured behaviour is the opposite of its purpose, and it is reproducible in
   the repository's benchmark rather than needing a car.
 - **[high] Charging re-route on long trips** — §7.1.

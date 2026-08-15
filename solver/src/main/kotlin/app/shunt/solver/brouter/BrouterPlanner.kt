@@ -45,7 +45,29 @@ sealed interface PlanOutcome {
     data class Routes(
         val options: List<PlannedRoute>,
         val timings: PlanTimings? = null,
-    ) : PlanOutcome
+        /**
+         * When the trip was too long to plan in one go, what is left of it —
+         * starting at the leg boundary these options end at, and ending at the
+         * real destination. Empty when these options cover the whole trip.
+         *
+         * The caller is expected to plan this while the driver is already
+         * moving. See [LegSplitter] for why the boundary is where it is, and why
+         * it is safe to be held to it.
+         */
+        val remaining: List<GeoPoint> = emptyList(),
+        /**
+         * The whole trip's length by the direct road, when these options are
+         * only the first leg of it.
+         *
+         * Free — it comes from the spine, which is planned before anything else
+         * — and the result sheet needs it to be honest: showing a leg's distance
+         * as if it were the trip's would be a plain lie.
+         */
+        val wholeTripMeters: Int? = null,
+    ) : PlanOutcome {
+        /** Whether these options stop short of the destination. */
+        val isPartial: Boolean get() = remaining.isNotEmpty()
+    }
 
     /** The offline map tiles for this trip aren't downloaded yet (full-replace). */
     data class NeedsDownload(val tiles: List<TileId>) : PlanOutcome
@@ -134,8 +156,30 @@ class BrouterPlanner(
         blocked: List<GeoPoint> = emptyList(),
         /** Ceiling on each routing call, or null for the router's own default. */
         routeBudgetMillis: Long? = null,
+        /**
+         * Cut trips longer than this into legs and plan only the first one,
+         * returning the rest in [PlanOutcome.Routes.remaining]. Null plans the
+         * whole trip however long it is.
+         *
+         * A mid-drive re-plan passes null: it is already short (what is left of
+         * the current leg), and handing a driver a *new* boundary while they are
+         * moving is a complication with nothing to buy it.
+         *
+         * **Defaults to off, and must stay that way until every caller handles
+         * [PlanOutcome.Routes.remaining].** A caller that ignores it is handed
+         * options ending at a leg boundary and no indication of that, so it
+         * would drive someone to a point in open country and call it their
+         * destination — a worse failure than the slow plan splitting exists to
+         * prevent. Opt in from the app once the drive can be extended.
+         */
+        maxLegMeters: Double? = null,
     ): PlanOutcome {
         require(points.size >= 2) { "a trip needs at least an origin and a destination" }
+        // Deliberately the *whole* trip's box, not the first leg's. The legs
+        // after the first are planned while the car is moving and may have no
+        // network, so every tile the trip needs has to be on disk before the
+        // driver sets off — asking for the rest halfway across a state is how a
+        // split trip would strand someone.
         val baseBbox = BoundingBox.of(points).expand(bboxMarginMeters)
 
         val missing = missingTiles(baseBbox)
@@ -177,6 +221,32 @@ class BrouterPlanner(
             // between the trip's own points, which is what this used before.
             ?: points
 
+        // Cut a long trip here, before anything expensive has run.
+        //
+        // The spine above is the whole trip's direct road, and it cost one cheap
+        // search — so the cut is chosen with full knowledge of where the trip
+        // goes, and everything below then works on the first leg alone: its own
+        // corridor, its own camera set, its own budget. See [LegSplitter] for
+        // why the boundary lands where it does.
+        startedAt = nowMillis()
+        val tripCameras = camerasAlong(spine) ?: return cameraDataUnavailable()
+        cameraMillis += nowMillis() - startedAt
+        val cut = maxLegMeters?.let { limit ->
+            LegSplitter.cut(spine, CameraIndex(visionsOf(tripCameras)), maxLegMeters = limit)
+        }
+        val legPoints: List<GeoPoint>
+        val remaining: List<GeoPoint>
+        if (cut == null) {
+            legPoints = points
+            remaining = emptyList()
+        } else {
+            val (first, rest) = LegSplitter.split(points, cut.point)
+            legPoints = first
+            remaining = rest
+            spine = spine.subList(0, cut.index + 1)
+        }
+        val wholeTripMeters = direct?.firstOrNull()?.distanceMeters?.takeIf { cut != null }
+
         onProgress(0.25f, "Finding cameras nearby")
         // Plan against a camera set that PROVABLY covers the routes being
         // labelled, by iterating to a fixed point: route, look at where the
@@ -191,7 +261,9 @@ class BrouterPlanner(
         // below is what keeps the corridor honest: it is allowed to be as tight
         // as we like precisely because a route that leaves it is caught.
         startedAt = nowMillis()
-        var cameras = camerasAlong(spine) ?: return cameraDataUnavailable()
+        // Narrowed to this leg's spine rather than fetched again: the trip's set
+        // above already covers a wider area, so this is a filter, not a lookup.
+        var cameras = if (cut == null) tripCameras else filterAlong(tripCameras, spine)
         cameraMillis += nowMillis() - startedAt
         var routes: List<BrouterRoute> = emptyList()
         var covered = false
@@ -199,7 +271,7 @@ class BrouterPlanner(
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.4f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
             startedAt = nowMillis()
-            val fresh = runRoutes(points, cameras, headingDegrees, blocked, budgetLeft())
+            val fresh = runRoutes(legPoints, cameras, headingDegrees, blocked, budgetLeft())
             routingMillis += nowMillis() - startedAt
             // Label by iteration: a second one means the routes escaped the
             // camera area and the whole graph was searched again.
@@ -283,7 +355,12 @@ class BrouterPlanner(
         stages += PlanTimings.Timed(PlanTimings.STAGE_CAMERAS, cameraMillis)
         stages += PlanTimings.Timed(PlanTimings.STAGE_ROUTING, routingMillis)
         stages += PlanTimings.Timed(PlanTimings.STAGE_PINS, nowMillis() - pinsStartedAt)
-        return PlanOutcome.Routes(options, PlanTimings(stages, routingPasses))
+        return PlanOutcome.Routes(
+            options = options,
+            timings = PlanTimings(stages, routingPasses),
+            remaining = remaining,
+            wholeTripMeters = wholeTripMeters,
+        )
     }
 
     /**
@@ -384,8 +461,21 @@ class BrouterPlanner(
     private suspend fun camerasAlong(spine: List<GeoPoint>): List<Camera>? {
         val bbox = BoundingBox.of(spine).expand(corridorMeters)
         val all = runCatching { camerasIn(bbox) }.getOrNull() ?: return null
-        return all.filter { camera -> nearSpine(camera.location, spine, corridorMeters + SPINE_SAMPLE_METERS) }
+        return filterAlong(all, spine)
     }
+
+    /**
+     * [cameras] narrowed to the corridor around [spine].
+     *
+     * Split out from [camerasAlong] so a leg can reuse the trip's set instead of
+     * asking for cameras again: the trip's spine covers a strictly wider area, so
+     * narrowing it gives exactly the answer a fresh fetch would.
+     */
+    private fun filterAlong(cameras: List<Camera>, spine: List<GeoPoint>): List<Camera> =
+        cameras.filter { camera -> nearSpine(camera.location, spine, corridorMeters + SPINE_SAMPLE_METERS) }
+
+    private fun visionsOf(cameras: List<Camera>): List<CameraVision> =
+        cameras.map { CameraVision(it.location, it.directionDegrees) }
 
     /**
      * Whether every point of [line] is inside the corridor drawn around [spine].
