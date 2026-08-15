@@ -47,6 +47,8 @@ fun VehicleSettingsDialog(
      * rather than growing a second one.
      */
     diagnostics: DiagnosticsUi? = null,
+    /** The practice-camera switch, or null to leave it out. */
+    practice: PracticeUi? = null,
     /**
      * Verifies the token by listing the account's vehicles. Read-only: it sends
      * no command, so it can't make the car do anything.
@@ -224,6 +226,11 @@ fun VehicleSettingsDialog(
                 Spacer(Modifier.height(12.dp))
                 TeslaWipWarning()
 
+                if (practice != null) {
+                    Spacer(Modifier.height(16.dp))
+                    PracticeCamerasSetting(practice.enabled, practice.onChange)
+                }
+
                 if (diagnostics != null) {
                     Spacer(Modifier.height(16.dp))
                     DiagnosticsSection(
@@ -396,3 +403,6 @@ data class DiagnosticsUi(
     val onExport: (app.shunt.app.diag.DiagnosticLog.Export) -> Unit,
     val onClear: () -> Unit,
 )
+
+/** The practice-camera switch and its current state. */
+data class PracticeUi(val enabled: Boolean, val onChange: (Boolean) -> Unit)

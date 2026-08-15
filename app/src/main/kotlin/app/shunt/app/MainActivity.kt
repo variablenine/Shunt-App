@@ -31,6 +31,7 @@ import app.shunt.app.ui.PlanActions
 import app.shunt.app.ui.PlanScreen
 import app.shunt.app.diag.DiagnosticExport
 import app.shunt.app.ui.DiagnosticsUi
+import app.shunt.app.ui.PracticeUi
 import app.shunt.app.ui.VehicleSettingsUi
 import app.shunt.app.ui.theme.ShuntTheme
 
@@ -117,6 +118,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val credentials by container.vehicleCredentials.credentials.collectAsStateWithLifecycle()
+                // Mirrored into composition so the banner and the switch move
+                // together; the container holds the persisted truth.
+                var practiceOn by remember { mutableStateOf(container.practiceCameras) }
 
                 PlanScreen(
                     state = state,
@@ -141,6 +145,10 @@ class MainActivity : ComponentActivity() {
                                     ?.let { startActivity(Intent.createChooser(it, "Send diagnostic log")) }
                             },
                             onClear = { container.diagnostics.clear() },
+                        ),
+                        practice = PracticeUi(
+                            enabled = practiceOn,
+                            onChange = { practiceOn = it; container.practiceCameras = it },
                         ),
                     ),
                     actions = PlanActions(

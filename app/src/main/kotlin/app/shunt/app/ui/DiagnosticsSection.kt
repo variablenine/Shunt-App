@@ -101,3 +101,40 @@ fun DiagnosticsSection(
         TextButton(onClick = onClear) { Text("Delete log") }
     }
 }
+
+/**
+ * Practice mode: invent a field of cameras so avoidance can be exercised where
+ * the real ones have been taken out.
+ *
+ * Separated from the diagnostics block above because it is the opposite kind of
+ * thing — that one *reports* what happened, this one *changes* what the app
+ * believes about the world. Anything that does that has to be hard to leave on
+ * by accident, which is why it says what it costs and why the map carries a
+ * banner for as long as it is on.
+ */
+@Composable
+fun PracticeCamerasSetting(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    HorizontalDivider()
+    Spacer(Modifier.height(12.dp))
+    Text("Practice cameras", style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(4.dp))
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                if (enabled) {
+                    "ON — routes are avoiding cameras that do not exist. Turn this off before driving for real."
+                } else {
+                    "Add a made-up, always-identical set of cameras so you can test avoidance " +
+                        "somewhere the real ones have been removed. They are marked as not real everywhere."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onChange)
+    }
+}

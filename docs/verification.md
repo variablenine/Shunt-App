@@ -271,12 +271,38 @@ a north–south and an east–west one — a 90° error looks correct on one axi
 ## E. Testing where there are no cameras
 
 Some counties have removed their ALPRs entirely, and DeFlock will eventually stop
-listing them — which makes avoidance impossible to exercise locally. A seeded
-synthetic camera mode is planned for exactly this (see the roadmap). Until it
-lands, the options are:
+listing them — which makes avoidance impossible to exercise locally. **Practice
+cameras** exist for this: vehicle settings has a switch that mixes in a made-up
+field of ALPRs, identical on every device and every run, so a route can be
+planned and driven against something.
 
-- Plan routes into an area that still has coverage, without driving them, and
-  check the route and pins on the map. Most of section B can be checked this way.
+### E1 · Practice mode is impossible to mistake for real data
+*Added 2026-08-15.*
+
+**Setup.** Turn on practice cameras in vehicle settings and go back to the map.
+
+**Pass.** A banner across the top says practice cameras are on, for as long as
+they are. Tapping one calls it "Practice camera (not real)". Turning the switch
+off removes them and the banner together.
+
+**Fail.** Any screen where an invented camera is indistinguishable from a Flock
+unit. That is a stop-ship bug, not a cosmetic one: the whole app is a claim about
+where you are watched, and a false claim is worse than no app.
+
+### E2 · Avoidance actually works against them
+**Setup.** With practice mode on, plan a route across 20-30 km of the field.
+
+**Pass.** The three options differ; fewest-cameras detours visibly around the
+dots; pins appear either side of the ones it squeezes past. Driving it, the
+approach warnings fire and are spoken.
+
+**Fail.** All three options identical, or a "camera-free" route running straight
+through the dots.
+
+The other two ways to test without local cameras are still worth knowing:
+
+- Plan routes into an area that still has real coverage, without driving them,
+  and check the route and pins on the map. Most of section B works this way.
 - Use the repository benchmark (CLAUDE.md §8) with a region tile that has real
   cameras in it. It routes over real map tiles and prints what the app would show.
 

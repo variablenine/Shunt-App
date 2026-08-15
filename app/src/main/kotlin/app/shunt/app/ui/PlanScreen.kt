@@ -76,6 +76,8 @@ data class VehicleSettingsUi(
     val onProbeNav: (suspend (token: String, vin: String, onLine: (NavProbeLine) -> Unit) -> Unit)? = null,
     /** The diagnostic-log corner, or null to leave it out. */
     val diagnostics: DiagnosticsUi? = null,
+    /** The practice-camera switch, or null to leave it out. */
+    val practice: PracticeUi? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -158,6 +160,13 @@ fun PlanScreen(
         }
 
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+            if (vehicleSettings?.practice?.enabled == true) {
+                // Loud, and on the map rather than buried in settings: a driver
+                // who forgets this is on is being shown a route that avoids
+                // cameras which are not there, and trusting it.
+                Banner("Practice cameras are ON — these are invented, not real ALPRs.")
+                Spacer(Modifier.height(8.dp))
+            }
             if (state.usingOfflineCameraData) {
                 Banner("Using offline camera snapshot — data may be out of date.")
                 Spacer(Modifier.height(8.dp))
@@ -185,6 +194,7 @@ fun PlanScreen(
                 onReadCarState = vehicleSettings.onReadCarState,
                 onProbeNav = vehicleSettings.onProbeNav,
                 diagnostics = vehicleSettings.diagnostics,
+                practice = vehicleSettings.practice,
                 onDismiss = { showVehicleSettings = false },
             )
         }

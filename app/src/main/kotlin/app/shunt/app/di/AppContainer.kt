@@ -25,6 +25,7 @@ import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.app.diag.DiagnosticLog
+import app.shunt.solver.camera.PracticeCameras
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
 import app.shunt.solver.search.PlaceSearch
@@ -77,6 +78,39 @@ class AppContainer(context: Context) {
      */
     val diagnostics = DiagnosticLog(File(appContext.filesDir, "diagnostics/shunt.log"))
 
+    /**
+     * Practice mode: mix in a deterministic field of invented cameras.
+     *
+     * For testing avoidance somewhere the real ones have been removed — see
+     * [PracticeCameras]. Off unless deliberately switched on, persisted so a
+     * drive can be planned and then driven, and everything it produces is
+     * tagged as not real all the way to the screen.
+     */
+    private val practicePrefs = appContext.getSharedPreferences("practice", Context.MODE_PRIVATE)
+
+    var practiceCameras: Boolean
+        get() = practicePrefs.getBoolean("enabled", false)
+        set(value) {
+            practicePrefs.edit().putBoolean("enabled", value).apply()
+            diagnostics.record(
+                DiagnosticLog.Kind.CAMERA,
+                if (value) "practice cameras ON — routes are against invented data" else "practice cameras off",
+            )
+        }
+
+    /**
+     * The real cameras, plus the practice field when it is on.
+     *
+     * One seam rather than a switch at each call site: the planner, the map and
+     * the warm-up all ask the same question, and a mode that applied to some of
+     * them and not others would show a route avoiding cameras the map does not
+     * draw.
+     */
+    private suspend fun camerasFor(bbox: BoundingBox): List<Camera> {
+        val real = cameraSource.camerasIn(bbox).cameras
+        return if (practiceCameras) real + PracticeCameras.inBox(bbox) else real
+    }
+
     /** BRouter's offline tiles + profile live under the app's private storage. */
     private val brouterDir = File(appContext.filesDir, "brouter")
     private val brouterProfileDir = File(brouterDir, "profiles").apply {
@@ -96,7 +130,7 @@ class AppContainer(context: Context) {
             withContext(Dispatchers.Default) { brouterRouter.route(request) }
         },
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
-        camerasIn = { bbox -> cameraSource.camerasIn(bbox).cameras },
+        camerasIn = { bbox -> camerasFor(bbox) },
         diagnostics = { routingDiagnostic() },
         lastPassTimings = { brouterRouter.lastPassTimings },
     )
@@ -282,7 +316,7 @@ class AppContainer(context: Context) {
      * map is cheap once tiles are warm.
      */
     val viewportCameras: suspend (BoundingBox) -> List<MapCamera> = { bbox ->
-        cameraSource.camerasIn(bbox).cameras.map { it.toMapCamera() }
+        camerasFor(bbox).map { it.toMapCamera() }
     }
 
     init {
@@ -574,9 +608,18 @@ private fun app.shunt.tesla.NavCapabilityProbe.Step.toLine(): app.shunt.app.ui.N
 private fun Camera.toMapCamera(): MapCamera {
     val manufacturer = tags["manufacturer"] ?: tags["brand"]
     val operator = tags["operator"]
-    val title = manufacturer ?: operator ?: "ALPR camera"
+    // An invented camera says so in the one place a user reads about a
+    // specific camera. Without this, practice mode shows something that looks
+    // exactly like a Flock unit and the driver has been told a falsehood about
+    // where they are watched.
+    val title = if (PracticeCameras.isPractice(this)) {
+        "Practice camera (not real)"
+    } else {
+        manufacturer ?: operator ?: "ALPR camera"
+    }
     val subtitle = buildList {
-        if (manufacturer != null && operator != null) add("Operated by $operator")
+        if (PracticeCameras.isPractice(this@toMapCamera)) add("Invented by Shunt for testing")
+        else if (manufacturer != null && operator != null) add("Operated by $operator")
         (tags["surveillance:type"] ?: tags["camera:type"])?.let { add(it) }
     }.joinToString(" · ").ifBlank { null }
     return MapCamera(

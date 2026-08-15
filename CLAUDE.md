@@ -76,6 +76,10 @@ Working and reasonably trusted:
 - A rolling week of diagnostics (`DiagnosticLog`), exportable to a file the user
   attaches to an email. Never uploaded, never scheduled; coordinates are stripped
   unless the person exporting turns them on, and the log expires by itself.
+- Practice cameras (`PracticeCameras`): a deterministic field of invented ALPRs,
+  switched on in settings, so avoidance can be exercised where the real ones have
+  been removed. Tagged as not real everywhere they appear, with a banner on the
+  map for as long as the mode is on.
 
 Long-route planning was the blocker for real use and is now solved. A 489 km trip
 into dense metro — the one that used to be abandoned after twenty minutes —
@@ -233,6 +237,11 @@ Key files, by the question they answer:
   `ChargeStops.kt`, and `solver/charging/RangeCheck.kt`.
 - *What reaches the car?* `tesla/TessieVehicleNavClient.kt`.
 - *How is it all wired?* `app/di/AppContainer.kt` — the single DI seam.
+- *How do I test avoidance where there are no cameras?*
+  `solver/camera/PracticeCameras.kt` — deterministic by construction (positions
+  hash from the grid cell, so there is no seed to share and no state to get out
+  of step), and every camera carries `shunt:practice` so nothing downstream can
+  present one as real.
 - *How does a user report a bug?* `app/diag/DiagnosticLog.kt` (pure, tested) and
   `app/diag/DiagnosticExport.kt` (the Android half: cache file, FileProvider,
   share sheet). The split is deliberate — the privacy rules are in the part that
@@ -1365,5 +1374,7 @@ Ordered roughly by what unblocks real use.
   §6.1 again: a mode whose whole job is to notice a destination and push a route
   is one bad edge away from fighting the driver, so the stand-down rules have to
   cover it from the start.
+- ~~Seeded synthetic cameras for testing where the real ones are gone.~~ Done:
+  `PracticeCameras`, switched on in vehicle settings.
 - **[far future]** Direct Tesla Fleet API integration (connect a Tesla account,
   no Tessie) — only after everything else is fleshed out and tested.
