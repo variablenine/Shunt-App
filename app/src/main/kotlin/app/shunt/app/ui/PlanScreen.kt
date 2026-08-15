@@ -74,6 +74,8 @@ data class VehicleSettingsUi(
     val onReadCarState: (suspend (token: String, vin: String) -> CarNavState?)? = null,
     /** Finds out which navigation commands this car obeys. Redirects its nav. */
     val onProbeNav: (suspend (token: String, vin: String, onLine: (NavProbeLine) -> Unit) -> Unit)? = null,
+    /** The diagnostic-log corner, or null to leave it out. */
+    val diagnostics: DiagnosticsUi? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -182,6 +184,7 @@ fun PlanScreen(
                 onTestConnection = vehicleSettings.onTestConnection,
                 onReadCarState = vehicleSettings.onReadCarState,
                 onProbeNav = vehicleSettings.onProbeNav,
+                diagnostics = vehicleSettings.diagnostics,
                 onDismiss = { showVehicleSettings = false },
             )
         }

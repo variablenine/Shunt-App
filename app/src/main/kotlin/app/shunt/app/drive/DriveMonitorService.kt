@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import app.shunt.R
 import app.shunt.app.ShuntApplication
+import app.shunt.app.diag.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -63,11 +64,22 @@ class DriveMonitorService : Service() {
         }
 
         container.liveDrivePlan.value = plan
+        container.diagnostics.record(
+            DiagnosticLog.Kind.DRIVE,
+            "drive started: ${plan.chain.size} waypoints, ${plan.cameras.size} cameras to warn about, " +
+                if (plan.steerByWaypoints) "steering pin by pin" else "car holds the destination",
+            locations = plan.chain.map { it.lat to it.lon },
+        )
         if (speech == null) speech = SpokenAlerts(this)
         val monitor = DriveMonitor(
             vehicle = container.vehicleNavClient,
             alerter = AndroidAlerter(this, speech),
-            onActivity = { container.driveActivity.value = it },
+            onActivity = {
+                container.driveActivity.value = it
+                // The activity line is exactly the running commentary a bug
+                // report needs, and it already exists — this just keeps it.
+                container.diagnostics.record(DiagnosticLog.Kind.DRIVE, describe(it))
+            },
             onStatus = { status ->
                 container.driveStatus.value = status
                 if (status is DriveStatus.Arrived) stopSelf()
@@ -83,7 +95,14 @@ class DriveMonitorService : Service() {
             charging = container.chargeStopCoordinator(plan),
             // Republish the route in force so the map draws what is being
             // driven, not the line that was abandoned.
-            onPlanChanged = { container.liveDrivePlan.value = it },
+            onPlanChanged = {
+                container.liveDrivePlan.value = it
+                container.diagnostics.record(
+                    DiagnosticLog.Kind.DRIVE,
+                    "route in force replaced: ${it.chain.size} waypoints, ${it.cameras.size} cameras",
+                    locations = it.chain.map { p -> p.lat to p.lon },
+                )
+            },
         )
         monitorJob?.cancel()
         monitorJob = scope.launch {
@@ -157,4 +176,13 @@ class DriveMonitorService : Service() {
             context.startService(intent)
         }
     }
+}
+
+/** One short line per activity, for the log. */
+private fun describe(activity: DriveActivity): String = when (activity) {
+    DriveActivity.Watching -> "watching for cameras"
+    is DriveActivity.SendingWaypoint -> "sending waypoint ${activity.number} of ${activity.total}"
+    DriveActivity.CheckingCharging -> "asking the car about charging"
+    DriveActivity.Replanning -> "re-planning"
+    DriveActivity.StoodDown -> "stood down — no longer commanding the car"
 }

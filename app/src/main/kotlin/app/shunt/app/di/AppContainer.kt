@@ -24,6 +24,7 @@ import app.shunt.solver.charging.CHARGER_CORRIDOR_METERS
 import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.app.diag.DiagnosticLog
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
 import app.shunt.solver.search.PlaceSearch
@@ -66,6 +67,15 @@ class AppContainer(context: Context) {
         // rather than by name, which is what made those searches useless.
         nearby = { tags, at -> photonSearch.nearby(tags, at) },
     )
+
+    /**
+     * A rolling week of what the app decided, for bug reports.
+     *
+     * Never uploaded and never scheduled — see [DiagnosticLog]. It lives in
+     * private storage, expires by itself, and only leaves the phone if the
+     * person holding it exports and sends it.
+     */
+    val diagnostics = DiagnosticLog(File(appContext.filesDir, "diagnostics/shunt.log"))
 
     /** BRouter's offline tiles + profile live under the app's private storage. */
     private val brouterDir = File(appContext.filesDir, "brouter")
@@ -287,6 +297,13 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
+        log = { message, points ->
+            diagnostics.record(
+                DiagnosticLog.Kind.PLAN,
+                message,
+                points.map { it.lat to it.lon },
+            )
+        },
         search = SuggestionSearch { query, at -> placeSearch.suggest(query, at) },
         planner = RoutePlanner { points, onProgress, heading ->
             // The whole plan, not just the routing engine. Camera counting and

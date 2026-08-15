@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one directory the diagnostic log export is shared from.
+
+  Deliberately a single sub-directory of the app's private cache rather than
+  anything broader: a FileProvider path is a grant of read access to whatever it
+  covers, and this app's private storage holds the trips someone has planned.
+-->
+<paths>
+    <cache-path name="diagnostics" path="diagnostics/" />
+</paths>

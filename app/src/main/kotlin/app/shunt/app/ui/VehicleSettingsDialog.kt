@@ -42,6 +42,12 @@ fun VehicleSettingsDialog(
     onClear: () -> Unit,
     onDismiss: () -> Unit,
     /**
+     * The bug-report corner. Absent, the dialog is exactly what it was — this
+     * is the only settings surface in the app, so the log export lives here
+     * rather than growing a second one.
+     */
+    diagnostics: DiagnosticsUi? = null,
+    /**
      * Verifies the token by listing the account's vehicles. Read-only: it sends
      * no command, so it can't make the car do anything.
      */
@@ -217,6 +223,15 @@ fun VehicleSettingsDialog(
 
                 Spacer(Modifier.height(12.dp))
                 TeslaWipWarning()
+
+                if (diagnostics != null) {
+                    Spacer(Modifier.height(16.dp))
+                    DiagnosticsSection(
+                        entryCount = diagnostics.entryCount,
+                        onExport = diagnostics.onExport,
+                        onClear = diagnostics.onClear,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -374,3 +389,10 @@ private fun reportOf(lines: List<NavProbeLine>): String = buildString {
         appendLine("  response: ${line.detail}")
     }
 }
+
+/** What the diagnostics corner of the settings dialog needs. */
+data class DiagnosticsUi(
+    val entryCount: Int,
+    val onExport: (app.shunt.app.diag.DiagnosticLog.Export) -> Unit,
+    val onClear: () -> Unit,
+)

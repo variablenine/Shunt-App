@@ -282,6 +282,22 @@ lands, the options are:
 
 ---
 
+### C4 · The diagnostic log records enough to be worth sending
+*Added 2026-08-15, never used in anger.*
+
+**Setup.** Drive anything, then open vehicle settings and look at the export
+count. Export with locations off, read the file.
+
+**Pass.** There is a line per waypoint sent, per charging check, per re-plan, and
+one per plan with the options that were offered. With locations off, no
+coordinates appear anywhere in the file. With them on, the header says so in
+capitals.
+
+**Fail.** An export that is empty after a drive, or one that leaks coordinates
+with the toggle off — the second is a privacy bug and should stop a release.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

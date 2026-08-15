@@ -70,7 +70,12 @@ Working and reasonably trusted:
 - A live "what is Shunt doing" line on the driving sheet (`DriveActivity`):
   sending waypoint *n* of *m*, asking the car about charging, re-planning,
   stood down. All of this happened before and was invisible unless it failed.
-- Destination search (Photon), favourites, long-press-map-to-route.
+- Destination search (Photon), favourites, long-press-map-to-route, and recents
+  matched as you type — which doubles as the answer to a place OSM cannot name:
+  pin it once and it is findable by name from then on.
+- A rolling week of diagnostics (`DiagnosticLog`), exportable to a file the user
+  attaches to an email. Never uploaded, never scheduled; coordinates are stripped
+  unless the person exporting turns them on, and the log expires by itself.
 
 Long-route planning was the blocker for real use and is now solved. A 489 km trip
 into dense metro — the one that used to be abandoned after twenty minutes —
@@ -123,7 +128,10 @@ using the user's own account, plus a far-future direct Tesla Fleet API.
 
 **On-device and offline-first.** Once a region's map tile is cached, routing and
 the drive monitor need no network at all. No background work, no analytics, no
-telemetry, no account. Location permission is while-in-use only —
+telemetry, no account. The diagnostic log is not an exception to this and must
+never become one: it is written locally, expires after a week, and leaves the
+phone only when a person exports it and sends it themselves. An app whose purpose
+is to stop a driver being tracked cannot quietly report where they drove. Location permission is while-in-use only —
 `ACCESS_BACKGROUND_LOCATION` is never requested.
 
 **Search coverage is OSM-limited by design.** Being keyless means some
@@ -225,6 +233,10 @@ Key files, by the question they answer:
   `ChargeStops.kt`, and `solver/charging/RangeCheck.kt`.
 - *What reaches the car?* `tesla/TessieVehicleNavClient.kt`.
 - *How is it all wired?* `app/di/AppContainer.kt` — the single DI seam.
+- *How does a user report a bug?* `app/diag/DiagnosticLog.kt` (pure, tested) and
+  `app/diag/DiagnosticExport.kt` (the Android half: cache file, FileProvider,
+  share sheet). The split is deliberate — the privacy rules are in the part that
+  can be unit-tested.
 
 ---
 

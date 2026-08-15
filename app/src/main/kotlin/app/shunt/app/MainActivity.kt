@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +29,8 @@ import app.shunt.app.plan.PlanViewModel
 import app.shunt.app.ui.CrashScreen
 import app.shunt.app.ui.PlanActions
 import app.shunt.app.ui.PlanScreen
+import app.shunt.app.diag.DiagnosticExport
+import app.shunt.app.ui.DiagnosticsUi
 import app.shunt.app.ui.VehicleSettingsUi
 import app.shunt.app.ui.theme.ShuntTheme
 
@@ -129,6 +132,16 @@ class MainActivity : ComponentActivity() {
                         onTestConnection = { token -> container.checkVehicleToken(token) },
                         onReadCarState = { t, v -> container.readCarNavState(t, v) },
                         onProbeNav = { t, v, onLine -> container.probeNavCommands(t, v, onLine) },
+                        diagnostics = DiagnosticsUi(
+                            entryCount = container.diagnostics.entries().size,
+                            onExport = { options ->
+                                // The user is the transport: this opens a share
+                                // sheet with a file. Nothing is sent by Shunt.
+                                DiagnosticExport.shareIntent(this@MainActivity, container.diagnostics, options)
+                                    ?.let { startActivity(Intent.createChooser(it, "Send diagnostic log")) }
+                            },
+                            onClear = { container.diagnostics.clear() },
+                        ),
                     ),
                     actions = PlanActions(
                         onQueryChange = vm::onQueryChange,

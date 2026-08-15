@@ -41,6 +41,12 @@ class PlanViewModel(
     private val recentPlaces: RecentPlacesStore? = null,
     /** Names a long-pressed map point; absent, such points get coordinates. */
     private val placeNamer: PlaceNamer? = null,
+    /**
+     * Records what planning decided, for a bug report. Absent, nothing is kept.
+     * Takes a lambda rather than the log itself so this stays testable without
+     * a file on disk — and so the app module owns where it is written.
+     */
+    private val log: ((String, List<GeoPoint>) -> Unit)? = null,
     /** Reads the car's remaining range; absent, no range warning is shown. */
     private val rangeReader: VehicleRangeReader? = null,
     /** Finds a charging stop on the way; absent, the offer isn't made. */
@@ -233,6 +239,15 @@ class PlanViewModel(
         }.getOrElse { e -> PlanOutcome.Failed("routing failed: ${e.message}") }
         when (outcome) {
             is PlanOutcome.Routes -> {
+                // What the chooser was offered, which is the single most useful
+                // line in a bug report about a route: it says what Shunt thought
+                // the options were, before the driver picked one.
+                log?.invoke(
+                    "planned " + outcome.options.joinToString(", ") { o ->
+                        "${o.choice} ${o.distanceMeters / 1000}km/${o.camerasPassed}cam/${o.waypoints.size}pins"
+                    },
+                    emptyList(),
+                )
                 // Opened before the chooser is shown, and therefore before Go
                 // can be tapped. Doing it inside checkRange() left a window
                 // between the two where the gate did not exist yet, which is the
@@ -257,8 +272,10 @@ class PlanViewModel(
                         it.copy(phase = Phase.Error("Couldn't prepare the offline map for this area."))
                     }
                 }
-            is PlanOutcome.Failed ->
+            is PlanOutcome.Failed -> {
+                log?.invoke("planning failed: ${outcome.reason}", emptyList())
                 _state.update { it.copy(phase = Phase.Error(outcome.reason)) }
+            }
         }
     }
 
