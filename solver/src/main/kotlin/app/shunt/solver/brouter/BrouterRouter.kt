@@ -3,6 +3,10 @@ package app.shunt.solver.brouter
 import app.shunt.core.GeoPoint
 import app.shunt.solver.geo.destinationPoint
 import app.shunt.solver.geo.haversineMeters
+import btools.mapaccess.MatchedWaypoint
+import btools.mapaccess.NodesCache
+import btools.mapaccess.OsmNode
+import btools.mapaccess.OsmNodePairSet
 import btools.router.OsmNodeNamed
 import btools.router.OsmNogoPolygon
 import btools.router.RoutingContext
@@ -133,6 +137,54 @@ class BrouterRouter(
         cameras: List<CameraVision> = emptyList(),
         headingDegrees: Double? = null,
     ): List<BrouterRoute> = route(RouteRequest(points, cameras, headingDegrees))
+
+    /**
+     * Move each of [points] onto the nearest road, or drop it if there is none
+     * within [maxMeters].
+     *
+     * This is BRouter's own waypoint matching — the same step every route takes
+     * to turn "somewhere the user tapped" into "a place on a way" — run over a
+     * batch in one pass so the tile cache is built once rather than per point.
+     *
+     * Both halves matter to the caller. Snapping is what puts a generated
+     * feature on a road a car could actually drive past, and *dropping* is what
+     * makes a uniform grid of candidates come out dense in towns and sparse in
+     * open country: the road network is the population map, and a candidate with
+     * no road within a few hundred metres is in a field.
+     *
+     * Returns an entry per input, null where nothing was near enough. Never
+     * throws: this serves a testing aid, and no part of it may take the app down.
+     */
+    fun snapToRoads(points: List<GeoPoint>, maxMeters: Double): List<GeoPoint?> {
+        if (points.isEmpty()) return emptyList()
+        return try {
+            val rc = RoutingContext()
+            rc.localFunction = File(profileDir, "$profileName.brf").absolutePath
+            rc.readGlobalConfig()
+            val matched = points.map { p ->
+                MatchedWaypoint().apply {
+                    waypoint = OsmNode((p.lon * 1_000_000 + 180_000_000).toInt(), (p.lat * 1_000_000 + 90_000_000).toInt())
+                    name = "snap"
+                }
+            }
+            val cache = NodesCache(segmentDir, rc.expctxWay, rc.forceSecondaryData, rc.memoryclass * 1024L * 1024L, null, false)
+            cache.matchWaypointsToNodes(matched, maxMeters, OsmNodePairSet(0))
+            matched.map { mw ->
+                val cross = mw.crosspoint
+                if (cross == null || mw.radius > maxMeters) {
+                    null
+                } else {
+                    GeoPoint(
+                        lat = cross.ilat / 1_000_000.0 - 90.0,
+                        lon = cross.ilon / 1_000_000.0 - 180.0,
+                    )
+                }
+            }
+        } catch (t: Throwable) {
+            note("snapToRoads failed: ${t.message ?: t.toString()}")
+            points.map { null }
+        }
+    }
 
     fun route(request: RouteRequest): List<BrouterRoute> {
         val points = request.points

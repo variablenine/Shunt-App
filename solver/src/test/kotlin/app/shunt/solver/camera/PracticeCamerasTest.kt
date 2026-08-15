@@ -86,6 +86,77 @@ class PracticeCamerasTest {
         )
     }
 
+    // ---- On roads, and denser where the roads are -------------------------
+
+    /**
+     * A stand-in road network: one east-west road across the middle of the test
+     * area, plus a denser patch of streets standing in for a town.
+     *
+     * Snapping is given as a lambda precisely so this can exist — the real one
+     * needs map tiles, and the property being tested (candidates far from a road
+     * are dropped, and the survivors sit on one) is about the rule, not about
+     * BRouter.
+     */
+    private fun fakeRoads(): (List<GeoPoint>, Double) -> List<GeoPoint?> = { points, meters ->
+        val metresLat = 1.0 / 111_320.0
+        points.map { p ->
+            val townLat = 39.05
+            val inTown = kotlin.math.abs(p.lat - townLat) < 0.02 && kotlin.math.abs(p.lon + 98.0) < 0.02
+            val highwayLat = 39.15
+            when {
+                // A grid of streets: everything in the town is near something.
+                inTown -> GeoPoint(kotlin.math.round(p.lat / 0.004) * 0.004, p.lon)
+                // One road: only candidates within the radius of it survive.
+                kotlin.math.abs(p.lat - highwayLat) < meters * metresLat -> GeoPoint(highwayLat, p.lon)
+                else -> null
+            }
+        }
+    }
+
+    @Test
+    fun `every camera ends up on a road, and the rest are dropped`() {
+        val area = box(38.9, -98.2, 39.3, -97.9)
+        val unsnapped = PracticeCameras.inBox(area)
+        val onRoads = PracticeCameras.inBox(area, fakeRoads())
+
+        assertTrue(onRoads.isNotEmpty(), "snapping threw the whole field away")
+        assertTrue(
+            onRoads.size < unsnapped.size,
+            "nothing was dropped, so candidates in open fields are still being used",
+        )
+        assertTrue(
+            onRoads.all { it.location.lat == 39.15 || kotlin.math.abs(it.location.lat - 39.05) < 0.03 },
+            "a camera came back somewhere the road network does not go",
+        )
+    }
+
+    @Test
+    fun `the field is denser where the roads are`() {
+        // The whole reason snapping doubles as a density rule: a uniform grid of
+        // candidates comes out concentrated wherever there is road to snap to,
+        // which is where people are.
+        val town = box(39.03, -98.02, 39.07, -97.98)
+        val country = box(39.30, -98.02, 39.34, -97.98)
+        val inTown = PracticeCameras.inBox(town, fakeRoads()).size
+        val inCountry = PracticeCameras.inBox(country, fakeRoads()).size
+
+        assertTrue(inTown > 0, "the town has no practice cameras at all")
+        assertEquals(0, inCountry, "open country with no roads produced cameras anyway")
+    }
+
+    @Test
+    fun `a snapper that fails leaves the field usable`() {
+        // A phone with no tiles for the area cannot snap, and a practice mode
+        // that silently produces nothing would look like the switch is broken.
+        val area = box(38.9, -98.2, 39.2, -97.8)
+        val exploding: (List<GeoPoint>, Double) -> List<GeoPoint?> = { _, _ -> error("no tiles") }
+        assertEquals(
+            PracticeCameras.inBox(area).size,
+            PracticeCameras.inBox(area, exploding).size,
+            "a failed snap must fall back to the unsnapped field, not to nothing",
+        )
+    }
+
     @Test
     fun `the field is sparse enough to route through`() {
         // A camera in every cell is a landscape where avoidance is hopeless, and

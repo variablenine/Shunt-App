@@ -48,32 +48,67 @@ object PracticeCameras {
     const val PRACTICE_TAG = "shunt:practice"
 
     /**
-     * Grid spacing, in degrees, roughly 5.5 km north-south.
+     * Candidate grid spacing, in degrees — roughly 1.1 km north-south.
      *
-     * Chosen to be the scale that makes a route *work* to avoid them: much
-     * tighter and every road is covered so there is nothing to choose between,
-     * much wider and the fastest route dodges them by accident. This is a
-     * practice range, and a practice range that cannot be failed teaches
-     * nothing.
+     * Much finer than the spacing that ends up in the field, because most
+     * candidates are thrown away: only the ones that land near a road survive
+     * ([snapped]). A coarse grid produced cameras a kilometre out in a field,
+     * where they watch nothing and no route ever has to avoid them — the
+     * reported complaint that *"the practice cams aren't really showing up on
+     * actual roads so it doesn't really affect drives much"*.
      */
-    const val CELL_DEGREES = 0.05
+    const val CELL_DEGREES = 0.01
 
     /**
-     * Roughly how many of the cells carry a camera, as a fraction.
+     * Roughly how many candidate cells carry one, before snapping.
      *
-     * Not every cell: a landscape with a camera in every square is one where
+     * Not every cell: a landscape with a camera at every junction is one where
      * avoidance is hopeless, and the interesting behaviour — the detour, the
      * guard pins, the warning — needs gaps to route through.
      */
-    const val OCCUPANCY = 0.45
+    const val OCCUPANCY = 0.35
 
     /**
-     * Every practice camera inside [bbox].
+     * How far a candidate may be from a road and still be used.
      *
-     * Pure and total: no network, no clock, no state. The same box always gives
-     * the same answer, and overlapping boxes agree about the cameras they share.
+     * This one number does both jobs. It puts every surviving camera *on* a
+     * road, which is what makes routes actually have to avoid them; and because
+     * candidates with no road nearby are dropped, a uniform grid comes out dense
+     * in towns and sparse in open country without anything having to know where
+     * towns are. **The road network is the population map** — which is the same
+     * observation the real dataset embodies, since ALPRs are sited where the
+     * junctions and the traffic are.
      */
-    fun inBox(bbox: BoundingBox): List<Camera> {
+    const val SNAP_RADIUS_METERS = 120.0
+
+    /**
+     * Every practice camera inside [bbox], placed on real roads.
+     *
+     * [snapToRoads] moves each candidate onto the nearest way and drops the ones
+     * with none within [SNAP_RADIUS_METERS]; without it (or where it fails) the
+     * candidates are used as they fall, which is the old behaviour and is still
+     * better than nothing on a device with no tiles for the area.
+     *
+     * Deterministic either way: candidates come from the grid cell, and snapping
+     * is a function of the map data, so two devices with the same tiles produce
+     * the same field.
+     */
+    fun inBox(
+        bbox: BoundingBox,
+        snapToRoads: ((List<GeoPoint>, Double) -> List<GeoPoint?>)? = null,
+    ): List<Camera> {
+        val candidates = candidatesIn(bbox)
+        if (snapToRoads == null) return candidates
+        val snapped = runCatching { snapToRoads(candidates.map { it.location }, SNAP_RADIUS_METERS) }
+            .getOrNull()
+            ?: return candidates
+        return candidates.mapIndexedNotNull { index, camera ->
+            snapped.getOrNull(index)?.let { camera.copy(location = it) }
+        }
+    }
+
+    /** The unsnapped grid: one candidate per occupied cell, before roads. */
+    private fun candidatesIn(bbox: BoundingBox): List<Camera> {
         val out = mutableListOf<Camera>()
         var latCell = floor(bbox.minLat / CELL_DEGREES).toLong()
         val lastLat = floor(bbox.maxLat / CELL_DEGREES).toLong()

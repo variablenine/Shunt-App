@@ -28,6 +28,19 @@ class PlaceSearch(
      * behaviour is exactly as it was: everything is a name search.
      */
     private val nearby: (suspend (List<String>, GeoPoint) -> List<Suggestion>)? = null,
+    /**
+     * An optional commercial geocoder the user has supplied their own key for —
+     * see [GooglePlacesSearch]. Absent or unconfigured, everything below is
+     * exactly as it was.
+     *
+     * **Tried first when it is configured, because that is the whole point of
+     * configuring it**: someone who has gone and got a key did so because the
+     * keyless answers were not good enough, and consulting them first would just
+     * reproduce the problem they were solving. The keyless path stays underneath
+     * as the fallback, so a bad key or an exhausted quota degrades to the old
+     * behaviour rather than breaking search.
+     */
+    private val preferred: (suspend (String, GeoPoint) -> List<Suggestion>)? = null,
 ) {
     suspend fun suggest(query: String, at: GeoPoint): List<Suggestion> {
         if (query.isBlank()) return emptyList()
@@ -43,6 +56,16 @@ class PlaceSearch(
             // Falling through on an empty result is deliberate: out in open
             // country there may genuinely be no cafe within reach, and a name
             // search is a better answer than a blank screen.
+            if (found.isNotEmpty()) return found.take(MAX_RESULTS)
+        }
+
+        // Below here the question is "what is this place called", which is the
+        // one the keyless indexes are worst at and the one a key was obtained
+        // for. Above here it was "what kind of place is near me", which the tag
+        // lookup answers in a second for nothing — so that never reaches a paid
+        // service, however configured this is.
+        preferred?.let { commercial ->
+            val found = runCatching { commercial(query, at) }.getOrDefault(emptyList())
             if (found.isNotEmpty()) return found.take(MAX_RESULTS)
         }
 

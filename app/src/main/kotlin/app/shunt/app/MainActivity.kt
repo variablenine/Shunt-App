@@ -31,6 +31,7 @@ import app.shunt.app.ui.PlanActions
 import app.shunt.app.ui.PlanScreen
 import app.shunt.app.diag.DiagnosticExport
 import app.shunt.app.ui.DiagnosticsUi
+import app.shunt.app.ui.PlacesKeyUi
 import app.shunt.app.ui.PracticeUi
 import app.shunt.app.ui.VehicleSettingsUi
 import app.shunt.app.ui.theme.ShuntTheme
@@ -126,6 +127,7 @@ class MainActivity : ComponentActivity() {
                 // Mirrored into composition so the banner and the switch move
                 // together; the container holds the persisted truth.
                 var practiceOn by remember { mutableStateOf(container.practiceCameras) }
+                var placesKey by remember { mutableStateOf(container.placesApiKey) }
 
                 PlanScreen(
                     state = state.copy(laterLegs = laterLegs),
@@ -150,6 +152,10 @@ class MainActivity : ComponentActivity() {
                                     ?.let { startActivity(Intent.createChooser(it, "Send diagnostic log")) }
                             },
                             onClear = { container.diagnostics.clear() },
+                        ),
+                        placesKey = PlacesKeyUi(
+                            current = placesKey,
+                            onSave = { placesKey = it; container.placesApiKey = it },
                         ),
                         practice = PracticeUi(
                             enabled = practiceOn,

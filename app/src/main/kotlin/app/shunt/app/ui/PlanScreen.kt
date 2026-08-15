@@ -78,6 +78,8 @@ data class VehicleSettingsUi(
     val diagnostics: DiagnosticsUi? = null,
     /** The practice-camera switch, or null to leave it out. */
     val practice: PracticeUi? = null,
+    /** The optional Google Places key, or null to leave it out. */
+    val placesKey: PlacesKeyUi? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -200,6 +202,7 @@ fun PlanScreen(
                 onProbeNav = vehicleSettings.onProbeNav,
                 diagnostics = vehicleSettings.diagnostics,
                 practice = vehicleSettings.practice,
+                placesKey = vehicleSettings.placesKey,
                 onDismiss = { showVehicleSettings = false },
             )
         }

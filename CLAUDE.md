@@ -77,9 +77,12 @@ Working and reasonably trusted:
   attaches to an email. Never uploaded, never scheduled; coordinates are stripped
   unless the person exporting turns them on, and the log expires by itself.
 - Practice cameras (`PracticeCameras`): a deterministic field of invented ALPRs,
-  switched on in settings, so avoidance can be exercised where the real ones have
-  been removed. Tagged as not real everywhere they appear, with a banner on the
-  map for as long as the mode is on.
+  **snapped onto real roads** with BRouter's own waypoint matching, switched on in
+  settings, so avoidance can be exercised where the real ones have been removed.
+  Snapping doubles as the density rule — candidates with no road within
+  `SNAP_RADIUS_METERS` are dropped, so a uniform grid comes out dense in town and
+  sparse in the country without anything having to know where towns are. Tagged
+  as not real everywhere they appear, with a banner on the map while it is on.
 
 Long-route planning was the blocker for real use and is now solved. A 489 km trip
 into dense metro — the one that used to be abandoned after twenty minutes —
@@ -121,14 +124,35 @@ credentials can revoke them. Current integrations:
 | Need | Service | Why |
 |---|---|---|
 | Destination search | [Photon](https://photon.komoot.io) | Keyless OSM geocoder. Replaced HERE, which required a card. |
+| Optional better search | Google Places | **Off by default, user's own key.** See below. |
 | Fallback search | Nominatim | Keyless OSM, used when Photon fails. |
 | Routing | BRouter, vendored in `:brouter` | Fully offline, on-device, MIT. |
 | Basemap | [OpenFreeMap](https://openfreemap.org) dark style | Keyless. |
 | Camera data | DeFlock CDN | OSM-derived, ODbL. |
 | Tesla charging sites | Overpass | Keyless OSM query. |
 
-The **only** credentialed integration is the *optional* Tessie vehicle client,
-using the user's own account, plus a far-future direct Tesla Fleet API.
+The credentialed integrations are all *optional* and all use the user's own
+account: the Tessie vehicle client, a far-future direct Tesla Fleet API, and —
+added 2026-08-15 — Google Places search.
+
+**On the Google Places exception, because it looks like the rule being broken.**
+It was asked for directly, after enough of the search problem: *"can we just go
+with Google for right now I'm like that fed up."* That is a fair call on the
+evidence — measured against small-town POIs, Photon and Nominatim both find and
+correctly rank anything that is *in* OpenStreetMap, so the composition is not at
+fault and there is no tuning left. What is missing is missing from OSM, and no
+keyless service fixes it.
+
+What keeps the rule intact is the shape: **the app ships with no key and behaves
+exactly as before.** Someone who wants the coverage puts their own key in
+settings. That is not squeamishness, it is the only shape that ships — a key
+bundled into an open-source APK is extractable in minutes and Places requires
+billing, so the bundled version means strangers' searches billed to the
+maintainer's card. And §3's deeper point still stands: a service that can issue
+credentials can revoke them, and a Shunt that *cannot work* without Google has an
+off switch someone else owns. Keyless stays the default so that switch is never
+load-bearing. The privacy trade — Google learns what you searched — is stated
+beside the field, because it is the user's to make and should be made knowingly.
 
 **On-device and offline-first.** Once a region's map tile is cached, routing and
 the drive monitor need no network at all. No background work, no analytics, no

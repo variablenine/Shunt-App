@@ -37,6 +37,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import app.shunt.solver.search.GooglePlacesSearch
 import app.shunt.solver.search.NominatimSearch
 import app.shunt.solver.search.PhotonSearch
 import app.shunt.solver.search.PlaceSearch
@@ -72,12 +73,28 @@ class AppContainer(context: Context) {
     // rate limited and not for autocomplete) rescues queries Photon can't find.
     private val photonSearch = PhotonSearch(http)
     private val nominatimSearch = NominatimSearch(http)
+
+    /**
+     * The optional Google Places key, kept beside the practice switch in the
+     * app's own preferences rather than in the encrypted vehicle store: it is a
+     * search key, not a credential that can command a car, and losing it costs
+     * a retype.
+     */
+    var placesApiKey: String
+        get() = practicePrefs.getString("places_key", "").orEmpty()
+        set(value) { practicePrefs.edit().putString("places_key", value).apply() }
+
+    private val googlePlaces = GooglePlacesSearch(http, apiKey = { placesApiKey })
     private val placeSearch = PlaceSearch(
         primary = { query, at -> photonSearch.suggest(query, at) },
         fallback = { query, at -> nominatimSearch.suggest(query, at) },
         // "coffee", "gas", "restroom" — answered by OSM tag near the driver
         // rather than by name, which is what made those searches useless.
         nearby = { tags, at -> photonSearch.nearby(tags, at) },
+        // Only when the user has supplied their own key. Keyless is the default
+        // and the fallback, so a bad key or an exhausted quota degrades to the
+        // behaviour the app has always had rather than breaking search.
+        preferred = { query, at -> googlePlaces.suggest(query, at) },
     )
 
     /**
@@ -119,7 +136,13 @@ class AppContainer(context: Context) {
      */
     private suspend fun camerasFor(bbox: BoundingBox): List<Camera> {
         val real = cameraSource.camerasIn(bbox).cameras
-        return if (practiceCameras) real + PracticeCameras.inBox(bbox) else real
+        if (!practiceCameras) return real
+        // Snapped onto real roads using the tiles already on disk for routing,
+        // which also thins them out to where the roads are — so a practice field
+        // is dense in town and sparse in the country, like the real thing.
+        return real + PracticeCameras.inBox(bbox) { points, meters ->
+            brouterRouter.snapToRoads(points, meters)
+        }
     }
 
     /** BRouter's offline tiles + profile live under the app's private storage. */
