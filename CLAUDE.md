@@ -842,12 +842,18 @@ competing with the UI for the same cores.
 the rest are planned while the car is already moving.
 
 **How it reaches the driver.** `BrouterPlanner` returns the leg's options plus
-`remaining`; `PlanViewModel` carries that onto the `DrivePlan`; the result sheet
-says plainly that its numbers describe the first stretch only, with the whole
-trip's direct distance beside it. On Go, `AppContainer.planRemainingLegs` plans
-the rest **to the destination** rather than one leg at a time — the phone is idle
-while the car moves, and finishing early gives a slow leg hours of slack instead
-of minutes — and pushes each result through a conflated channel to the monitor.
+`remaining`; the result sheet says plainly that its numbers describe the first
+stretch only, with the whole trip's direct distance beside it.
+
+**The rest is planned from the moment the chooser appears, not from Go.** The
+phone is idle while somebody reads three options, and waiting meant the map
+showed a line stopping in open country for as long as they took to decide.
+`AppContainer.planRemainingLegs` owns it — not the plan screen, because planning
+has to outlive that screen when the driving sheet takes over — and it runs **to
+the destination** rather than a leg at a time, so a slow leg has hours of slack
+instead of minutes. Each leg goes two places at once: onto `laterLegs` for the
+map, so the line visibly grows to the destination from a standstill, and through
+a conflated channel to the drive monitor.
 
 `DriveMonitor.extend` appends it, and the one thing that makes that safe is that
 **the new chain starts from the pin the car is aiming at, not from the

@@ -113,7 +113,11 @@ fun PlanScreen(
     /** What Shunt is doing with the car right now, for the driving sheet. */
     driveActivity: app.shunt.app.drive.DriveActivity = app.shunt.app.drive.DriveActivity.Watching,
 ) {
-    val overlay = routeOverlay(state.phase)
+    // The chosen leg, plus every later leg that has been planned so far. The
+    // line grows toward the destination as they land rather than appearing whole
+    // at the end, which is the visible difference between "still working" and
+    // "gave up".
+    val overlay = routeOverlay(state.phase).withLaterLegs(state.laterLegs)
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showVehicleSettings by remember { mutableStateOf(false) }
@@ -132,6 +136,7 @@ fun PlanScreen(
             cameraFetcher = cameraViewportFetcher,
             // Only while browsing: a long press mid-drive would abandon the trip.
             onLongPress = actions.onMapLongPress.takeIf { state.phase is Phase.Browsing },
+            destination = destinationOf(state.phase),
         )
 
         // Whether the search panel is expanded over the map.
@@ -506,6 +511,32 @@ private data class RouteOverlay(
     /** Cameras near the route, drawn at any zoom so the avoidance is visible. */
     val nearbyCameras: List<GeoPoint> = emptyList(),
 )
+
+/**
+ * Where the trip is going, as soon as that is known — which is well before a
+ * route exists. Drawn as a pin so a long press or a search result shows on the
+ * map instantly instead of after the seconds it takes to plan.
+ */
+private fun destinationOf(phase: Phase): GeoPoint? = when (phase) {
+    is Phase.Solving -> phase.destination.location
+    is Phase.NeedTile -> phase.destination.location
+    is Phase.Solved -> phase.destination.location
+    is Phase.Pushing -> phase.destination.location
+    is Phase.PushFailed -> phase.destination.location
+    is Phase.Driving -> phase.plan.destination.location
+    else -> null
+}
+
+/** The overlay with any later legs of the trip appended. */
+private fun RouteOverlay.withLaterLegs(legs: List<PlannedRoute>): RouteOverlay {
+    if (legs.isEmpty()) return this
+    return copy(
+        polyline = polyline + legs.flatMap { it.polyline },
+        passedCameras = passedCameras + legs.flatMap { leg -> leg.passedCameras.map { it.location } },
+        waypoints = waypoints + legs.flatMap { it.waypoints },
+        nearbyCameras = nearbyCameras + legs.flatMap { leg -> leg.nearbyCameras.map { it.location } },
+    )
+}
 
 private fun routeOverlay(phase: Phase): RouteOverlay {
     val option: PlannedRoute? = when (phase) {

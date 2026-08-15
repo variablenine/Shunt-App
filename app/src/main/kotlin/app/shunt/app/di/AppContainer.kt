@@ -25,7 +25,10 @@ import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.app.diag.DiagnosticLog
+import app.shunt.core.GeoPoint
+import app.shunt.app.plan.Destination
 import app.shunt.solver.brouter.LegSplitter
+import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.brouter.PlanOutcome
 import app.shunt.solver.camera.PracticeCameras
 import kotlinx.coroutines.CoroutineScope
@@ -330,6 +333,14 @@ class AppContainer(context: Context) {
     private var legJob: Job? = null
 
     /**
+     * Later legs of the trip, as they are planned, for the map to draw.
+     *
+     * Held here rather than in the plan screen's state because planning outlives
+     * that screen: the legs keep arriving after the driving sheet takes over.
+     */
+    val laterLegs = MutableStateFlow<List<PlannedRoute>>(emptyList())
+
+    /**
      * For work that outlives a screen but not the process — planning the later
      * legs of a trip in particular, which must survive the plan screen going
      * away when the driving sheet takes over.
@@ -349,12 +360,12 @@ class AppContainer(context: Context) {
      * itself as unfinished — which is bad, but is not the same as being stranded,
      * and is far better than blocking Go on the whole trip.
      */
-    fun planRemainingLegs(plan: DrivePlan) {
+    fun planRemainingLegs(points: List<GeoPoint>, destination: Destination) {
         legJob?.cancel()
-        if (!plan.isPartial) return
+        laterLegs.value = emptyList()
+        if (points.size < 2) return
         legJob = appScope.launch(Dispatchers.Default) {
-            var points = plan.remaining
-            val destination = plan.destination
+            var points = points
             while (points.size >= 2 && isActive) {
                 diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
                 val outcome = runCatching { brouterPlanner.plan(points, maxLegMeters = LegSplitter.MAX_LEG_METERS) }
@@ -375,6 +386,11 @@ class AppContainer(context: Context) {
                     remaining = outcome.remaining,
                 )
                 legExtensions.trySend(legPlan)
+                // Onto the map as well as into the drive. The line growing
+                // toward the destination is the visible difference between
+                // "still working" and "gave up", and it has to happen from a
+                // standstill as readily as while moving.
+                laterLegs.value = laterLegs.value + chosen
                 diagnostics.record(
                     DiagnosticLog.Kind.PLAN,
                     "next leg ready: ${chosen.distanceMeters / 1000} km, ${chosen.camerasPassed} cameras",
@@ -406,6 +422,7 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
+        onLaterLegsNeeded = { points, destination -> planRemainingLegs(points, destination) },
         log = { message, points ->
             diagnostics.record(
                 DiagnosticLog.Kind.PLAN,

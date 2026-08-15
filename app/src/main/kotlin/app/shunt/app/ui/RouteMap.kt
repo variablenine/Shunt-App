@@ -131,6 +131,15 @@ private const val ONE_WAY_ICON_DP = 14f
 private const val ONE_WAY_SPACING_DP = 90f
 private const val NEARBY_SOURCE = "route-nearby-cameras"
 private const val NEARBY_LAYER = "route-nearby-camera-dots"
+// Where the trip is going, drawn the moment a destination is chosen — before
+// any route exists. Planning a long trip takes seconds, and a map that shows
+// nothing at all during them reads as an app that did not register the tap.
+/** Zoom used when framing a destination that has no route round it yet. */
+private const val LONE_PIN_ZOOM = 13.0
+
+private const val DESTINATION_SOURCE = "trip-destination"
+private const val DESTINATION_LAYER = "trip-destination-pin"
+
 private const val WAYPOINT_SOURCE = "route-waypoints"
 private const val WAYPOINT_LAYER = "route-waypoint-dots"
 
@@ -176,6 +185,15 @@ fun RouteMap(
     cameraFetcher: (suspend (BoundingBox) -> List<MapCamera>)? = null,
     /** Long-press anywhere to route there, Google-Maps style. */
     onLongPress: ((GeoPoint) -> Unit)? = null,
+    /**
+     * Where the trip is going, drawn as a pin as soon as it is known.
+     *
+     * Separate from the route because it is known *first*: a long press or a
+     * search result gives a destination immediately, and the route that reaches
+     * it takes seconds to plan. Without this the map is unchanged for those
+     * seconds and the press looks like it missed.
+     */
+    destination: GeoPoint? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -302,10 +320,10 @@ fun RouteMap(
             if (showLocation && hasLocationPermission && !locationActivated.value) {
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
-            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints, routeCameras)
+            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints, routeCameras, destination)
             renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
-            view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey) }
+            view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey, destination) }
         }
 
         selectedCamera?.let { cam ->
@@ -384,6 +402,7 @@ private fun renderRoute(
     passed: List<GeoPoint>,
     waypoints: List<GeoPoint> = emptyList(),
     nearby: List<GeoPoint> = emptyList(),
+    destination: GeoPoint? = null,
 ) {
     // Cameras near the route but not on it — what the detour is avoiding. Drawn
     // first so the passed ones and the pins sit on top.
@@ -422,6 +441,26 @@ private fun renderRoute(
                 ),
             )
         }
+    }
+
+    // Where the trip is going. Drawn first and independently of the route, so
+    // it appears the instant a destination is picked.
+    val destinationFeatures = FeatureCollection.fromFeatures(
+        listOfNotNull(destination?.let { Feature.fromGeometry(Point.fromLngLat(it.lon, it.lat)) }),
+    )
+    val destinationSource = style.getSourceAs<GeoJsonSource>(DESTINATION_SOURCE)
+    if (destinationSource != null) {
+        destinationSource.setGeoJson(destinationFeatures)
+    } else {
+        style.addSource(GeoJsonSource(DESTINATION_SOURCE, destinationFeatures))
+        style.addLayer(
+            CircleLayer(DESTINATION_LAYER, DESTINATION_SOURCE).withProperties(
+                PropertyFactory.circleColor("#1f6feb"),
+                PropertyFactory.circleRadius(9f),
+                PropertyFactory.circleStrokeColor("#ffffff"),
+                PropertyFactory.circleStrokeWidth(3f),
+            ),
+        )
     }
 
     // The pins the car gets steered through, under the camera dots so an
@@ -660,11 +699,22 @@ private fun fitRouteOnce(
     polyline: List<GeoPoint>,
     cameras: List<GeoPoint>,
     fitKey: androidx.compose.runtime.MutableState<Int?>,
+    destination: GeoPoint? = null,
 ) {
-    if (polyline.size < 2) return
+    // With no route yet there is still somewhere to look: a destination just
+    // picked may be off-screen, and framing it is what makes a long press on a
+    // far part of the map feel like it did something.
+    if (polyline.size < 2) {
+        val target = destination ?: return
+        val key = target.hashCode()
+        if (key == fitKey.value) return
+        fitKey.value = key
+        map.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(target.lat, target.lon), LONE_PIN_ZOOM))
+        return
+    }
     val key = polyline.hashCode()
     if (key == fitKey.value) return
-    val points = (polyline + cameras).map { LatLng(it.lat, it.lon) }
+    val points = (polyline + cameras + listOfNotNull(destination)).map { LatLng(it.lat, it.lon) }
     val bounds = runCatching {
         LatLngBounds.Builder().apply { points.forEach { include(it) } }.build()
     }.getOrNull() ?: return

@@ -117,6 +117,15 @@ data class PlanUiState(
     val chargeStops: Set<GeoPoint> = emptySet(),
     /** Charging sites near the planned route, for picking one off the map. */
     val chargersOnRoute: List<Destination> = emptyList(),
+    /**
+     * Legs of a long trip planned after the first one, newest last.
+     *
+     * A long trip is cut into legs so the driver can set off quickly, and these
+     * are the ones that landed afterwards. They are drawn on the map as they
+     * arrive so the line visibly grows to the destination — from a standstill as
+     * readily as while driving, because the phone plans them either way.
+     */
+    val laterLegs: List<PlannedRoute> = emptyList(),
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

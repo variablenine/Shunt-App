@@ -47,6 +47,16 @@ class PlanViewModel(
      * a file on disk — and so the app module owns where it is written.
      */
     private val log: ((String, List<GeoPoint>) -> Unit)? = null,
+    /**
+     * Asks for the rest of a long trip to be planned, once its first leg is on
+     * the chooser.
+     *
+     * Owned outside the screen deliberately: the legs have to keep arriving
+     * after the driving sheet takes over and the plan screen is gone, and they
+     * have to reach the drive monitor as well as the map. See
+     * `AppContainer.planRemainingLegs`.
+     */
+    private val onLaterLegsNeeded: ((List<GeoPoint>, Destination) -> Unit)? = null,
     /** Reads the car's remaining range; absent, no range warning is shown. */
     private val rangeReader: VehicleRangeReader? = null,
     /** Finds a charging stop on the way; absent, the offer isn't made. */
@@ -169,11 +179,46 @@ class PlanViewModel(
      * best-effort — a name makes the result card readable, but never blocks or
      * fails the routing, which is the part the user actually asked for.
      */
+    /**
+     * Route to a spot pressed on the map.
+     *
+     * **Planning starts on this call, not after the reverse geocode.** Naming
+     * the point is a network round-trip of about a second, and waiting for it
+     * meant a long press did nothing visible for that second — which reads as a
+     * press that missed. The name is cosmetic: routing needs the coordinate, and
+     * the coordinate is already in hand.
+     *
+     * So the pin and the plan go up immediately under a placeholder name, and
+     * the real name is dropped in when it arrives — matched by *location*, so a
+     * slow answer that lands after the driver has moved on cannot rename
+     * somewhere else.
+     */
     fun onMapLongPress(point: GeoPoint) {
         searchJob?.cancel()
+        planTo(Destination(DROPPED_PIN, point))
+        val namer = placeNamer ?: return
         workScope.launch {
-            val name = placeNamer?.let { namer -> runCatching { namer.nameFor(point) }.getOrNull() }
-            planTo(Destination(name ?: DROPPED_PIN, point))
+            val name = runCatching { namer.nameFor(point) }.getOrNull() ?: return@launch
+            _state.update { state ->
+                val phase = state.phase
+                val named = Destination(name, point)
+                when {
+                    phase is Phase.Solving && phase.destination.location == point ->
+                        state.copy(phase = phase.copy(destination = named))
+                    phase is Phase.Solved && phase.destination.location == point ->
+                        state.copy(phase = phase.copy(destination = named))
+                    phase is Phase.NeedTile && phase.destination.location == point ->
+                        state.copy(phase = phase.copy(destination = named))
+                    else -> state
+                }
+            }
+            // Recents were written with the placeholder; rewrite so the name is
+            // what shows next time, which is the whole point of pinning a place
+            // the map data cannot name.
+            recentPlaces?.let { store ->
+                runCatching { store.record(Destination(name, point)) }
+                _state.update { it.copy(recents = store.load()) }
+            }
         }
     }
 
@@ -248,6 +293,12 @@ class PlanViewModel(
                     },
                     emptyList(),
                 )
+                // Start on the rest of the trip immediately, while the driver
+                // is still reading the chooser. The phone is idle and the legs
+                // are what turn a first-leg route into a whole one — waiting for
+                // Go meant the map showed a line stopping in open country for as
+                // long as somebody took to decide.
+                onLaterLegsNeeded?.invoke(outcome.remaining, destination)
                 // Opened before the chooser is shown, and therefore before Go
                 // can be tapped. Doing it inside checkRange() left a window
                 // between the two where the gate did not exist yet, which is the

@@ -110,11 +110,10 @@ class MainActivity : ComponentActivity() {
                     livePlan?.let { vm.onRouteReplanned(it) }
                 }
 
-                // A trip too long to plan in one go is handed over as its first
-                // leg; the rest is planned while the car is already moving.
-                LaunchedEffect(state.phase) {
-                    (state.phase as? Phase.Driving)?.plan?.let { container.planRemainingLegs(it) }
-                }
+                // Later legs of a long trip, drawn on the map as they land so
+                // the line grows to the destination — from a standstill as
+                // readily as while driving.
+                val laterLegs by container.laterLegs.collectAsStateWithLifecycle()
 
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
@@ -129,7 +128,7 @@ class MainActivity : ComponentActivity() {
                 var practiceOn by remember { mutableStateOf(container.practiceCameras) }
 
                 PlanScreen(
-                    state = state,
+                    state = state.copy(laterLegs = laterLegs),
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,
                     driveActivity = driveActivity,
