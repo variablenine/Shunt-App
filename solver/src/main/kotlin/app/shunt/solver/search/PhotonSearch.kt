@@ -23,8 +23,45 @@ class PhotonSearch(
     private val http: OkHttpClient,
     private val baseUrl: String = "https://photon.komoot.io",
 ) {
+    /**
+     * Places matching [query], near [at] first.
+     *
+     * **Asked twice: once inside a box around the driver, then — only if that
+     * finds nothing — worldwide.** `location_bias_scale` alone is a preference,
+     * and measured against real queries it loses badly to raw OSM "importance":
+     *
+     * | typed | biased only | inside the box |
+     * |---|---|---|
+     * | "Concordia Public Library" | a library in Hong Kong | the library in Concordia |
+     * | "brown grand theatre" | a theatre in Warsaw | the Brown Grand Opera House |
+     * | "Main Street Concordia" | a school in Tomball, Texas | streets in Concordia |
+     *
+     * A bias cannot fix that, because the local answer is not in the response to
+     * re-rank — `rankByProximity` can only sort what it was given, and what it
+     * was given was Hong Kong. The box is what puts the right result in the list
+     * at all, and it is the single largest improvement search has had.
+     *
+     * The widen matters just as much in the other direction: bounded-only would
+     * make a deliberately distant destination unfindable, which is the mistake
+     * [NominatimSearch] documents avoiding for the same reason.
+     */
     suspend fun suggest(query: String, at: GeoPoint, limit: Int = 10): List<Suggestion> {
         if (query.isBlank()) return emptyList()
+        // Null means the request itself failed, which is *not* a reason to
+        // widen: a 429 is the service asking us to slow down, and answering it
+        // with a second request is the opposite. Only a search that genuinely
+        // came back empty is worth asking again, wider.
+        val near = search(query, at, limit, boxDegrees = NEAR_BOX_DEGREES) ?: return emptyList()
+        if (near.isNotEmpty()) return near
+        return search(query, at, limit, boxDegrees = null).orEmpty()
+    }
+
+    private suspend fun search(
+        query: String,
+        at: GeoPoint,
+        limit: Int,
+        boxDegrees: Double?,
+    ): List<Suggestion>? {
         val url = "$baseUrl/api".toHttpUrl().newBuilder()
             .addQueryParameter("q", query)
             .addQueryParameter("lat", at.lat.toString())
@@ -36,8 +73,17 @@ class PhotonSearch(
             // Higher bias scale = weight the lat/lon above raw importance.
             // (Note the direction: a *low* value biases less, not more.)
             .addQueryParameter("location_bias_scale", LOCATION_BIAS_SCALE)
+            .apply {
+                boxDegrees?.let {
+                    // minLon,minLat,maxLon,maxLat — a filter, not a preference.
+                    addQueryParameter(
+                        "bbox",
+                        "${at.lon - it},${at.lat - it},${at.lon + it},${at.lat + it}",
+                    )
+                }
+            }
             .build()
-        val body = fetch(url) ?: return emptyList()
+        val body = fetch(url) ?: return null
         return rankByProximity(parse(body), at)
     }
 
@@ -116,6 +162,15 @@ class PhotonSearch(
          * driver wants one now.
          */
         const val NEARBY_RADIUS_KM = 50.0
+
+        /**
+         * Half-width of the box searched first, in degrees — about 165 km.
+         *
+         * Wide enough to hold everywhere a driver plausibly means when they type
+         * a name without a town, and narrow enough that the local answer is not
+         * competing with a famous namesake on another continent.
+         */
+        const val NEAR_BOX_DEGREES = 1.5
 
         fun parse(body: String): List<Suggestion> =
             json.decodeFromString<FeatureCollection>(body).features.mapNotNull { feature ->

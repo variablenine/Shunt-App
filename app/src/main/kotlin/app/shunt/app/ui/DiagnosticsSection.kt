@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -137,57 +136,5 @@ fun PracticeCamerasSetting(enabled: Boolean, onChange: (Boolean) -> Unit) {
             )
         }
         Switch(checked = enabled, onCheckedChange = onChange)
-    }
-}
-
-/**
- * The optional Google Places key.
- *
- * Keyless search is the default and stays that way — an app that *needs* a
- * credential has an off switch somebody else owns, which is the whole reason
- * CLAUDE.md §3 exists. This is for the case that rule cannot fix: a place that
- * is not in OpenStreetMap at all. The keyless geocoders find anything that *is*
- * there, so nothing short of a different dataset helps.
- *
- * The cost is stated rather than buried, because it is a real one and it is the
- * user's to weigh.
- */
-@Composable
-fun PlacesKeySetting(currentKey: String, onSave: (String) -> Unit) {
-    var key by remember(currentKey) { mutableStateOf(currentKey) }
-
-    HorizontalDivider()
-    Spacer(Modifier.height(12.dp))
-    Text("Better place search (optional)", style = MaterialTheme.typography.titleSmall)
-    Spacer(Modifier.height(4.dp))
-    Text(
-        "Shunt searches OpenStreetMap, which is keyless and private but misses " +
-            "places nobody has mapped. Adding your own Google Places API key uses " +
-            "Google for name searches instead.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(6.dp))
-    Text(
-        "Your searches then go to Google, who will know what you looked up. " +
-            "Routing, cameras and everything during a drive stay on the phone either way.",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.error,
-    )
-    Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        value = key,
-        onValueChange = { key = it },
-        singleLine = true,
-        label = { Text("Google Places API key") },
-        placeholder = { Text("leave blank to stay keyless") },
-        modifier = Modifier.fillMaxWidth(),
-    )
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { onSave(key.trim()) }) { Text("Save key") }
-        if (currentKey.isNotBlank()) {
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = { key = ""; onSave("") }) { Text("Remove key") }
-        }
     }
 }

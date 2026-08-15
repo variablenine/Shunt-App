@@ -124,35 +124,20 @@ credentials can revoke them. Current integrations:
 | Need | Service | Why |
 |---|---|---|
 | Destination search | [Photon](https://photon.komoot.io) | Keyless OSM geocoder. Replaced HERE, which required a card. |
-| Optional better search | Google Places | **Off by default, user's own key.** See below. |
 | Fallback search | Nominatim | Keyless OSM, used when Photon fails. |
 | Routing | BRouter, vendored in `:brouter` | Fully offline, on-device, MIT. |
 | Basemap | [OpenFreeMap](https://openfreemap.org) dark style | Keyless. |
 | Camera data | DeFlock CDN | OSM-derived, ODbL. |
 | Tesla charging sites | Overpass | Keyless OSM query. |
 
-The credentialed integrations are all *optional* and all use the user's own
-account: the Tessie vehicle client, a far-future direct Tesla Fleet API, and —
-added 2026-08-15 — Google Places search.
+The **only** credentialed integration is the *optional* Tessie vehicle client,
+using the user's own account, plus a far-future direct Tesla Fleet API.
 
-**On the Google Places exception, because it looks like the rule being broken.**
-It was asked for directly, after enough of the search problem: *"can we just go
-with Google for right now I'm like that fed up."* That is a fair call on the
-evidence — measured against small-town POIs, Photon and Nominatim both find and
-correctly rank anything that is *in* OpenStreetMap, so the composition is not at
-fault and there is no tuning left. What is missing is missing from OSM, and no
-keyless service fixes it.
-
-What keeps the rule intact is the shape: **the app ships with no key and behaves
-exactly as before.** Someone who wants the coverage puts their own key in
-settings. That is not squeamishness, it is the only shape that ships — a key
-bundled into an open-source APK is extractable in minutes and Places requires
-billing, so the bundled version means strangers' searches billed to the
-maintainer's card. And §3's deeper point still stands: a service that can issue
-credentials can revoke them, and a Shunt that *cannot work* without Google has an
-off switch someone else owns. Keyless stays the default so that switch is never
-load-bearing. The privacy trade — Google learns what you searched — is stated
-beside the field, because it is the user's to make and should be made knowingly.
+**A commercial geocoder was tried and taken back out.** After enough of the
+missing-places problem the maintainer asked for Google, then reconsidered a few
+minutes later — *"let's not do the Google API thing I just want something that
+actually works"* — and the reconsideration was right, because measuring properly
+found the fault was ours. See below.
 
 **On-device and offline-first.** Once a region's map tile is cached, routing and
 the drive monitor need no network at all. No background work, no analytics, no
@@ -162,12 +147,34 @@ phone only when a person exports it and sends it themselves. An app whose purpos
 is to stop a driver being tracked cannot quietly report where they drove. Location permission is while-in-use only —
 `ACCESS_BACKGROUND_LOCATION` is never requested.
 
-**Search coverage is OSM-limited by design.** Being keyless means some
-businesses that Google or HERE would find are simply missing from OpenStreetMap.
-The chosen direction is *stay keyless, maximise OSM*: rank nearby results first
-(`rankByProximity`, shared by both geocoders) and add genuinely missing places to
-OpenStreetMap so they become searchable for everyone, permanently. Do not
-reintroduce a paid geocoder to paper over this.
+**Search coverage is OSM-limited by design, but far less than it looked.**
+Being keyless means some businesses Google would find are missing from
+OpenStreetMap. That is true and it is *not* what most "missing location"
+complaints turned out to be.
+
+**Both geocoders must be asked about the driver's own area before the world.**
+Photon's `location_bias_scale` is a preference, and measured against real
+queries it loses badly to raw OSM "importance":
+
+| typed, from a small town | biased only | bounded to ±1.5° |
+|---|---|---|
+| "Concordia Public Library" | a library in Hong Kong | the actual local library |
+| "brown grand theatre" | a theatre in Warsaw | the Brown Grand Opera House |
+| "Main Street Concordia" | a school in Tomball, Texas | streets in the right town |
+
+The failure is not ranking and cannot be fixed by ranking: `rankByProximity` can
+only sort what it was given, and what it was given was Hong Kong. A hard `bbox`
+is what puts the local answer in the response at all. `PhotonSearch.suggest` now
+searches bounded first and widens only when that genuinely finds nothing —
+*genuinely*, because a throttled request is not an empty result and answering a
+429 with a second request is the opposite of what it asked for.
+`NominatimSearch` has done the same thing for the same reason since F-11.
+
+This is why the Google experiment was abandoned rather than finished: the
+coverage gap that justified it was mostly our own query. What remains genuinely
+missing is genuinely missing from OSM, and the answer to that is unchanged — add
+the place, or press and hold it on the map, which files it in Recents and makes
+it findable by name from then on.
 
 **Searching for a *kind* of place is a different query, and must not go through
 the name geocoders.** Asked for "coffee" they answer with Coffee County,

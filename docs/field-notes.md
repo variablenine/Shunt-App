@@ -1113,7 +1113,31 @@ and deleted. **CLAUDE.md §3 already said Overpass was 30-40 s and hopeless for
 search; the lesson is that "but a name query is cheaper than a tag sweep" was a
 guess, and it was worse, not better.**
 
-**What actually helps, and shipped instead.** Recents are now matched as the
+**Update, 2026-08-15 — most of it was our own query.** The complaint recurred,
+Google was asked for and then withdrawn within minutes (*"I just want something
+that actually works"*), and measuring the pipeline properly — rather than the
+geocoders in isolation — found the real fault. My first measurement used
+well-mapped chains, which every geocoder gets right; it was too weak a test to
+learn anything from. Typed the way somebody actually searches from a small town:
+
+| typed | Photon returned |
+|---|---|
+| "Concordia Public Library" | a library in **Hong Kong** |
+| "brown grand theatre" | a theatre in **Warsaw** |
+| "Main Street Concordia" | a school in **Tomball, Texas** |
+
+`location_bias_scale` is a *preference* and loses to OSM "importance". Adding a
+hard `bbox` around the driver returns the actual local library, the actual Brown
+Grand Opera House, and the right town's streets. **No ranking change could have
+fixed this** — `rankByProximity` sorts what it is given, and it was given Hong
+Kong. Two stages, near then wide, so a deliberately distant destination stays
+findable.
+
+The lesson worth keeping is about the measurement, not the parameter: testing a
+geocoder with queries it is certain to get right proves nothing, and it very
+nearly bought a paid dependency to fix a bug we had put there ourselves.
+
+**What also helps, and shipped alongside.** Recents are now matched as the
 driver types, not just offered on an empty box. That matters more than it sounds,
 because press-and-hold on the map already reverse-geocodes a point, routes to it,
 and files it in Recents — so **any** place the map data cannot name by name can be

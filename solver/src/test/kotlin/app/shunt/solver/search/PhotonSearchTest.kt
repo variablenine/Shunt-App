@@ -121,4 +121,75 @@ class PhotonSearchTest {
     fun `malformed or empty bodies yield no suggestions rather than throwing`() {
         assertTrue(PhotonSearch.parse("""{"type":"FeatureCollection","features":[]}""").isEmpty())
     }
+
+    @Test
+    fun `a name search looks near the driver before it looks at the world`() = runTest {
+        // Measured, and the largest single improvement search has had.
+        // `location_bias_scale` is a preference and loses to raw OSM importance:
+        // "Concordia Public Library" returned a library in Hong Kong, "brown
+        // grand theatre" one in Warsaw. No amount of re-ranking fixes that,
+        // because the local answer is not in the response to re-rank.
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setBody(ONE_RESULT))
+            val search = PhotonSearch(OkHttpClient(), server.url("/").toString().trimEnd('/'))
+            search.suggest("library", GeoPoint(39.0, -98.0))
+
+            val asked = server.takeRequest().requestUrl!!
+            val bbox = asked.queryParameter("bbox")
+            assertTrue(bbox != null, "the first search must be bounded to the driver's area")
+            val parts = bbox.split(",").map { it.toDouble() }
+            assertTrue(
+                parts[0] < -98.0 && parts[2] > -98.0 && parts[1] < 39.0 && parts[3] > 39.0,
+                "the box must contain the driver: $bbox",
+            )
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `nothing nearby widens to the whole world`() = runTest {
+        // The other half. Bounded-only would make a deliberately distant
+        // destination unfindable, which is the mistake NominatimSearch documents
+        // avoiding for exactly the same reason.
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setBody(NO_RESULTS))
+            server.enqueue(MockResponse().setBody(ONE_RESULT))
+            val search = PhotonSearch(OkHttpClient(), server.url("/").toString().trimEnd('/'))
+
+            assertEquals(1, search.suggest("somewhere far", GeoPoint(39.0, -98.0)).size)
+            assertTrue(server.takeRequest().requestUrl!!.queryParameter("bbox") != null)
+            assertTrue(
+                server.takeRequest().requestUrl!!.queryParameter("bbox") == null,
+                "the widened search must drop the box, not merely enlarge it",
+            )
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `a throttled search is not retried wider`() = runTest {
+        // A 429 is the service asking us to slow down. Answering it with a
+        // second request is the opposite, and the caller has another geocoder
+        // to try anyway.
+        val server = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(429))
+            val search = PhotonSearch(OkHttpClient(), server.url("/").toString().trimEnd('/'))
+            assertEquals(emptyList(), search.suggest("civic", GeoPoint(39.0, -98.0)))
+            assertEquals(1, server.requestCount, "a throttled search was retried")
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    private companion object {
+        const val NO_RESULTS = """{"features":[]}"""
+        const val ONE_RESULT =
+            """{"features":[{"geometry":{"coordinates":[-98.01,39.01]},""" +
+                """"properties":{"name":"Civic Center","city":"Anytown","state":"KS"}}]}"""
+    }
 }
