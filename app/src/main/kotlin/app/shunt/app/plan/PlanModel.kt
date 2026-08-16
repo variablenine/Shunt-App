@@ -138,6 +138,8 @@ data class PlanUiState(
      * See `LegJoin`.
      */
     val trimmedLeadPolyline: List<GeoPoint>? = null,
+    /** That leg's pins with any on the trimmed spur removed. See `LegJoin.pinsOn`. */
+    val trimmedLeadWaypoints: List<GeoPoint>? = null,
     /**
      * The pin the car is aiming at while a drive is running, for the map's
      * follow camera. Null when nothing is being driven.

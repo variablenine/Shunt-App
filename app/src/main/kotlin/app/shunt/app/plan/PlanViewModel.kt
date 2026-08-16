@@ -61,7 +61,9 @@ class PlanViewModel(
      * leg being shown, so the leg after it can be checked for doubling back
      * over its tail — see `LegJoin`.
      */
-    private val onLaterLegsNeeded: ((List<GeoPoint>, Destination, List<GeoPoint>) -> Unit)? = null,
+    private val onLaterLegsNeeded: (
+        (List<GeoPoint>, Destination, List<GeoPoint>, List<GeoPoint>) -> Unit
+    )? = null,
     /**
      * Stop planning the rest of a trip and throw away what has been planned.
      *
@@ -320,6 +322,7 @@ class PlanViewModel(
                     // Fewest-cameras is what the driver is being steered toward
                     // and what a later leg is planned to continue from.
                     (outcome.options.minByOrNull { it.camerasPassed } ?: outcome.options.first()).polyline,
+                    (outcome.options.minByOrNull { it.camerasPassed } ?: outcome.options.first()).waypoints,
                 )
                 // Opened before the chooser is shown, and therefore before Go
                 // can be tapped. Doing it inside checkRange() left a window

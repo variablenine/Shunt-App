@@ -386,6 +386,14 @@ class AppContainer(context: Context) {
     val trimmedLeadPolyline = MutableStateFlow<List<GeoPoint>?>(null)
 
     /**
+     * The shown leg's pins, minus any that stood on the trimmed-away spur.
+     *
+     * A pin is a target the car gets aimed at, so one left behind on road that
+     * has been cut would steer the vehicle back down it. See [LegJoin.pinsOn].
+     */
+    val trimmedLeadWaypoints = MutableStateFlow<List<GeoPoint>?>(null)
+
+    /**
      * For work that outlives a screen but not the process — planning the later
      * legs of a trip in particular, which must survive the plan screen going
      * away when the driving sheet takes over.
@@ -417,6 +425,8 @@ class AppContainer(context: Context) {
         legJob = null
         planningLaterLegs.value = false
         trimmedLeadPolyline.value = null
+        trimmedLeadWaypoints.value = null
+        trimmedLeadWaypoints.value = null
         laterLegs.value = emptyList()
         // Conflated, so at most one can be waiting — but draining is what makes
         // this true regardless of the channel's capacity.
@@ -433,11 +443,14 @@ class AppContainer(context: Context) {
          * no trim is attempted at that join.
          */
         leadPolyline: List<GeoPoint> = emptyList(),
+        /** That leg's pins, so any standing on a trimmed spur go with it. */
+        leadWaypoints: List<GeoPoint> = emptyList(),
     ) {
         legJob?.cancel()
         laterLegs.value = emptyList()
         planningLaterLegs.value = false
         trimmedLeadPolyline.value = null
+        trimmedLeadWaypoints.value = null
         if (points.size < 2) return
         planningLaterLegs.value = true
         legJob = appScope.launch(Dispatchers.Default) {
@@ -501,13 +514,24 @@ class AppContainer(context: Context) {
                         DiagnosticLog.Kind.PLAN,
                         "trimmed a ${trim.savedMeters.toInt()} m double-back at the leg boundary",
                     )
-                    leg = chosen.copy(polyline = trim.next)
+                    // Pins go with the road they were placed on. A pin left
+                    // out on the removed spur is not untidy, it is a target the
+                    // car would be aimed at — steering it back down the very
+                    // road the trim deleted. See LegJoin.pinsOn.
+                    leg = chosen.copy(
+                        polyline = trim.next,
+                        waypoints = LegJoin.pinsOn(trim.next, chosen.waypoints),
+                    )
                     // Shorten the leg before it to match, so the two still meet.
                     if (previousLegs.isEmpty()) {
                         trimmedLeadPolyline.value = trim.previous
+                        trimmedLeadWaypoints.value = LegJoin.pinsOn(trim.previous, leadWaypoints)
                     } else {
-                        laterLegs.value = previousLegs.dropLast(1) +
-                            previousLegs.last().copy(polyline = trim.previous)
+                        val earlierLeg = previousLegs.last()
+                        laterLegs.value = previousLegs.dropLast(1) + earlierLeg.copy(
+                            polyline = trim.previous,
+                            waypoints = LegJoin.pinsOn(trim.previous, earlierLeg.waypoints),
+                        )
                     }
                 }
 
@@ -518,7 +542,7 @@ class AppContainer(context: Context) {
                     // put a waypoint hundreds of kilometres past the end of the
                     // leg being appended — the car would have been aimed at the
                     // destination the moment the extension landed.
-                    chain = chosen.waypoints + (outcome.remaining.firstOrNull() ?: points.last()),
+                    chain = leg.waypoints + (outcome.remaining.firstOrNull() ?: points.last()),
                     cameras = chosen.passedCameras,
                     polyline = leg.polyline,
                     remaining = outcome.remaining,
@@ -563,7 +587,9 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
-        onLaterLegsNeeded = { points, destination, lead -> planRemainingLegs(points, destination, lead) },
+        onLaterLegsNeeded = { points, destination, lead, leadPins ->
+            planRemainingLegs(points, destination, lead, leadPins)
+        },
         onLaterLegsAbandoned = { cancelRemainingLegs() },
         log = { message, points ->
             diagnostics.record(

@@ -1717,6 +1717,98 @@ a visible out-and-back at a leg boundary means the thresholds are wrong.
 
 ---
 
+### F-32 · A waypoint left standing off the route
+*Observed: 2026-08-16, diagnosed by the maintainer from the map. Fixed.*
+
+> That waypoint was placed when a leg was facing that way, and then it got
+> cropped, but the waypoint stayed. We need to crop that waypoint too.
+
+Exactly right, and it is the half of F-24 that was missed. `LegJoin.trimDoubleBack`
+cuts the *polylines* where two legs double back over each other; the pins placed
+along the removed spur came through untouched, so one was left floating beside a
+route that no longer goes near it.
+
+That is worse than untidy. **A pin is a constraint sent to the car** — the drive
+monitor aims the vehicle at each in turn — so a pin out on a deleted spur would
+steer the car back down the very road the trim exists to remove, at a junction,
+under FSD. `LegJoin.pinsOn` drops them, on both sides of the join and in the
+chain handed to the monitor as well as the line drawn on the map.
+
+The threshold errs toward keeping a pin (`PIN_ON_ROUTE_METERS`, 400 m): a pin
+sits *beside* the road it holds and the line it is checked against has been
+sampled, so a kept pin is at worst redundant while a dropped one loses a turn.
+
+---
+
+### F-33 · "camera-free" on a trip that is not camera-free
+*Observed: 2026-08-16. Fixed.*
+
+> I feel like the fastest and fewest cameras buttons are kind of confusing from a
+> UI perspective since it says camera free even though as a whole we end up on a
+> route that isn't camera free.
+
+A fair reading of a flat contradiction: the badge said **camera-free** directly
+below a whole-trip line reading **13 cameras**. Both were true — the badge is
+about the leg being chosen, the total is about the trip — and nothing said so.
+
+On a split trip the badge now reads "leg is camera-free" and the line under the
+cards "This leg passes no cameras." Unsplit trips are unchanged, because there
+the two cannot differ and the extra word would be noise.
+
+---
+
+### F-34 · Still hitting avoidable cameras on the last leg
+*Investigated 2026-08-16. One real waste removed; the camera count did not move.*
+
+Reported against the carried-forward build: the last leg into a metro now returns
+a balanced route rather than the fastest road, but "there are still some
+genuinely avoidable cameras that are getting hit."
+
+Measured on the same San Francisco leg, and the breakdown is worth reading in
+full because it does **not** support the obvious conclusion:
+
+```
+blocked (7 at an endpoint, unblockable) (no route)   12.0 s
+fewest (fallback) (no route)                         27.7 s
+balanced                                             19.4 s
+... widen 2, out of time
+```
+
+The hard block **proved** no camera-free route exists — it reported *no route*,
+not a timeout, after a full 12-second search. So into that metro 21 cameras may
+genuinely be near the floor for the weighted approach, and the honest position is
+that this is not yet shown to be avoidable.
+
+**The `FEWEST_WEIGHT` suspicion from F-26 was confirmed and is not the answer.**
+At 20,000 the weighted fallback returns no route after 28 s; at 2,000 it returns
+one in 20 s. So the weight *is* what makes that pass fail. But the route it finds
+at 2,000 passes **23** cameras against balanced's 21, and leg 1 got worse too
+(2 cameras → 4). A lower weight buys a working pass and a worse answer, so
+lowering it is not a fix. A weight *ladder* — retry lower when the high weight
+finds nothing — would not have helped here either, for the same reason.
+
+**What did come out of it:** the hard block was being re-run on the widen round,
+spending another 11-15 s re-proving the same impossibility, out of the budget the
+pass that actually produces a route then had nothing left of.
+`RouteRequest.hardBlockProvenImpossible` stops that, and the argument is
+monotonicity: a widen only ever **adds** cameras, so the zones the later round
+gets are a superset of the ones the block already failed against, and a route
+that did not exist among fewer obstacles cannot appear among more. Set only on a
+proved *no route* — a timed-out search has proved nothing, and skipping it later
+would be discarding an option on no evidence.
+
+Measured: the widen round's block goes from 12.0 s to 0.0 s. The camera count on
+this trip is unchanged at 21, so **this is a budget saving, not a fix for the
+report**. Where it should tell is any leg whose widen round currently starves the
+pass that would have found something.
+
+Still open, and the next thing to try: the *fastest* option into that metro
+passes 126 cameras and balanced passes 21, which is a very wide gap — a weight
+between 500 and 20,000 may find a better knee. That wants measuring across
+several metros rather than tuning against one.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

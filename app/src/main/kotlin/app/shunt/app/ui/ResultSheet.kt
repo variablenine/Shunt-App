@@ -303,12 +303,16 @@ private fun SolvedContent(
     // Choose a route. With only one option (no cameras nearby) this is a single
     // card; otherwise it's the fastest → fewest-cameras spectrum.
     phase.options.forEachIndexed { index, option ->
-        RouteOptionCard(option, selected = index == phase.selected) { onSelectRoute(index) }
+        RouteOptionCard(
+            option,
+            selected = index == phase.selected,
+            partial = phase.remaining.isNotEmpty(),
+        ) { onSelectRoute(index) }
         Spacer(Modifier.height(8.dp))
     }
 
     Spacer(Modifier.height(4.dp))
-    SelectedRouteDetail(phase.chosen)
+    SelectedRouteDetail(phase.chosen, partial = phase.remaining.isNotEmpty())
 
     phase.timings?.let {
         Spacer(Modifier.height(12.dp))
@@ -538,7 +542,22 @@ private fun RangeWarning(
 }
 
 @Composable
-private fun RouteOptionCard(option: PlannedRoute, selected: Boolean, onClick: () -> Unit) {
+private fun RouteOptionCard(
+    option: PlannedRoute,
+    selected: Boolean,
+    /**
+     * Whether these cards describe one leg of a longer trip.
+     *
+     * The badge says "camera-free", and on a split trip that is a claim about
+     * **this leg** while the trip as a whole may pass plenty — which reads as a
+     * flat contradiction next to the whole-trip line right above it. Reported
+     * exactly that way: "it says camera free even though as a whole we end up on
+     * a route that isn't camera free." So the badge says which it is talking
+     * about whenever the two can differ.
+     */
+    partial: Boolean,
+    onClick: () -> Unit,
+) {
     val cameraFree = option.camerasPassed == 0
     val border = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
     Surface(
@@ -562,18 +581,22 @@ private fun RouteOptionCard(option: PlannedRoute, selected: Boolean, onClick: ()
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            CameraBadge(option.camerasPassed, cameraFree)
+            CameraBadge(option.camerasPassed, cameraFree, partial)
         }
     }
 }
 
 @Composable
-private fun CameraBadge(count: Int, cameraFree: Boolean) {
+private fun CameraBadge(count: Int, cameraFree: Boolean, partial: Boolean = false) {
     if (cameraFree) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("camera-free", style = MaterialTheme.typography.labelMedium, color = safeColor())
+            Text(
+                if (partial) "leg is camera-free" else "camera-free",
+                style = MaterialTheme.typography.labelMedium,
+                color = safeColor(),
+            )
         }
     } else {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -595,13 +618,13 @@ private fun CameraBadge(count: Int, cameraFree: Boolean) {
 }
 
 @Composable
-private fun SelectedRouteDetail(option: PlannedRoute) {
+private fun SelectedRouteDetail(option: PlannedRoute, partial: Boolean = false) {
     if (option.camerasPassed == 0) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
             Text(
-                "This route passes no cameras.",
+                if (partial) "This leg passes no cameras." else "This route passes no cameras.",
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
             )

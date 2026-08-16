@@ -84,6 +84,18 @@ object LegJoin {
      */
     const val MAX_SPUR_METERS = 40_000.0
 
+    /**
+     * How close a pin has to be to the trimmed line to still count as on it.
+     *
+     * Wider than [OVERLAP_METERS] on purpose. A pin sits *beside* the road it
+     * holds — the refiner places it past a fork, the extractor at a turn — and
+     * the line it is compared against has been sampled, so the nearest vertex
+     * can be a couple of hundred metres away on a fast road with few nodes.
+     * Keeping a pin that is no longer needed costs one rate-limited command;
+     * dropping one that is loses a turn.
+     */
+    const val PIN_ON_ROUTE_METERS = 400.0
+
     /** What came back from a trim: the two legs, and how much road it saved. */
     data class Trimmed(
         val previous: List<GeoPoint>,
@@ -172,6 +184,36 @@ object LegJoin {
             if (walked > meters) return i
         }
         return 0
+    }
+
+    /**
+     * [pins] with the ones that no longer sit on [line] removed.
+     *
+     * **The other half of a trim, and it was missing.** Cutting a leg's polyline
+     * back does nothing to the pins that were placed along the part removed, so
+     * they stayed — floating beside a route that no longer goes near them.
+     * Reported from a real plan, with the cause identified from the map: "That
+     * waypoint was placed when a leg was facing that way, and then it got
+     * cropped, but the waypoint stayed."
+     *
+     * That is worse than untidy. A pin is a *constraint sent to the car*: the
+     * drive monitor aims the vehicle at each one in turn, so a pin out on a
+     * removed spur would steer the car back down the road the trim exists to
+     * delete — and it would do it under FSD, at a junction, exactly the shape of
+     * failure §6.1 is about.
+     *
+     * [nearMeters] is generous for the same reason [OVERLAP_METERS] is: the pin
+     * was placed on a polyline that has since been re-sampled, so an exact match
+     * is not available and erring toward keeping a pin is the safe direction —
+     * a kept pin is at worst redundant, a dropped one loses a turn.
+     */
+    fun pinsOn(
+        line: List<GeoPoint>,
+        pins: List<GeoPoint>,
+        nearMeters: Double = PIN_ON_ROUTE_METERS,
+    ): List<GeoPoint> {
+        if (line.size < 2 || pins.isEmpty()) return pins
+        return pins.filter { pin -> line.any { haversineMeters(it, pin) <= nearMeters } }
     }
 
     private fun lengthOf(line: List<GeoPoint>, from: Int, to: Int): Double {

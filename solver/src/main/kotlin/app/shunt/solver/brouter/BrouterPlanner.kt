@@ -372,15 +372,29 @@ class BrouterPlanner(
          */
         var carried: List<BrouterRoute> = emptyList()
 
+        // Set once a round has *proved* no hard-blocked route exists, so the
+        // widen round does not spend a second search reaching the same answer.
+        // Only on a proof — a timed-out block has shown nothing.
+        var blockProvenImpossible = false
+
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.4f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
             startedAt = nowMillis()
-            val fresh = runRoutes(legPoints, cameras, headingDegrees, blocked, budgetLeft())
+            val fresh = runRoutes(
+                legPoints, cameras, headingDegrees, blocked, budgetLeft(),
+                hardBlockProvenImpossible = blockProvenImpossible,
+            )
             routingMillis += nowMillis() - startedAt
             // Label by iteration: a second one means the routes escaped the
             // camera area and the whole graph was searched again.
-            routingPasses += lastPassTimings().map { timed ->
+            val roundPasses = lastPassTimings()
+            routingPasses += roundPasses.map { timed ->
                 if (pass == 0) timed else timed.copy(label = "${timed.label} (widen ${pass + 1})")
+            }
+            // A block that reported "no route" settles it for every later round
+            // of this plan; one that ran out of time settles nothing.
+            if (roundPasses.any { it.label.startsWith("blocked") && "(no route)" in it.label }) {
+                blockProvenImpossible = true
             }
             routes = fresh ?: return PlanOutcome.Failed("Routing failed.")
             if (routes.isEmpty()) return noRoute(anyPassRanOut(routingPasses))
@@ -669,9 +683,13 @@ class BrouterPlanner(
         headingDegrees: Double? = null,
         blocked: List<GeoPoint> = emptyList(),
         budgetMillis: Long? = null,
+        hardBlockProvenImpossible: Boolean = false,
     ): List<BrouterRoute>? {
         val visions = cameras.map { CameraVision(it.location, it.directionDegrees, cameraRangeScale()) }
-        val request = RouteRequest(points, visions, headingDegrees, blocked, budgetMillis)
+        val request = RouteRequest(
+            points, visions, headingDegrees, blocked, budgetMillis,
+            hardBlockProvenImpossible = hardBlockProvenImpossible,
+        )
         val found = runCatching { route(request) }.getOrNull()
         if (!found.isNullOrEmpty() || blocked.isEmpty()) return found
         // Blocking the road just abandoned is a heuristic, and in a town it can

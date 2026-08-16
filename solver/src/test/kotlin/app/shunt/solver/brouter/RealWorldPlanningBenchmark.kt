@@ -130,7 +130,11 @@ class RealWorldPlanningBenchmark {
         val from = point("SHUNT_BENCH_FROM")
         val to = point("SHUNT_BENCH_TO")
         val all = cameras()
-        val router = BrouterRouter(segmentDir = File(benchDir, "segments"), profileDir = benchDir)
+        val router = BrouterRouter(
+            segmentDir = File(benchDir, "segments"),
+            profileDir = benchDir,
+            fewestWeight = (System.getenv("SHUNT_BENCH_FEWEST_WEIGHT") ?: "20000").toDouble(),
+        )
         val planner = BrouterPlanner(
             route = { request -> router.route(request) },
             missingTiles = { emptyList() },
@@ -139,6 +143,7 @@ class RealWorldPlanningBenchmark {
         )
 
         println("=".repeat(66))
+        println("fewest weight ${System.getenv("SHUNT_BENCH_FEWEST_WEIGHT") ?: "20000"}")
         var points = listOf(from, to)
         var previousLine: List<GeoPoint>? = null
         var leg = 1

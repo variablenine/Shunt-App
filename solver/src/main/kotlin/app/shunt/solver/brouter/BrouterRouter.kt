@@ -91,6 +91,15 @@ class BrouterRouter(
      */
     private val passBudgetMillis: Long = PASS_BUDGET_MILLIS,
     /**
+     * Per-metre penalty for the weighted fewest-cameras fallback.
+     *
+     * A seam so the benchmark can vary it. On a real leg into a dense metro this
+     * pass came back "no route" after 26-29 s, which a weighted nogo should
+     * never do — a weight is a price, not a wall — so the number itself is under
+     * suspicion. See F-26.
+     */
+    private val fewestWeight: Double = FEWEST_WEIGHT,
+    /**
      * How many searches over the road graph may run at once.
      *
      * `blocked` and `balanced` do not depend on each other, and measurement says
@@ -318,7 +327,14 @@ class BrouterRouter(
 
         val blockedLabel =
             if (unblockable == 0) "blocked" else "blocked ($unblockable at an endpoint, unblockable)"
-        val blockedRun = runPass(blockedLabel, Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
+        val blockedRun = if (request.hardBlockProvenImpossible) {
+            // Already proved impossible against a smaller camera set this plan.
+            // A widen only adds zones, so it cannot become possible. See
+            // RouteRequest.hardBlockProvenImpossible.
+            Pass(null, PlanTimings.Timed("$blockedLabel (already proven impossible)", 0))
+        } else {
+            runPass(blockedLabel, Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
+        }
         timings += blockedRun.timing
         val blocked = blockedRun.route?.toResult(RouteChoice.FEWEST_CAMERAS, index, points)
 
@@ -326,7 +342,7 @@ class BrouterRouter(
             // No camera-free path exists — fall back to avoiding as hard as
             // possible so the user still gets the best available, and record
             // that hard avoidance failed without claiming why it failed.
-            ?: pass("fewest (fallback)", Avoidance.Weighted(FEWEST_WEIGHT))
+            ?: pass("fewest (fallback)", Avoidance.Weighted(fewestWeight))
                 ?.toResult(RouteChoice.FEWEST_CAMERAS, index, points)
                 ?.copy(hardAvoidanceFailed = true)
 

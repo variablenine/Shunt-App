@@ -133,7 +133,9 @@ fun PlanScreen(
             routePolyline = state.trimmedLeadPolyline ?: overlay.polyline,
             laterLegLines = laterLegLines,
             passedCameras = overlay.passedCameras,
-            steeringWaypoints = overlay.waypoints,
+            // Minus any pin left standing on a spur the leg trim removed — a
+            // pin off the route is a target the car would be steered to.
+            steeringWaypoints = state.trimmedLeadWaypoints ?: overlay.waypoints,
             routeCameras = overlay.nearbyCameras,
             chargers = state.chargersOnRoute.mapIndexed { index, place ->
                 MapCharger(index.toLong(), place.location.lat, place.location.lon, place.title)

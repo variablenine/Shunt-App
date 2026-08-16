@@ -41,24 +41,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Keep the screen on while Shunt is in front.
-        //
-        // Reported from real use: the screen times out and the app then fails
-        // *silently* — no alert, nothing on screen, which is the dangerous part
-        // rather than the inconvenience. A navigation app is looked at in
-        // glances, so the phone's idea of "idle" is wrong about it by
-        // construction: nobody taps the screen while driving.
-        //
-        // This is the flag rather than a wake lock on purpose — it is scoped to
-        // this window by the system, so it cannot outlive the app or leak, and
-        // it goes away the moment Shunt is backgrounded.
-        //
-        // **It is not the whole answer.** The monitor is a foreground service
-        // and should survive the screen going off regardless; whatever actually
-        // breaks when it does is still unexplained, and keeping the screen lit
-        // hides it rather than fixing it. See docs/verification.md C6.
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         val container = (application as ShuntApplication).container
 
         val diagnostics = getSharedPreferences(ShuntApplication.DIAGNOSTICS_PREFS, Context.MODE_PRIVATE)
@@ -138,6 +120,39 @@ class MainActivity : ComponentActivity() {
                 val planningLaterLegs by container.planningLaterLegs.collectAsStateWithLifecycle()
                 val trimmedLead by container.trimmedLeadPolyline.collectAsStateWithLifecycle()
                 val aimedAt by container.aimedAt.collectAsStateWithLifecycle()
+                val trimmedLeadPins by container.trimmedLeadWaypoints.collectAsStateWithLifecycle()
+
+                // Keep the screen on **while actually navigating**, and only
+                // then.
+                //
+                // Reported from real use: the screen times out and the app then
+                // fails *silently* — no alert, nothing on screen, which is the
+                // dangerous part rather than the inconvenience. A navigation app
+                // is looked at in glances, so the phone's idea of "idle" is
+                // wrong about it by construction: nobody taps the screen while
+                // driving.
+                //
+                // Scoped to a running drive rather than to the app being open,
+                // because the rest of the time Shunt is a map somebody is
+                // browsing and holding the screen awake for that is just a flat
+                // battery. The flag rather than a wake lock: the system scopes
+                // it to this window, so it cannot outlive the app or leak, and
+                // DisposableEffect clears it the moment the drive ends.
+                //
+                // **Not the whole answer.** The monitor is a foreground service
+                // and should survive the screen going off regardless; whatever
+                // actually breaks when it does is still unexplained, and keeping
+                // the screen lit hides it. See docs/verification.md C6.
+                val navigating = state.phase is app.shunt.app.plan.Phase.Driving ||
+                    state.phase is app.shunt.app.plan.Phase.Pushing
+                DisposableEffect(navigating) {
+                    if (navigating) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+                }
 
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
@@ -158,6 +173,7 @@ class MainActivity : ComponentActivity() {
                         planningLaterLegs = planningLaterLegs,
                         trimmedLeadPolyline = trimmedLead,
                         aimedAt = aimedAt,
+                        trimmedLeadWaypoints = trimmedLeadPins,
                     ),
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,

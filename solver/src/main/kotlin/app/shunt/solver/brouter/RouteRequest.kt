@@ -44,4 +44,24 @@ data class RouteRequest(
      * takes, so a mid-drive caller asks for far less than a parked one.
      */
     val budgetMillis: Long? = null,
+    /**
+     * An earlier round of this same plan already *proved* no hard-blocked route
+     * exists, so don't spend the search proving it again.
+     *
+     * Sound rather than merely convenient, and the argument is monotonicity: a
+     * corridor widen only ever **adds** cameras, so the zones the block is given
+     * on the later round are a superset of the ones it already failed against.
+     * A route that did not exist among fewer obstacles cannot appear among more.
+     *
+     * "Proved" is doing real work in that sentence — this is set only when the
+     * pass reported *no route*, never when it ran out of time. A timed-out
+     * search has proved nothing at all, and skipping it on a later round would
+     * be discarding an option on no evidence.
+     *
+     * Worth the flag because it is expensive: on a real leg into a dense metro
+     * the block spent 12-15 s reaching that conclusion, and then spent it again
+     * on the widen round — out of the same budget that then had nothing left for
+     * the pass that actually produced a route.
+     */
+    val hardBlockProvenImpossible: Boolean = false,
 )
