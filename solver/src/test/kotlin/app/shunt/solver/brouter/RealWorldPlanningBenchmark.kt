@@ -140,6 +140,7 @@ class RealWorldPlanningBenchmark {
 
         println("=".repeat(66))
         var points = listOf(from, to)
+        var previousLine: List<GeoPoint>? = null
         var leg = 1
         var wallTotal = 0L
         var distanceTotal = 0.0
@@ -182,6 +183,21 @@ class RealWorldPlanningBenchmark {
             outcome.timings?.let { t ->
                 println("        passes:  " + t.routingPasses.joinToString(", ") { "${it.label} ${it.seconds}s" })
             }
+            // Whether the join with the previous leg carried a pointless
+            // out-and-back, and whether it was trimmed. Reported as still
+            // present after LegJoin landed, so the benchmark has to be able to
+            // answer it rather than leaving it to a squint at the map.
+            previousLine?.let { earlier ->
+                val trim = LegJoin.trimDoubleBack(earlier, chosen.polyline)
+                println(
+                    if (trim.changed) {
+                        "        join:    trimmed %.1f km of double-back".format(trim.savedMeters / 1000.0)
+                    } else {
+                        "        join:    clean (no spur at the boundary)"
+                    },
+                )
+            }
+            previousLine = chosen.polyline
             if (!outcome.isPartial) break
             points = outcome.remaining
             leg++

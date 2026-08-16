@@ -1584,11 +1584,35 @@ Two fixes, and the second matters as much as the first:
   The passes label themselves when they hit a ceiling, so the message reads
   those labels rather than guessing.
 
-Worth noting for whoever picks this up: the trip that *succeeded* minutes earlier
-took 1 m 11 s of a 75 s budget, which is to say it was already at the edge. Trips
-of this length are working with almost no margin, and the real answer at the top
-end is probably to cut the trip before planning the spine over all of it rather
-than after.
+**Capping the time was not enough, and the second attempt found the real
+mechanism.** With the cap in place the trip still failed, because of what the
+fallback did: a spine that runs out falls back to the straight line between the
+trip's own points — **two points** — and `LegSplitter.cut` walks that looking for
+a candidate between `MIN_LEG_METERS` and `MAX_LEG_METERS`. On two points there
+are none: index 0 is at 0 m and index 1 is 3,000 km along. So it cut *nothing*,
+and the whole continental trip was then planned in one go out of whatever budget
+was left, which cannot succeed. **A trip whose spine failed is exactly the trip
+that most needs splitting**, and it was the only one guaranteed not to be.
+
+Two changes, and the first is the structural one:
+
+- **The spine stops short of the destination on a very long trip**
+  (`spineProbe`). It exists to choose a cut and draw this leg's corridor, and
+  both questions are answered inside the first `MAX_LEG_METERS` of road —
+  routing the remaining thousands of kilometres to answer them is the whole
+  cost. This makes the pass a function of leg length rather than trip length.
+- **The fallback spine is sampled**, so even when routing fails outright there
+  are candidates to cut on.
+
+**Only above `SPINE_FULL_LIMIT_METERS` (1,500 km), and that threshold is the
+interesting part.** The probe aims along the great circle, and the road out of a
+town rarely leaves along it — so a probe spine picks its cut from a road the trip
+would not have taken. Measured on the 1,165 km benchmark: probing everywhere cost
+**+88 km of driving for identical exposure** (1,165 km vs 1,078 km, 2 cameras
+either way). Below the threshold the full spine is both affordable (about 4 s at
+1,000 km) and a *better* guide. Above it, the full spine is what makes the plan
+fail. So the trade is made only where the alternative is failing outright, and
+the benchmark trip comes back byte-identical to before this change.
 
 ---
 
@@ -1641,6 +1665,55 @@ being right about the framing does not make it less annoying. Only
 `REASON_API_GESTURE` counts — listening to camera movement generally would have
 the follow camera read its own easing as a manual pan and switch itself off on
 the first frame.
+
+---
+
+### F-30 · The screen turns off and the app fails silently
+*Observed: 2026-08-16. Mitigated, cause still unknown.*
+
+> we need to make sure the app keeps the screen awake while the app is open.
+> Screen turns off and the app will silently fail
+
+`FLAG_KEEP_SCREEN_ON` while Shunt is in front. The flag rather than a wake lock
+because the system scopes it to the window — it cannot outlive the app or leak,
+and it releases the moment Shunt is backgrounded. A navigation app is looked at
+in glances, so the phone's idea of "idle" is wrong about it by construction:
+nobody taps the screen while driving.
+
+**This is a mitigation, and the underlying fault is still unexplained.** The
+drive monitor is a *foreground service* and should survive the screen going off;
+whatever actually breaks when it does — Doze, location updates throttled with the
+screen off, the Compose/MapLibre side dying and taking something with it — has
+not been identified, and keeping the screen lit hides it rather than fixing it.
+The silence is the dangerous half: whatever it is, it must end up raising an
+alert, and spoken alerts and the notification both still work with the screen
+off. See verification C6.
+
+---
+
+### F-31 · The leg double-back, re-checked
+*Checked 2026-08-16 against real tiles. No spur found on the trips available.*
+
+Reported as still present after `LegJoin` landed. The benchmark now prints
+whether a trim fired at each leg boundary, and on a four-leg 1,165 km trip over
+real tiles every join reports **clean — no spur at the boundary**. So on the
+routes reproducible here, `LegJoin` is not failing to fire; there is nothing at
+the join to trim.
+
+Which leaves two possibilities, and it is worth being clear that this has *not*
+been settled:
+
+- The shape being seen is a detour **inside one leg** — out along one road and
+  back along a parallel one — rather than a retrace across a boundary. `LegJoin`
+  cannot help with that by design: it compares consecutive legs, and a single
+  leg's geometry is whatever BRouter decided was cheapest given the cameras.
+- Or the thresholds are wrong for the case in question (`OVERLAP_METERS` 60,
+  `MIN_SPUR_METERS` 400) and the trips available here do not produce it.
+
+Telling them apart needs the trip that showed it. The useful bug report is a
+diagnostic log export from a plan that does it — a "trimmed a … m double-back"
+line means the machinery fired and the shape is something else; no such line with
+a visible out-and-back at a leg boundary means the thresholds are wrong.
 
 ---
 

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.compose.runtime.DisposableEffect
@@ -39,6 +40,25 @@ import app.shunt.app.ui.theme.ShuntTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Keep the screen on while Shunt is in front.
+        //
+        // Reported from real use: the screen times out and the app then fails
+        // *silently* — no alert, nothing on screen, which is the dangerous part
+        // rather than the inconvenience. A navigation app is looked at in
+        // glances, so the phone's idea of "idle" is wrong about it by
+        // construction: nobody taps the screen while driving.
+        //
+        // This is the flag rather than a wake lock on purpose — it is scoped to
+        // this window by the system, so it cannot outlive the app or leak, and
+        // it goes away the moment Shunt is backgrounded.
+        //
+        // **It is not the whole answer.** The monitor is a foreground service
+        // and should survive the screen going off regardless; whatever actually
+        // breaks when it does is still unexplained, and keeping the screen lit
+        // hides it rather than fixing it. See docs/verification.md C6.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         val container = (application as ShuntApplication).container
 
         val diagnostics = getSharedPreferences(ShuntApplication.DIAGNOSTICS_PREFS, Context.MODE_PRIVATE)

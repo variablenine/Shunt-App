@@ -3,6 +3,8 @@ package app.shunt.solver.brouter
 import app.shunt.core.GeoPoint
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.solver.geo.bearingDegrees
+import app.shunt.solver.geo.destinationPoint
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.waypoints.WaypointExtractor
 import app.shunt.solver.waypoints.WaypointRefiner
@@ -254,16 +256,33 @@ class BrouterPlanner(
         // have. Running out here is *recoverable* — the spine falls back to the
         // straight line below, which only costs a fatter corridor — so this is
         // exactly the pass to take time away from.
+        //
+        // **And it only routes as far as the cut needs to see.** On a trip that
+        // is going to be split, everything below works on the first leg — so a
+        // spine running to a destination three thousand kilometres away is
+        // computing a road nothing in this call will ever look at. Stopping it
+        // just past the leg window makes the cost of this pass a function of
+        // MAX_LEG_METERS instead of trip length, which is what stops a
+        // cross-country trip failing outright. The rest of the road gets planned
+        // leg by leg, which was always the plan.
+        val spineTarget = spineProbe(points, maxLegMeters)
         val direct = runRoutes(
-            points, emptyList(), headingDegrees, blocked,
+            spineTarget, emptyList(), headingDegrees, blocked,
             (budgetLeft() * SPINE_BUDGET_SHARE).toLong().coerceAtLeast(1L),
         )
         routingMillis += nowMillis() - startedAt
         routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
         var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
-            // No direct route is not fatal here — fall back to the straight line
-            // between the trip's own points, which is what this used before.
-            ?: points
+            // No direct route is not fatal — fall back to the straight line
+            // between the trip's own points.
+            //
+            // **Sampled, and that is not cosmetic.** Handed the bare two points,
+            // `LegSplitter` has nothing between `MIN_LEG_METERS` and
+            // `MAX_LEG_METERS` to choose from, so it cuts nothing, and a
+            // three-thousand-kilometre trip is then planned in one go out of
+            // whatever budget is left — which cannot succeed. A trip whose spine
+            // failed is exactly the trip that most needs splitting.
+            ?: sampleSpine(points)
 
         // Cut a long trip here, before anything expensive has run.
         //
@@ -297,7 +316,15 @@ class BrouterPlanner(
             remaining = rest
             spine = spine.subList(0, cut.index + 1)
         }
-        val wholeTripMeters = direct?.firstOrNull()?.distanceMeters?.takeIf { cut != null }
+        // The trip's own length, for the banner. Taken from the spine when it
+        // covered the whole trip, and estimated from the straight line when it
+        // deliberately stopped short — roads wander, so a bare great-circle
+        // distance reads low enough to look wrong next to the legs that follow.
+        val wholeTripMeters = when {
+            cut == null -> null
+            spineTarget.last() == points.last() -> direct?.firstOrNull()?.distanceMeters
+            else -> (straightLength(points) * ROAD_WANDER_FACTOR).toInt()
+        }
 
         onProgress(0.25f, "Finding cameras nearby")
         // Plan against a camera set that PROVABLY covers the routes being
@@ -707,6 +734,53 @@ class BrouterPlanner(
         )
     }
 
+    /**
+     * How far the direct-road pass should actually route.
+     *
+     * The destination itself for a trip short enough to plan whole. For anything
+     * longer, a point on the great circle just past the leg window: the spine
+     * exists to choose a cut and draw this leg's camera corridor, and both of
+     * those questions are answered inside the first [maxLegMeters] of road.
+     * Routing the remaining thousands of kilometres to answer them is what made
+     * a cross-country trip cost more than its whole budget before anything that
+     * decides a route had run.
+     *
+     * The probe reaches past the window by [SPINE_PROBE_MARGIN] so the cut has
+     * candidates either side of it and the tail check has something to measure.
+     * Intermediate stops are kept: they are places the driver asked to be, and
+     * dropping one to shorten a search would silently change the trip.
+     */
+    private fun spineProbe(points: List<GeoPoint>, maxLegMeters: Double?): List<GeoPoint> {
+        val limit = maxLegMeters ?: return points
+        val straight = straightLength(points)
+        // Only where the full spine is the thing that fails.
+        //
+        // Measured: routing the whole direct road costs about 4 s at 1,000 km
+        // and 64 s at 3,600 km, so on anything short of continental it is
+        // cheap and *better* — the probe aims along the great circle, and the
+        // road out of a town rarely leaves along it, so a probe spine picks its
+        // cut from a road the trip would not have taken. On the same 1,165 km
+        // benchmark that cost 88 km of extra driving for identical exposure.
+        //
+        // So the trade is only worth making where the alternative is the plan
+        // failing outright, and this threshold is where that starts.
+        if (straight <= SPINE_FULL_LIMIT_METERS) return points
+        if (straight <= limit * SPINE_PROBE_MARGIN) return points
+        val origin = points.first()
+        // Aimed along the *remaining* straight line rather than at the final
+        // destination, so a trip with early stops probes past those stops rather
+        // than off at a tangent to them.
+        val toward = points.drop(1).firstOrNull { haversineMeters(origin, it) > limit } ?: points.last()
+        val probe = destinationPoint(origin, bearingDegrees(origin, toward), limit * SPINE_PROBE_MARGIN)
+        // Any stop inside the probe distance still has to be on the way.
+        val kept = points.drop(1).dropLast(1).filter { haversineMeters(origin, it) < limit * SPINE_PROBE_MARGIN }
+        return listOf(origin) + kept + probe
+    }
+
+    /** Length of the straight chain through [points] — no roads involved. */
+    private fun straightLength(points: List<GeoPoint>): Double =
+        (1 until points.size).sumOf { haversineMeters(points[it - 1], points[it]) }
+
     /** Whether any search in this plan hit its ceiling rather than finishing. */
     private fun anyPassRanOut(passes: List<PlanTimings.Timed>): Boolean =
         passes.any { "out of time" in it.label || "over budget" in it.label }
@@ -776,6 +850,36 @@ class BrouterPlanner(
          * a cruder shape. Every other pass failing has no fallback at all.
          */
         private const val SPINE_BUDGET_SHARE = 0.33
+
+        /**
+         * How far past the leg window the spine probe reaches, as a multiple of
+         * `maxLegMeters`.
+         *
+         * Enough that the cut has candidates on both sides of the window and the
+         * minimum-tail check has road to measure, without paying for road no
+         * decision in this call will look at.
+         */
+        private const val SPINE_PROBE_MARGIN = 1.35
+
+        /**
+         * Above this straight-line distance the spine stops short of the
+         * destination rather than routing the whole way. See [spineProbe] for
+         * why this is a threshold rather than always-on: below it the full
+         * spine is both affordable and a better guide to where the cut should
+         * go, and above it the full spine is what makes the plan fail.
+         */
+        private const val SPINE_FULL_LIMIT_METERS = 1_500_000.0
+
+        /**
+         * Straight-line distance times this, as a stand-in for road distance
+         * when the spine deliberately stopped short of the destination.
+         *
+         * Roads wander; a bare great-circle figure reads visibly low beside the
+         * legs that follow it, and the banner it feeds is the driver's only
+         * sense of scale for the trip. A rough overestimate is the honest
+         * direction — it can only make the trip look longer than it is.
+         */
+        private const val ROAD_WANDER_FACTOR = 1.2
 
         /** One spine point per this much road. See `sampleSpine`. */
         private const val SPINE_SAMPLE_METERS = 5_000.0

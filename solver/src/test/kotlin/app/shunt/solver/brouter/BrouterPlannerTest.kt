@@ -4,6 +4,7 @@ import app.shunt.core.GeoPoint
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.geo.destinationPoint
+import app.shunt.solver.geo.haversineMeters
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -367,5 +368,91 @@ class BrouterPlannerTest {
 
         assertIs<PlanOutcome.Routes>(outcome)
         assertTrue(!outcome.carriedForward, "nothing was lost, so nothing was carried")
+    }
+
+    @Test
+    fun `a continental trip does not route the whole direct road first`() = runTest {
+        // The spine runs over the WHOLE trip while everything after it works on
+        // one leg, so on a cross-country route it is the expensive search. Given
+        // the destination it took 64 s of a 71 s budget on a real 3,598 km trip,
+        // every later pass got the 1 ms floor, and the driver was told no route
+        // exists. It only has to reach far enough to choose a cut.
+        val faraway = destinationPoint(origin, 90.0, 3_000_000.0)
+        val asked = mutableListOf<List<GeoPoint>>()
+        val planner = BrouterPlanner(
+            route = { (pts, _, _) ->
+                asked += pts
+                listOf(BrouterRoute(RouteChoice.FASTEST, pts, 3_000_000, 108_000, 0, 0))
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { emptyList() },
+        )
+
+        planner.plan(listOf(origin, faraway), maxLegMeters = LegSplitter.MAX_LEG_METERS)
+
+        val spineEnd = asked.first().last()
+        assertTrue(
+            haversineMeters(origin, spineEnd) < 1_000_000.0,
+            "the spine must stop short of a destination 3,000 km away, not route to it",
+        )
+        assertTrue(
+            haversineMeters(origin, spineEnd) > LegSplitter.MAX_LEG_METERS,
+            "...but still reach past the leg window, or there is nothing to cut on",
+        )
+    }
+
+    @Test
+    fun `an ordinary long trip still routes the real direct road`() = runTest {
+        // The probe aims along the great circle, and the road out of a town
+        // rarely leaves along it — so a probe spine chooses its cut from a road
+        // the trip would not have taken. Measured on a 1,165 km benchmark that
+        // cost 88 km of extra driving for identical exposure. The trade is only
+        // worth making where the alternative is failing outright.
+        val far = destinationPoint(origin, 90.0, 900_000.0)
+        val asked = mutableListOf<List<GeoPoint>>()
+        val planner = BrouterPlanner(
+            route = { (pts, _, _) ->
+                asked += pts
+                listOf(BrouterRoute(RouteChoice.FASTEST, pts, 900_000, 32_400, 0, 0))
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { emptyList() },
+        )
+
+        planner.plan(listOf(origin, far), maxLegMeters = LegSplitter.MAX_LEG_METERS)
+
+        assertEquals(far, asked.first().last(), "a 900 km trip must still route its real direct road")
+    }
+
+    @Test
+    fun `a trip whose spine fails is still cut into legs`() = runTest {
+        // The failure that reached a driver as "No route found". When the spine
+        // pass came back empty the fallback was the two bare trip points — and
+        // LegSplitter has nothing between MIN_LEG and MAX_LEG to choose from on
+        // two points, so it cut nothing, and a three-thousand-kilometre trip was
+        // then planned in one go out of whatever budget was left. A trip whose
+        // spine failed is exactly the trip that most needs splitting.
+        val faraway = destinationPoint(origin, 90.0, 3_000_000.0)
+        var first = true
+        val planner = BrouterPlanner(
+            route = { (pts, _, _) ->
+                if (first) {
+                    first = false
+                    emptyList() // the spine pass finds nothing
+                } else {
+                    listOf(BrouterRoute(RouteChoice.FASTEST, pts, 250_000, 9_000, 0, 0))
+                }
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { emptyList() },
+        )
+
+        val outcome = planner.plan(listOf(origin, faraway), maxLegMeters = LegSplitter.MAX_LEG_METERS)
+
+        assertIs<PlanOutcome.Routes>(outcome)
+        assertTrue(
+            outcome.isPartial,
+            "the trip must still be cut into legs when the spine could not be routed",
+        )
     }
 }

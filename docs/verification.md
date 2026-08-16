@@ -567,6 +567,35 @@ lights.
 
 ---
 
+### C6 · The screen stays on, and the drive survives it going off
+*Mitigated 2026-08-16; the underlying fault is not understood.*
+
+**Setup.** Start a drive and leave the phone alone.
+
+**Pass.** The screen stays lit while Shunt is in front. Then background the app
+deliberately, let the screen sleep, and drive past a camera: the spoken warning
+still comes and the notification is still live.
+
+**Fail (as reported).** "Screen turns off and the app will silently fail." The
+second half of the setup is the one that matters — the flag stops the screen
+sleeping, it does not explain why anything broke when it did. If the second half
+fails, say so with a log export: that is the actual bug.
+
+---
+
+### B8 · A continental trip plans
+*Fixed 2026-08-16.*
+
+**Setup.** Plan a trip of 2,500 km or more — coast to coast.
+
+**Pass.** A chooser appears for the first leg within a minute or so, and later
+legs land behind it.
+
+**Fail (as reported).** "Couldn't plan this trip", either blaming the offline map
+or saying planning ran out of time. Both mean the same thing here.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the
