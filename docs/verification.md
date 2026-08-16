@@ -135,7 +135,8 @@ OpenStreetMap. If you find one, that is a mapping contribution, not a bug.
 *The highest-value experiment available, and the app already contains it.*
 
 **Setup.** Vehicle settings → the navigation command probe. It tries plain
-coordinates, a `geo:` URI, an OpenStreetMap link and an Apple Maps link.
+coordinates, a `geo:` URI, an OpenStreetMap link, an Apple Maps link and two
+Google Maps forms.
 
 **Why this first.** On a car requiring signed commands, Shunt falls through to
 Tessie's `share`, which takes a string the car resolves itself — currently bare
@@ -151,6 +152,22 @@ there.
 **Record which forms landed and how precisely**, and put it in F-19. Do not
 change the share format without this — it is the only channel that works on such
 a car, and breaking it breaks everything.
+
+**Pass.** Each accepted channel says either "WORKS — the car moved to this point"
+or "accepted, but the car did not move to it". Both are answers. Run it parked
+and awake; the probe wakes the car to read its state back.
+
+**Fail (as reported, 2026-08-16).** Every accepted channel read "accepted, car
+state unreadable", which is not an answer at all — it cannot be told apart from
+the car ignoring the command. The cause was reading Tessie's *cached* state
+moments after issuing a command, so the read was answered from before the
+command was sent. Fixed; re-run before drawing conclusions from that first set
+of results.
+
+**Known from that run**, and still true: this car rejects `geo:` URIs and
+OpenStreetMap links outright, accepting only bare coordinates and an Apple Maps
+link. Google Maps links are probed too now — as strings handed to the car, not
+as any call to Google.
 
 ### A7 · The waypoint the car receives is the waypoint on the screen
 *Two causes fixed, cause not confirmed.*
@@ -450,25 +467,6 @@ leg arrives and disappears when the last one lands.
 **Fail.** The dashed line still there after planning has finished or failed —
 it is a promise that something is coming, and it must not outlive that being
 true.
-
----
-
-### A5 · The car capability probe answers a question
-*Fixed 2026-08-16.*
-
-**Setup.** Park the car, awake, and run "Probe navigation commands" from vehicle
-settings. It changes what the car is navigating to, several times.
-
-**Pass.** Each accepted channel says either "WORKS — the car moved to this
-point" or "accepted, but the car did not move to it". Both are answers.
-
-**Fail (as reported).** Every accepted channel reading "accepted, car state
-unreadable" — which is not an answer and cannot be told apart from the car
-ignoring the command. The cause was reading Tessie's *cached* state moments
-after issuing a command; the probe reads uncached now, which wakes the car.
-Also worth noting from that run: this car rejected `geo:` URIs and OpenStreetMap
-links outright, accepting only bare coordinates and an Apple Maps link. Google
-Maps links are now probed too.
 
 ---
 
