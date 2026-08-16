@@ -378,6 +378,50 @@ stop.
 
 ---
 
+### B5 · The last leg of a long trip avoids cameras too
+*Fixed 2026-08-16.*
+
+**Setup.** Plan a trip long enough to be cut into several legs, ending on a pin
+dropped in a **city centre** — the denser the better, and it needs to be a place
+a camera actually watches, which is most downtown kerbs. Washington DC and San
+Francisco are the two the report came from. Let the later legs finish planning
+(the line grows to the destination from a standstill), then look at the last one.
+
+**Pass.** The last leg detours like the others. If it does pass cameras, the
+result sheet says how many of them watch where the trip starts or ends and that
+no route can avoid those — and the number it names is not smaller than the number
+of cameras it lists. Exporting the diagnostic log shows a "next leg ready" line
+per leg with a low camera count.
+
+**Fail (as reported).** "The last leg on some longer routes seems to be not
+avoiding cameras at all and routing straight through them… I have a hard time
+believing they're all unavoidable." Also a fail: the log carrying a "next leg has
+NO avoidance option" line, which means the avoidance passes ran out of budget on
+that leg — a different problem (§7.10) landing in the same place, and worth
+reporting with the log attached.
+
+---
+
+### D6 · The camera-reach setting actually moves the route
+*Fixed 2026-08-16.*
+
+**Setup.** Plan the same trip twice through country with cameras on it — once at
+100%, once at 300% — and compare the fewest-cameras option's **distance**, not
+its camera count.
+
+**Pass.** The distance changes. At a wider reach the route detours further to
+keep the extra standoff, and the camera count stays low.
+
+**Fail (as reported).** "I don't think brouter is taking the new values into
+account because it is routing us past cameras that are avoidable… It is now
+[triggering them], but not changing the route to avoid these new ones." The
+signature is an identical distance at both settings with a much larger camera
+count at the wider one — the app announcing cameras it made no attempt to dodge.
+Measured before the fix: 47.1 km / 2 cameras at ×1 and 47.1 km / **20 cameras**
+at ×3, the same route both times.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

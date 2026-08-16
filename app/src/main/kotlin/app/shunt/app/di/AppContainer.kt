@@ -30,6 +30,7 @@ import app.shunt.app.plan.Destination
 import app.shunt.solver.brouter.LegSplitter
 import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.brouter.PlanOutcome
+import app.shunt.solver.brouter.RouteChoice
 import app.shunt.solver.camera.PracticeCameras
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -401,8 +402,19 @@ class AppContainer(context: Context) {
             var points = points
             while (points.size >= 2 && isActive) {
                 diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
-                val outcome = runCatching { brouterPlanner.plan(points, maxLegMeters = LegSplitter.MAX_LEG_METERS) }
-                    .getOrNull()
+                val outcome = runCatching {
+                    brouterPlanner.plan(
+                        points = points,
+                        maxLegMeters = LegSplitter.MAX_LEG_METERS,
+                        // Nobody is watching a spinner for this one. The car has
+                        // at least LegSplitter.MIN_LEG_METERS of road left when
+                        // this is asked for — an hour at motorway speed — so the
+                        // kerbside patience budget is the wrong measure entirely,
+                        // and using it is how the last leg of a long trip came
+                        // back as the plain fastest road.
+                        routeBudgetMillis = BrouterRouter.LEG_PASS_BUDGET_MILLIS,
+                    )
+                }.getOrNull()
                 if (outcome !is PlanOutcome.Routes || outcome.options.isEmpty()) {
                     diagnostics.record(DiagnosticLog.Kind.PLAN, "next leg failed to plan")
                     return@launch
@@ -411,6 +423,19 @@ class AppContainer(context: Context) {
                 // for every leg after the first is "as few cameras as possible" —
                 // they already accepted the trade when they picked it.
                 val chosen = outcome.options.minByOrNull { it.camerasPassed } ?: return@launch
+                // A leg that comes back holding nothing but the fastest road is
+                // not a considered answer — it is every avoidance pass having run
+                // out — and taking it silently is indistinguishable from Shunt
+                // deciding there was no camera-free route. It is still handed
+                // over, because a route is better than a boundary with nothing
+                // past it, but it is said out loud. See CLAUDE.md §7.10.
+                if (outcome.options.none { it.choice != RouteChoice.FASTEST }) {
+                    diagnostics.record(
+                        DiagnosticLog.Kind.PLAN,
+                        "next leg has NO avoidance option — the fastest road is all that came back " +
+                            "(${chosen.camerasPassed} cameras)",
+                    )
+                }
                 val legPlan = DrivePlan(
                     destination = destination,
                     // This leg's own end, not the trip's. `points.last()` is the

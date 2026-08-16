@@ -81,7 +81,11 @@ Working and reasonably trusted:
   and the traffic, so the built-in figure is a *policy* about standoff rather
   than a measurement. The scale flows through routing, the camera counts, the
   drive warnings and the cones drawn on the map together, so they cannot
-  disagree about what a camera can see.
+  disagree about what a camera can see. **That last clause was aspirational
+  until August 2026** — the nogo shapes read the base constants directly, so
+  turning the setting up made the app report more cameras on a route it had not
+  moved an inch. `NogoCoverageTest` now holds the agreement at several scales,
+  which is the version of that test that could have caught it. See F-22.
 - Practice cameras (`PracticeCameras`): a deterministic field of invented ALPRs,
   **snapped onto real roads** with BRouter's own waypoint matching, switched on in
   settings, so avoidance can be exercised where the real ones have been removed.
@@ -866,6 +870,71 @@ them, and add new observations as they come in. Detail lives in
    showing the fastest road alone. It needs saying plainly in the UI if it is
    done.
 
+   *Partly relieved.* A later leg of a split trip now gets
+   `LEG_PASS_BUDGET_MILLIS` rather than the kerbside figure (see below), which
+   removes the commonest way this was reached in practice, and a leg that still
+   comes back holding only the fastest road is written to the diagnostic log
+   rather than accepted in silence. The design question above is unchanged.
+
+11. **The last leg of a long trip did not avoid cameras at all.** *Fixed,
+   unconfirmed on a drive.* Reported from routes into Washington DC and San
+   Francisco, with the observation that identified it: "I have a hard time
+   believing they're all unavoidable." They were not. A route may not begin or
+   end inside a zone the router has been told is impassable, and Shunt's answer
+   was to skip the **whole** hard-block pass whenever any endpoint was watched —
+   which on a split trip can only happen on the last leg, because every other
+   boundary is chosen for being quiet. See §6, "A watched destination is not a
+   reason to give up", and field note F-21.
+
+12. **The camera-reach setting moved the warnings but not the route.** *Fixed,
+   unconfirmed on a drive.* `CameraCluster` read the base range constants
+   directly, so the nogo shapes handed to BRouter ignored
+   `CameraVision.rangeScale` entirely. At three times the reach the app returned
+   *the identical route it planned at the default* and labelled it with twenty
+   cameras — announcing cameras it had made no attempt to dodge, which is worse
+   than the setting doing nothing. Field note F-22.
+
+### A watched destination is not a reason to give up
+
+BRouter refuses a route that begins or ends inside a zone it has been told is
+impassable (`last wpt in restricted area`). In a city centre the destination is
+very often within sight of a camera, so this fires often — and what Shunt used to
+do about it was skip the hard-block pass altogether and fall back to weighted
+avoidance.
+
+That fallback is a **different promise**. A weighted nogo charges (metres inside
+the zone × weight), so a road clipping the edge of a cone is cheap and gets
+taken; only a hard block makes "fewest cameras" mean *none*. One unavoidable
+camera at the kerb was therefore buying a dozen avoidable ones on the approach.
+
+`BrouterRouter.withoutZonesHolding` drops the offending **zones** instead of the
+pass. Everything else stays blocked, so the route is camera-free wherever a
+camera-free road exists and passes only the cameras pointed at where the driver
+is going — which no route can avoid, because arriving is what triggers them. The
+result sheet says so in those words rather than leaving one camera on a clean
+route looking like a failure.
+
+Three things to preserve:
+
+- **The containment test is BRouter's own** (`RoutingContext.cleanNogoList`),
+  applied to a *ring* around each endpoint as well as the point itself. BRouter
+  does not test the coordinate handed to it — it snaps each waypoint onto the
+  nearest road first, up to `waypointCatchingRange` (250 m) away, and tests that.
+  A margin narrower than the snap lets the original failure back through.
+- **Under-dropping is graceful**, which is what makes the margin a judgement
+  call rather than a correctness one: BRouter refuses, the pass reports no route,
+  and the weighted fallback runs exactly as it did before this existed.
+- **Labelling never moves.** Camera counts are measured against the full set
+  whatever the engine was given, so a dropped zone can never make a route look
+  cleaner than it is. The count shown to the driver is taken from the cameras the
+  route *passes*, never from the zones dropped — a dropped zone stands for a
+  whole site and the ring reaches past it, so the two numbers genuinely differ.
+
+Measured on a four-leg benchmark trip ending on top of a camera in dense metro:
+the last leg went from 3 cameras with the block skipped and two options, to 2
+cameras — both at the destination — with all three options and the block
+attempted. Legs 1–3 came back byte-identical, which is the check that matters.
+
 ### Cutting a long trip into legs
 
 Planning cost grows faster than distance, and past roughly 500 km it stops
@@ -942,6 +1011,20 @@ available without planning the very routes the cut exists to make cheap.
 before the next leg is needed, and at 120 km/h 120 km is over an hour against a
 leg that plans in about ten seconds. Arriving at a boundary with nothing beyond
 it is the one genuinely bad outcome of splitting, and it should never be close.
+
+**That deadline, not a driver's patience, is what bounds a later leg**, and
+missing the distinction cost the last leg of long trips its avoidance.
+`PASS_BUDGET_MILLIS` (75 s) is a patience figure — how long somebody will stare
+at a spinner before giving up — and it has no bearing at all on a leg being
+computed in the background while the car drives. Later legs get
+`LEG_PASS_BUDGET_MILLIS` (5 minutes), which still lands inside the hour with an
+enormous margin and buys the avoidance passes room to finish. This matters most
+on the leg it used to hurt: the last one is the only leg ending in the driver's
+real destination, so it carries the densest camera set and is the likeliest to
+widen its corridor — and a widen costs the whole chooser a second time out of the
+same pot (§7.10). A later leg that *still* comes back holding nothing but the
+fastest road is written to the diagnostic log, because taking it silently is
+indistinguishable from Shunt deciding there was no camera-free route.
 
 **Measured on the 583 km benchmark trip that used to fail outright:**
 
@@ -1403,9 +1486,10 @@ Ordered roughly by what unblocks real use.
   worse than getting none, because it looks like it worked.
 - **[high] Confirm the August 2026 vehicle fixes on a real drive.** Charging
   re-route, waypoint fidelity, standing down, the abandoned-road block, the
-  camera guard pins, along-route waypoint advancement, and the emergency-crossover
-  gate were all diagnosed from field reports or the map, and none has been seen
-  working in a car.
+  camera guard pins, along-route waypoint advancement, the emergency-crossover
+  gate, the watched-destination block (§7.11) and the camera-reach setting
+  reaching the router (§7.12) were all diagnosed from field reports or the map,
+  and none has been seen working in a car.
 - **Pin refinement, done lazily** — compute the next few pins rather than all of
   them. Not a speed problem any more; a quality one, since a long route's pins
   currently share one budget between them.

@@ -546,12 +546,27 @@ private fun SelectedRouteDetail(option: PlannedRoute) {
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Text(
-                if (option.hardAvoidanceFailed) {
-                    "The hard camera-blocking pass could not produce a route. This may " +
-                        "mean a camera is unavoidable, an endpoint is inside its zone, or " +
-                        "routing failed. Review the marked cameras before continuing."
-                } else {
-                    "You'll be alerted on approach to each while driving."
+                when {
+                    option.hardAvoidanceFailed ->
+                        "The hard camera-blocking pass could not produce a route. This may " +
+                            "mean a camera is unavoidable, or routing failed. Review the " +
+                            "marked cameras before continuing."
+                    // Said plainly, because otherwise a single camera on an
+                    // otherwise clean route reads as avoidance having failed —
+                    // and the driver has no way to tell that it is the one
+                    // camera pointed at the address they asked for.
+                    option.unavoidableAtEndpoints >= option.camerasPassed ->
+                        "${cameraCount(option.unavoidableAtEndpoints)} " +
+                            (if (option.unavoidableAtEndpoints == 1) "watches" else "watch") +
+                            " where this trip starts or ends, so no route can avoid " +
+                            (if (option.unavoidableAtEndpoints == 1) "it" else "them") +
+                            ". Everything else on this route is clear."
+                    option.unavoidableAtEndpoints > 0 ->
+                        "${cameraCount(option.unavoidableAtEndpoints)} of these " +
+                            (if (option.unavoidableAtEndpoints == 1) "watches" else "watch") +
+                            " where this trip starts or ends and cannot be avoided. " +
+                            "You'll be alerted on approach to each while driving."
+                    else -> "You'll be alerted on approach to each while driving."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,

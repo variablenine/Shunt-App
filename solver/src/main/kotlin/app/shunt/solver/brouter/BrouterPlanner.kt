@@ -32,6 +32,15 @@ data class PlannedRoute(
      * inside a nogo or an engine failure can produce the same result.
      */
     val hardAvoidanceFailed: Boolean = false,
+    /**
+     * How many of [passedCameras] watch the trip's own start or destination.
+     *
+     * These are the cameras no route can dodge — they are pointed at where the
+     * driver is going — and telling them apart from the rest is what keeps a
+     * clean route from reading as a failure. See
+     * [app.shunt.solver.brouter.BrouterRouter.withoutZonesHolding].
+     */
+    val unavoidableAtEndpoints: Int = 0,
 ) {
     val camerasPassed: Int get() = passedCameras.size
 }
@@ -367,6 +376,7 @@ class BrouterPlanner(
                 exposureMeters = r.exposureMeters,
                 addedSecondsVsFastest = r.estimatedSeconds - fastest.estimatedSeconds,
                 hardAvoidanceFailed = r.hardAvoidanceFailed,
+                unavoidableAtEndpoints = r.unavoidableAtEndpoints,
             )
         }
         stages += PlanTimings.Timed(PlanTimings.STAGE_CAMERAS, cameraMillis)

@@ -43,12 +43,20 @@ class CameraIndex(private val cameras: List<CameraVision>) {
     }
 
     /**
-     * Whether any camera sees this single point.
+     * Every camera that sees this single point.
      *
-     * Used to tell, before spending a search on it, that a hard block cannot
-     * possibly succeed: a route may not begin or end inside a zone the router
-     * has been told is impassable.
+     * Used for the trip's own endpoints. A camera watching where the driver is
+     * going cannot be routed around — arriving is what triggers it — so a hard
+     * block including it would be refused outright by BRouter, and these are the
+     * ones dropped from that one pass. Counting them is also what lets the
+     * result sheet distinguish "one camera watches your destination" from a
+     * route that failed to avoid anything. See
+     * [BrouterRouter.withoutZonesHolding].
      */
+    fun seeing(p: GeoPoint): List<CameraVision> =
+        if (cameras.isEmpty()) emptyList() else index.near(p, maxRange).filter { it.sees(p) }
+
+    /** Whether any camera sees this single point. */
     fun anySeeing(p: GeoPoint): Boolean =
         cameras.isNotEmpty() && index.near(p, maxRange).any { it.sees(p) }
 

@@ -1213,6 +1213,112 @@ the leg the moment the extension landed.
 
 ---
 
+### F-21 · The last leg of a long trip does not avoid cameras at all
+*Observed: 2026-08-16, from planned routes. Reproduced in the benchmark, fixed;
+unconfirmed on a drive.*
+
+> I did however notice that the last leg on some longer routes seems to be not
+> avoiding cameras at all and routing straight through them. One I noticed in
+> Washington dc, and another going to San Francisco. I have a hard time
+> believing they're all unavoidable.
+
+They were not, and the last observation is the one that identified the cause.
+
+**Why the last leg, and only the last leg.** A split trip's intermediate
+boundaries are chosen by `LegSplitter` precisely because *nothing is watching
+them* — that is the whole cut rule (CLAUDE.md §6, "cut where there is nothing to
+avoid"). So every leg but one begins and ends somewhere quiet. The last leg is
+the only one whose end is the driver's actual destination, which on these trips
+was a pin dropped in a city centre.
+
+**What that triggered.** A route may not begin or end inside a zone the router
+has been told is impassable — BRouter throws `last wpt in restricted area` — and
+Shunt's answer was to skip the hard-block pass **entirely** whenever any endpoint
+was seen by any camera, falling back to weighted avoidance. Weighted avoidance is
+a different promise: BRouter charges (metres inside the zone × weight), so a road
+clipping the edge of a cone is cheap and gets taken. One unavoidable camera at
+the kerb bought a dozen avoidable ones on the way in.
+
+Reproduced in `RealWorldPlanningBenchmark`, on a four-leg trip ending on top of a
+camera in a dense metro:
+
+```
+before   leg 4  14.3 s  186.9 km  3 cameras
+                options: FASTEST=31c, FEWEST_CAMERAS=3c
+                blocked (skipped — an endpoint is inside a camera's view) 0.0s
+after    leg 4  41.9 s  306.0 km  2 cameras
+                options: FASTEST=31c, BALANCED=3c, FEWEST_CAMERAS=2c
+                blocked (2 at an endpoint, unblockable) 4.5s
+```
+
+Both remaining cameras are the ones at the destination, and they are now named as
+such on the result sheet. Legs 1–3 came back byte-identical, which is the check
+that matters: the change is a no-op wherever no endpoint is watched.
+
+**The fix is to drop the offending zones, not the pass.** `withoutZonesHolding`
+removes only the impassable zones that contain an endpoint — using BRouter's own
+containment test from `cleanNogoList`, applied to a ring around each point
+because BRouter tests the waypoint *snapped to a road*, up to
+`waypointCatchingRange` (250 m) away. Everything else stays blocked, so the route
+is still camera-free wherever a camera-free road exists.
+
+Two properties worth keeping if this is ever touched:
+
+- **Under-dropping is graceful.** BRouter refuses the request, the pass reports
+  no route, and the weighted fallback runs exactly as it did before. That is what
+  makes erring tight safe, and it is why a snap margin is a judgement call rather
+  than a correctness one.
+- **Labelling never moves.** Camera counts are measured against the full set
+  whatever was handed to the engine, so a dropped zone can never make a route
+  *look* cleaner than it is.
+
+A second contributor, fixed alongside: later legs were planned with
+`PASS_BUDGET_MILLIS`, which is a *patience* figure — how long a driver will watch
+a spinner. Nobody is watching a later leg; the car has at least
+`LegSplitter.MIN_LEG_METERS` of road ahead of it, an hour at motorway speed. They
+now get `LEG_PASS_BUDGET_MILLIS` (5 minutes), which is the same failure mode as
+§7.10 arriving at the leg most likely to widen its corridor. A later leg that
+still comes back holding nothing but the fastest road is written to the
+diagnostic log rather than accepted silently.
+
+---
+
+### F-22 · The camera-reach setting changed the warnings but not the route
+*Observed: 2026-08-16, alongside F-21. Fixed; unconfirmed on a drive.*
+
+> Also on the camera distance, I don't think brouter is taking the new values
+> into account because it is routing us past cameras that are avoidable but it
+> doesn't seem like it would be triggering them at the default value. It is now,
+> but not changing the route to avoid these new ones.
+
+Exactly right, and measurable. `CameraVision.rangeScale` is honoured by
+everything that asks a `CameraVision` directly — the counting, the drive
+warnings, the cones on the map — but `CameraCluster.rangeMeters` read
+`CameraVision.OMNI_RANGE_M` / `DIRECTIONAL_RANGE_M` straight off the companion
+object. The nogo shapes handed to BRouter were therefore always default-sized,
+however far the slider was pushed.
+
+Measured on a real 32 km metro trip, before and after:
+
+| camera reach | fewest-cameras, before | fewest-cameras, after |
+|---|---|---|
+| ×1 | 47.1 km, 2 cameras | 47.1 km, 2 cameras |
+| ×3 | **47.1 km, 20 cameras** | 81.6 km, 3 cameras |
+
+The middle cell is the bug in one number: at three times the reach the app
+returned *the identical route it planned at the default* and labelled it with
+twenty cameras. Turning the setting up made Shunt announce cameras it had made no
+attempt to dodge — worse than the setting doing nothing, because it reads as
+avoidance having been tried and failed.
+
+**Why no test caught it.** Every existing test of the scale exercised
+`CameraVision.sees`, and every existing test of the nogo shapes used the default
+scale, where the two agree. `NogoCoverageTest` holds the real invariant — the
+blocked shape must contain what the counter sees — and it now runs at several
+scales, which is the only version of that test that could have failed.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

@@ -60,6 +60,13 @@ class RealWorldPlanningBenchmark {
         val from = point("SHUNT_BENCH_FROM")
         val to = point("SHUNT_BENCH_TO")
         val all = cameras()
+        // How far a camera is treated as seeing, as the settings slider sets it.
+        // Worth being able to move here because the routing effect is the half
+        // that is hard to see from the app: a scale that reaches the counting
+        // and the warnings but not the nogo shapes produces a route that
+        // *reports* more cameras without moving an inch, which is exactly the
+        // bug CameraCluster.rangeScale fixes.
+        val rangeScale = (System.getenv("SHUNT_BENCH_RANGE_SCALE") ?: "1").toDouble()
         val router = BrouterRouter(
             segmentDir = File(benchDir, "segments"),
             profileDir = benchDir,
@@ -69,7 +76,9 @@ class RealWorldPlanningBenchmark {
             missingTiles = { emptyList() },
             camerasIn = { bbox -> all.filter { bbox.contains(it.location) } },
             lastPassTimings = { router.lastPassTimings },
+            cameraRangeScale = { rangeScale },
         )
+        println("camera reach x$rangeScale")
 
         val startedAt = System.currentTimeMillis()
         val outcome = planner.plan(from, to)
@@ -158,6 +167,21 @@ class RealWorldPlanningBenchmark {
                     if (outcome.isPartial) "  (more to come)" else "  (destination)",
                 ),
             )
+            // Which options actually came back, and what each search cost.
+            //
+            // The count above is the *best* of what survived, and a leg whose
+            // avoidance passes ran out of budget comes back holding nothing but
+            // the fastest road — which then looks like a considered answer.
+            // Naming the options is the only way that failure is visible from
+            // outside; see CLAUDE.md §7.10.
+            println(
+                "        options: " + outcome.options.joinToString(", ") {
+                    "${it.choice}=${it.camerasPassed}c/${it.distanceMeters / 1000}km"
+                },
+            )
+            outcome.timings?.let { t ->
+                println("        passes:  " + t.routingPasses.joinToString(", ") { "${it.label} ${it.seconds}s" })
+            }
             if (!outcome.isPartial) break
             points = outcome.remaining
             leg++

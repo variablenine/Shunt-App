@@ -136,12 +136,17 @@ class RoutingBudgetTest {
     }
 
     @Test
-    fun `a hard block that cannot possibly succeed is not attempted`() {
-        // Observed on a real trip: 41.9 s spent proving a camera-free route into
-        // a city centre does not exist, when the destination was inside a
-        // camera's field of view — which makes the block unroutable by
-        // definition, and knowable before the search rather than after it. Those
-        // 41.9 s starved the fallback that would have produced a route.
+    fun `a camera on the destination no longer cancels the hard block`() {
+        // This used to skip the pass outright, on the reasoning that a route may
+        // not end inside a zone the router has been told is impassable — true of
+        // *that* zone, and true of nothing else. In a city centre the
+        // destination is very often watched, so the driver was handed the
+        // weighted fallback and every avoidable camera on the way in, which is
+        // the "last leg routes straight through cameras" report from Washington
+        // DC and San Francisco.
+        //
+        // The zone over the destination comes out; the block still runs. See
+        // BrouterRouter.withoutZonesHolding and EndpointZoneTest.
         var now = 0L
         val camerasOnDestination = listOf(CameraVision(trip.last(), directionDegrees = null))
         val subject = router({ now += 1; now }, budget = 75_000)
@@ -151,21 +156,23 @@ class RoutingBudgetTest {
         val labels = subject.lastPassTimings.map { it.label }
         val blockedLine = labels.single { it.startsWith("blocked") }
         assertTrue(
-            "endpoint" in blockedLine,
-            "the block must say why it was not attempted, not vanish: $labels",
+            "skipped" !in blockedLine,
+            "the block must be attempted even with the destination watched: $labels",
         )
-        assertEquals(
-            0L,
-            subject.lastPassTimings.single { it.label == blockedLine }.millis,
-            "and must cost nothing",
+        // And it must say how many cameras it could not block, because that is
+        // the difference between "one camera watches your destination" and
+        // "avoidance did nothing".
+        assertTrue(
+            "unblockable" in blockedLine,
+            "the block must name the cameras it could not honour: $blockedLine",
         )
     }
 
     @Test
-    fun `a clear endpoint still gets the hard block attempted`() {
-        // The skip has to be sound, not merely convenient: it may only fire when
-        // the block genuinely cannot work. A camera nowhere near either end is
-        // no reason to give up on a camera-free route.
+    fun `a clear endpoint reports nothing unblockable`() {
+        // The common case, and the one where a spurious count would be worst: a
+        // camera nowhere near either end is perfectly avoidable and must not be
+        // reported to the driver as something no route could dodge.
         var now = 0L
         val farAway = listOf(CameraVision(app.shunt.core.GeoPoint(20.0, -100.0), directionDegrees = null))
         val subject = router({ now += 1; now }, budget = 75_000)
@@ -173,8 +180,28 @@ class RoutingBudgetTest {
         subject.route(RouteRequest(trip, farAway))
 
         assertTrue(
-            subject.lastPassTimings.any { it.label.startsWith("blocked") && "endpoint" !in it.label },
-            "the block must be attempted: ${subject.lastPassTimings.map { it.label }}",
+            subject.lastPassTimings.any { it.label.startsWith("blocked") && "unblockable" !in it.label },
+            "the block must be attempted, clean: ${subject.lastPassTimings.map { it.label }}",
+        )
+    }
+
+    @Test
+    fun `a leg planned while driving gets far longer than one planned at the kerb`() {
+        // These bound completely different things. The kerbside figure is how
+        // long a driver will watch a spinner; a later leg is computed in the
+        // background with LegSplitter.MIN_LEG_METERS of road still ahead of the
+        // car, which is an hour at motorway speed. Giving later legs the
+        // patience figure is how a long trip's last leg came back as the plain
+        // fastest road.
+        assertTrue(
+            BrouterRouter.LEG_PASS_BUDGET_MILLIS > BrouterRouter.PASS_BUDGET_MILLIS,
+            "a leg nobody is waiting on must not be held to a waiting driver's patience",
+        )
+        // The deadline it actually has to beat, stated rather than assumed.
+        val secondsOfRoadAhead = LegSplitter.MIN_LEG_METERS / (120_000.0 / 3600.0)
+        assertTrue(
+            BrouterRouter.LEG_PASS_BUDGET_MILLIS / 1000.0 < secondsOfRoadAhead / 2,
+            "a leg must still plan in comfortably less than the driving time before it is needed",
         )
     }
 

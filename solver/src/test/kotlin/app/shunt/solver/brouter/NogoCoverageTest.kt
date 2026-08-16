@@ -145,6 +145,72 @@ class NogoCoverageTest {
         )
     }
 
+    /**
+     * The containment invariant has to hold **at every setting**, and this is
+     * the case that was broken in shipped builds.
+     *
+     * `CameraVision.rangeScale` is a user setting, and everything that asked a
+     * `CameraVision` directly honoured it — the counting, the drive warnings,
+     * the cones on the map. The nogo shapes did not: `CameraCluster` read the
+     * base constants straight off the companion object, so BRouter was handed
+     * default-sized zones however far the slider was pushed. Turning it up made
+     * Shunt report more cameras on a route it had made no attempt to move, which
+     * is the containment failure this whole file exists to prevent, wearing the
+     * one disguise none of the tests above could see through — they all use the
+     * default scale, where the two agree.
+     *
+     * Reported from a real plan: "it is routing us past cameras that are
+     * avoidable […] It is now [triggering them], but not changing the route."
+     */
+    @Test
+    fun `the blocked shape follows the adjustable reach, not the built-in one`() {
+        for (scale in listOf(0.5, 1.0, 2.0, 4.0)) {
+            for (direction in listOf<Double?>(null, 0.0, 90.0, 217.0)) {
+                val vision = CameraVision(camera, direction, rangeScale = scale)
+                val nogos = router.buildNogos(listOf(vision), Double.NaN, RoutingParamCollector())
+                val polygons = nogos.filterIsInstance<OsmNogoPolygon>()
+                val circles = nogos - polygons.toSet()
+
+                val escaped = seenPointsAround(vision).filterNot { p ->
+                    val (x, y) = p.asPolygonPoint()
+                    polygons.any { it.isWithin(x, y) } ||
+                        circles.any { c ->
+                            app.shunt.solver.geo.haversineMeters(camera, p) <=
+                                c.name.removePrefix("nogo").toDouble()
+                        }
+                }
+                assertTrue(
+                    escaped.isEmpty(),
+                    "scale $scale facing $direction: ${escaped.size} point(s) the camera sees fall " +
+                        "outside every blocked zone, so a road there is counted but never avoided",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `a wider setting really does block more road`() {
+        // The test above only proves the zone is big enough. This one proves it
+        // *changed* — a shape that ignored the scale entirely would still
+        // contain everything at 0.5, so containment alone cannot catch the bug.
+        fun radiusAt(scale: Double): Double = router
+            .buildNogos(
+                listOf(CameraVision(camera, directionDegrees = null, rangeScale = scale)),
+                Double.NaN,
+                RoutingParamCollector(),
+            )
+            .single().name.removePrefix("nogo").toDouble()
+
+        assertTrue(
+            radiusAt(2.0) > radiusAt(1.0),
+            "doubling the reach must widen the blocked circle: ${radiusAt(1.0)} m -> ${radiusAt(2.0)} m",
+        )
+        assertTrue(
+            radiusAt(0.5) < radiusAt(1.0),
+            "halving the reach must narrow the blocked circle: ${radiusAt(1.0)} m -> ${radiusAt(0.5)} m",
+        )
+    }
+
     @Test
     fun `blocking uses NaN verbatim, which is what makes a zone impassable`() {
         // Formatting the weight as an Int would turn NaN into 0 — a nogo with

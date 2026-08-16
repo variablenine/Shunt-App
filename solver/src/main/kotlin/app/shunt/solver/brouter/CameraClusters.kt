@@ -27,11 +27,31 @@ internal data class CameraCluster(
     /** Facing shared by every member, or null when the group watches all round. */
     val directionDegrees: Double?,
     val size: Int,
+    /**
+     * The members' own [CameraVision.rangeScale], carried through to the shape.
+     *
+     * **Not decoration — this was the "the slider does nothing to the route"
+     * bug.** The reach a camera is treated as having is adjustable
+     * ([CameraVision.rangeScale], a setting), and everything that asks a
+     * `CameraVision` directly honoured it: the counting, the drive warnings, the
+     * cones on the map. The nogo shapes did not, because this read the base
+     * constants straight off the companion object. So turning the setting up
+     * made Shunt *report* more cameras on a route while handing BRouter the same
+     * default-sized zones it always had — the route never moved, and the app
+     * announced cameras it had made no attempt to dodge. Reported from a real
+     * plan: "it is routing us past cameras that are avoidable […] It is now
+     * [triggering them], but not changing the route to avoid these new ones."
+     */
+    val rangeScale: Double = 1.0,
 ) {
     /** Range the shape must reach to contain every member's own reach. */
     val rangeMeters: Double
-        get() = (if (directionDegrees == null) CameraVision.OMNI_RANGE_M else CameraVision.DIRECTIONAL_RANGE_M) +
-            spreadMeters
+        get() = baseRangeMeters + spreadMeters
+
+    /** One member's reach, before the spread that makes this shape stand for several. */
+    private val baseRangeMeters: Double
+        get() = (if (directionDegrees == null) CameraVision.OMNI_RANGE_M else CameraVision.DIRECTIONAL_RANGE_M) *
+            rangeScale
 
     /**
      * Extra half-angle the fan needs to cover members standing off to the side
@@ -39,13 +59,14 @@ internal data class CameraCluster(
      *
      * A member [spreadMeters] away can see [spreadMeters] further round the
      * apex than the centre can; the arcsine converts that offset into the angle
-     * it opens up.
+     * it opens up. Measured against the *scaled* reach, so a wider setting does
+     * not also widen the fan — the offset is unchanged, only the radius grew.
      */
     val extraHalfAngleDegrees: Double
         get() = if (directionDegrees == null) {
             0.0
         } else {
-            val ratio = (spreadMeters / CameraVision.DIRECTIONAL_RANGE_M).coerceIn(0.0, 1.0)
+            val ratio = (spreadMeters / baseRangeMeters).coerceIn(0.0, 1.0)
             Math.toDegrees(kotlin.math.asin(ratio)) + FACING_TOLERANCE_DEGREES
         }
 }
@@ -69,7 +90,7 @@ internal fun clusterCameras(
     radiusMeters: Double = CLUSTER_RADIUS_METERS,
 ): List<CameraCluster> {
     if (cameras.size < 2) {
-        return cameras.map { CameraCluster(it.location, 0.0, it.directionDegrees, 1) }
+        return cameras.map { CameraCluster(it.location, 0.0, it.directionDegrees, 1, it.rangeScale) }
     }
     val grid = Grid(radiusMeters, cameras.first().location.lat)
     val buckets = HashMap<Long, MutableList<CameraVision>>()
@@ -116,7 +137,10 @@ private fun fold(members: List<CameraVision>): CameraCluster {
         val y = members.sumOf { m -> kotlin.math.sin(Math.toRadians(m.directionDegrees!!)) }
         (Math.toDegrees(kotlin.math.atan2(y, x)) + 360.0) % 360.0
     }
-    return CameraCluster(center, spread, direction, members.size)
+    // The widest reach in the group, so the shape contains every member's own.
+    // In practice they are all the same — one setting applies to the whole plan
+    // — but taking the maximum means a mixed list can never under-block.
+    return CameraCluster(center, spread, direction, members.size, members.maxOf { it.rangeScale })
 }
 
 /**

@@ -37,6 +37,19 @@ data class BrouterRoute(
      * raw outcome. Only set on the fewest-cameras fallback option.
      */
     val hardAvoidanceFailed: Boolean = false,
+    /**
+     * How many cameras watch the trip's own start or destination, and so could
+     * not be blocked for this route at all.
+     *
+     * A camera pointed at where the driver is going is unavoidable in the plain
+     * sense: arriving is what triggers it. Counting them separately is what
+     * lets the result sheet say "one camera watches your destination" instead of
+     * leaving a lone camera on an otherwise clean route looking like a failure
+     * of avoidance — and, more importantly, stops that one camera being used as
+     * a reason to give up on the dozens that *are* avoidable. See
+     * [BrouterRouter.withoutZonesHolding].
+     */
+    val unavoidableAtEndpoints: Int = 0,
 )
 
 /**
@@ -272,20 +285,20 @@ class BrouterRouter(
         // nothing is the most expensive outcome there is — it exhausts every
         // road reachable before concluding — and the fallback below is what
         // rescues that case. Spending everything here would starve it.
-        // A hard block cannot route out of, or into, a point that is already
-        // inside one of the zones it blocks — BRouter rejects such a request
-        // outright. In a city centre the destination itself is often within
-        // sight of a camera, and that is the case where the block is both
-        // guaranteed to fail and most expensive to fail: it exhausts every
-        // reachable road before saying so. On a real trip that was 42 seconds
-        // spent proving something knowable in microseconds, and it starved the
-        // fallback that would have produced a route.
         //
-        // Sound rather than merely likely: the nogo shapes are built to
-        // *contain* what CameraVision.sees covers, so a point that is seen is
-        // certainly inside the block. A point that is not seen may still be
-        // inside it, and that case simply runs as before.
-        val endpointInsideZone = points.any { index.anySeeing(it) }
+        // A hard block cannot route out of, or into, a point that is already
+        // inside one of the zones it blocks — BRouter throws `last wpt in
+        // restricted area` outright. In a city centre the destination itself is
+        // very often within sight of a camera, and **this whole pass used to be
+        // skipped when that happened**, which handed the driver the weighted
+        // fallback and every avoidable camera on the way in. The zones holding
+        // an endpoint are dropped from that one pass instead — see
+        // [withoutZonesHolding], which is where the reasoning lives.
+        //
+        // How many cameras that costs is worth saying out loud rather than
+        // burying, so the breakdown names them. The same rule the drop uses, so
+        // the label and the count on the option cannot drift apart.
+        val unblockable = cameras.count { camera -> points.any { unblockableAt(camera, it) } }
 
         // `blocked` and `balanced` overlap where the device has the memory for
         // it. They share nothing — each search builds its own context, engine
@@ -299,28 +312,22 @@ class BrouterRouter(
         // That is the honest way round: the numbers say what each search cost,
         // and the stage says what the driver waited.
         val balancedShare = if (maxConcurrentPasses >= 2) BLOCKED_BUDGET_SHARE else 1.0
-        val balancedTask = concurrently(enabled = maxConcurrentPasses >= 2 && !endpointInsideZone) {
+        val balancedTask = concurrently(enabled = maxConcurrentPasses >= 2) {
             runPass("balanced", Avoidance.Weighted(BALANCED_WEIGHT), share = balancedShare)
         }
 
-        val blockedTiming: PlanTimings.Timed
-        val blocked = if (endpointInsideZone) {
-            blockedTiming = PlanTimings.Timed("blocked (skipped — an endpoint is inside a camera's view)", 0)
-            null
-        } else {
-            val run = runPass("blocked", Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
-            blockedTiming = run.timing
-            run.route?.toResult(RouteChoice.FEWEST_CAMERAS, index)
-        }
-        timings += blockedTiming
+        val blockedLabel =
+            if (unblockable == 0) "blocked" else "blocked ($unblockable at an endpoint, unblockable)"
+        val blockedRun = runPass(blockedLabel, Avoidance.Blocked, share = BLOCKED_BUDGET_SHARE)
+        timings += blockedRun.timing
+        val blocked = blockedRun.route?.toResult(RouteChoice.FEWEST_CAMERAS, index, points)
 
         val fewest = blocked
-            // No camera-free path exists (or an endpoint sits inside a zone,
-            // which a hard block rejects outright) — fall back to avoiding as
-            // hard as possible so the user still gets the best available, and
-            // record that hard avoidance failed without claiming why it failed.
+            // No camera-free path exists — fall back to avoiding as hard as
+            // possible so the user still gets the best available, and record
+            // that hard avoidance failed without claiming why it failed.
             ?: pass("fewest (fallback)", Avoidance.Weighted(FEWEST_WEIGHT))
-                ?.toResult(RouteChoice.FEWEST_CAMERAS, index)
+                ?.toResult(RouteChoice.FEWEST_CAMERAS, index, points)
                 ?.copy(hardAvoidanceFailed = true)
 
         // Last, on whatever is left: the option it is least costly to lose.
@@ -328,7 +335,7 @@ class BrouterRouter(
         val balancedPass = balancedTask?.invoke()
             ?: runPass("balanced", Avoidance.Weighted(BALANCED_WEIGHT), share = balancedShare)
         timings += balancedPass.timing
-        val balanced = balancedPass.route?.toResult(RouteChoice.BALANCED, index)
+        val balanced = balancedPass.route?.toResult(RouteChoice.BALANCED, index, points)
 
         lastPassTimings = timings
 
@@ -449,7 +456,10 @@ class BrouterRouter(
             if (blocked.isNotEmpty()) nogos += buildBlocked(blocked, collector)
             if (nogos.isNotEmpty()) {
                 RoutingContext.prepareNogoPoints(nogos)
-                rc.nogopoints = nogos
+                // Radii are only filled in by prepareNogoPoints, so the zones a
+                // route cannot possibly start or end inside can only be found
+                // after it has run.
+                rc.nogopoints = withoutZonesHolding(nogos, points)
             }
             val engine = RoutingEngine(null, null, segmentDir, waypoints, rc, 0)
             engine.quite = true // suppress BRouter's GPX-to-stdout dump
@@ -481,6 +491,90 @@ class BrouterRouter(
 
     /** What one search produced, and whether it simply ran out of time. */
     private data class RunOutcome(val route: RawRoute?, val timedOut: Boolean)
+
+    /**
+     * [nogos] minus the impassable zones that contain one of [points], which a
+     * route through those points could never honour anyway.
+     *
+     * **This is what stops a watched destination costing the driver every other
+     * camera on the way in.** A route may not begin or end inside a zone the
+     * router has been told is impassable — BRouter throws `last wpt in
+     * restricted area` — and Shunt's answer to that used to be to skip the hard
+     * block *entirely* and fall back to weighted avoidance. That fallback is a
+     * different promise: BRouter charges (metres inside the zone × weight), so a
+     * road clipping the edge of a cone is cheap and gets taken, and the route
+     * comes back passing cameras that were perfectly avoidable.
+     *
+     * Reported from real plans into Washington DC and San Francisco: the *last*
+     * leg of a long trip drove straight through cameras. That is the only leg
+     * whose end is the real destination — every other one ends at a leg boundary
+     * chosen precisely because nothing is watching it — so it is the only leg
+     * where this fires, which is exactly the shape of the report. The
+     * maintainer's reading of it was right: "I have a hard time believing
+     * they're all unavoidable." One was. The rest were collateral.
+     *
+     * Dropping only the offending zones keeps the hard block's promise for every
+     * *other* camera: the route is camera-free wherever a camera-free road
+     * exists, and passes only the cameras that watch the driver's own start or
+     * destination — which no route can avoid, because they are pointed at where
+     * the trip begins or ends.
+     *
+     * The containment test is BRouter's own, from `RoutingContext.cleanNogoList`
+     * — inside the bounding circle *and* inside the polygon — so a zone kept
+     * here is one BRouter will accept. It is applied to a ring around each point
+     * as well as the point itself, because what BRouter actually checks is the
+     * waypoint *snapped to a road*, which can be a couple of hundred metres from
+     * the coordinate asked for.
+     *
+     * Under-dropping is safe and self-correcting: BRouter refuses the request,
+     * the pass reports no route, and the weighted fallback runs exactly as it
+     * did before this existed. Over-dropping costs one camera's avoidance at the
+     * kerb the trip ends on, and never mislabels anything — camera counts are
+     * measured against the full set no matter which zones were handed to the
+     * engine.
+     */
+    internal fun withoutZonesHolding(
+        nogos: List<OsmNodeNamed>,
+        points: List<GeoPoint>,
+    ): List<OsmNodeNamed> {
+        // Only an impassable zone can refuse a waypoint; a weighted one is a
+        // price, and a route is free to start by paying it.
+        if (nogos.none { it.nogoWeight.isNaN() }) return nogos
+        val probes = points.flatMap { p ->
+            listOf(p) + (0 until ENDPOINT_PROBE_POINTS).map { i ->
+                destinationPoint(p, 360.0 * i / ENDPOINT_PROBE_POINTS, ENDPOINT_SNAP_MARGIN_METERS)
+            }
+        }
+        return nogos.filter { nogo ->
+            !nogo.nogoWeight.isNaN() || probes.none { holds(nogo, it) }
+        }
+    }
+
+    /**
+     * Whether [camera] is one no hard block could keep, because its zone can
+     * reach the road BRouter snaps [endpoint] onto.
+     *
+     * The same rule [withoutZonesHolding] enforces on shapes, expressed in
+     * cameras so the count shown to a driver and the zones handed to the engine
+     * cannot drift apart. Erring wide is right here for the same reason it is
+     * there: claiming a camera is unavoidable when the block did in fact hold it
+     * would be a lie in the direction that makes exposure look acceptable, and
+     * this is only ever applied to cameras a route *passes*, so an over-wide
+     * rule can at worst explain a camera rather than invent one.
+     */
+    private fun unblockableAt(camera: CameraVision, endpoint: GeoPoint): Boolean =
+        haversineMeters(camera.location, endpoint) <= camera.range + ENDPOINT_SNAP_MARGIN_METERS
+
+    /** BRouter's own "is this point inside this nogo" test, from `cleanNogoList`. */
+    private fun holds(nogo: OsmNodeNamed, p: GeoPoint): Boolean {
+        val at = OsmNode(lonToInt(p.lon), latToInt(p.lat))
+        if (at.calcDistance(nogo) >= nogo.radius) return false
+        return when {
+            nogo !is OsmNogoPolygon -> true
+            nogo.isClosed -> nogo.isWithin(at.ilon.toLong(), at.ilat.toLong())
+            else -> nogo.isOnPolyline(at.ilon.toLong(), at.ilat.toLong())
+        }
+    }
 
     /**
      * Nogos matching each camera's field of view: directional cameras get a
@@ -545,20 +639,34 @@ class BrouterRouter(
         return collector.readNogoList(spec).orEmpty()
     }
 
-    private fun RawRoute.toResult(choice: RouteChoice, index: CameraIndex): BrouterRoute {
+    private fun RawRoute.toResult(
+        choice: RouteChoice,
+        index: CameraIndex,
+        /** The trip's own points, for telling apart the cameras no route could dodge. */
+        endpoints: List<GeoPoint> = emptyList(),
+    ): BrouterRoute {
         // Only cameras close enough to see some part of this route can add to
         // the exposure, so the rest are dropped before the metre-by-metre walk.
         // The margin is the index's own sampling step, which is what makes this
         // exact rather than merely close: the nearest sample to any point is
         // within half a step, so nothing that could contribute is filtered out.
         val nearby = index.within(polyline, CameraVision.OMNI_RANGE_M + CameraIndex.SAMPLE_METERS)
+        val passed = index.seeing(polyline)
         return BrouterRoute(
             choice = choice,
             polyline = polyline,
             distanceMeters = distanceMeters,
             estimatedSeconds = seconds,
-            distinctCamerasPassed = index.seeing(polyline).size,
+            distinctCamerasPassed = passed.size,
             exposureMeters = CameraVision.metersSeen(polyline, nearby).toInt(),
+            // Counted from the cameras this route actually passes rather than
+            // from the zones that were dropped, so it can never claim more than
+            // the driver is looking at. A dropped zone stands for a whole site
+            // and the snap ring reaches past it, so the two numbers are not the
+            // same — and of the two, only this one is about the route.
+            unavoidableAtEndpoints = passed.count { camera ->
+                endpoints.any { unblockableAt(camera, it) }
+            },
         )
     }
 
@@ -613,6 +721,29 @@ class BrouterRouter(
         const val REPLAN_PASS_BUDGET_MILLIS = 12_000L
 
         /**
+         * The ceiling for a later leg of a split trip, planned while the car is
+         * already driving an earlier one.
+         *
+         * Far larger than the others, and the reason is that **nobody is
+         * waiting**. [PASS_BUDGET_MILLIS] is a patience figure — how long a
+         * driver will stare at a spinner before giving up — and it has no
+         * bearing on a leg being computed in the background. What bounds this
+         * one is a deadline instead: `LegSplitter.MIN_LEG_METERS` guarantees the
+         * car has at least 120 km of road left when the next leg is asked for,
+         * which is an hour at motorway speed against a leg that plans in tens of
+         * seconds.
+         *
+         * Giving later legs the kerbside figure is how a long trip's last leg
+         * came back as the plain fastest road: it is the leg that ends in the
+         * driver's actual destination, so it is the one carrying the densest
+         * camera set and the one most likely to widen its corridor — and a widen
+         * costs the whole chooser a second time out of the same pot (CLAUDE.md
+         * §7.10). Five minutes still lands inside the deadline with an enormous
+         * margin, and buys the avoidance passes room to finish.
+         */
+        const val LEG_PASS_BUDGET_MILLIS = 300_000L
+
+        /**
          * The share of the remaining budget the hard-block pass may spend.
          *
          * A hard block that finds nothing is the most expensive outcome the
@@ -624,6 +755,20 @@ class BrouterRouter(
 
         /** Radius of an impassable circle over a road the driver has refused. */
         internal const val BLOCKED_RADIUS_METERS = 70.0
+
+        /**
+         * How far from a requested endpoint a zone still counts as holding it.
+         *
+         * BRouter does not test the coordinate handed to it — it snaps each
+         * waypoint onto the nearest road first and tests *that*, up to
+         * `waypointCatchingRange` away (250 m by default). So a zone clear of
+         * the pin the driver dropped can still hold the kerb the router picked,
+         * and a margin narrower than the snap would let that case through.
+         */
+        internal const val ENDPOINT_SNAP_MARGIN_METERS = 250.0
+
+        /** Points on the snap ring to test; eight is a zone-sized step at 250 m. */
+        private const val ENDPOINT_PROBE_POINTS = 8
 
         // Nogo penalty per meter inside a camera's zone. Balanced accepts a
         // camera to save a big detour; fewest avoids hard where a path exists.
