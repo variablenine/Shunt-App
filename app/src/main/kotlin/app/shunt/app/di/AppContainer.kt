@@ -448,6 +448,18 @@ class AppContainer(context: Context) {
         leadPolyline: List<GeoPoint> = emptyList(),
         /** That leg's pins, so any standing on a trimmed spur go with it. */
         leadWaypoints: List<GeoPoint> = emptyList(),
+        /**
+         * Which trade-off the driver picked on the chooser.
+         *
+         * Later legs used to be planned as fewest-cameras regardless, so a
+         * driver who deliberately chose Balanced still got legs that would
+         * detour miles around a single camera — and had no way to say
+         * otherwise, because the chooser only ever appears for the first leg.
+         * Reported as an "unnecessary C detour over a more direct route just to
+         * avoid one camera": that is precisely what fewest-cameras means, and
+         * precisely what was not asked for.
+         */
+        preference: RouteChoice = RouteChoice.FEWEST_CAMERAS,
     ) {
         legJob?.cancel()
         laterLegs.value = emptyList()
@@ -481,10 +493,16 @@ class AppContainer(context: Context) {
                     diagnostics.record(DiagnosticLog.Kind.PLAN, "next leg failed to plan")
                     return@launch
                 }
-                // The same preference the driver expressed on the chooser, which
-                // for every leg after the first is "as few cameras as possible" —
-                // they already accepted the trade when they picked it.
-                val chosen = outcome.options.minByOrNull { it.camerasPassed } ?: return@launch
+                // The trade-off the driver actually picked, carried to every
+                // leg after the first. They only get one chooser, so it has to
+                // mean something for the whole trip.
+                val chosen = outcome.options.firstOrNull { it.choice == preference }
+                    // That option may not exist on this leg — a stretch through
+                    // empty country produces one route and nothing to choose
+                    // between. Fall back toward the preference rather than past
+                    // it: never hand someone more cameras than they asked for.
+                    ?: outcome.options.minByOrNull { it.camerasPassed }
+                    ?: return@launch
                 // A leg that comes back holding nothing but the fastest road is
                 // not a considered answer — it is every avoidance pass having run
                 // out — and taking it silently is indistinguishable from Shunt
@@ -667,8 +685,8 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
-        onLaterLegsNeeded = { points, destination, lead, leadPins ->
-            planRemainingLegs(points, destination, lead, leadPins)
+        onLaterLegsNeeded = { points, destination, lead, leadPins, preference ->
+            planRemainingLegs(points, destination, lead, leadPins, preference)
         },
         onLaterLegsAbandoned = { cancelRemainingLegs() },
         log = { message, points ->

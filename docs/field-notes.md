@@ -1939,6 +1939,53 @@ they did not want to be there.
 
 ---
 
+### F-39 · The spine times out and the trip is planned on a straight line
+*Observed: 2026-08-16, from the app's own breakdown. Fixed.*
+
+The breakdown read `fastest (gave up — out of time) (spine) 24.7 s` on a 1,289 km
+trip. That is `SPINE_BUDGET_SHARE` doing its job and the trip being harder than
+the threshold assumed: **under** `SPINE_FULL_LIMIT_METERS`, so no probe was used;
+**over** the clock, so no answer came back. The fallback is the straight line,
+which is why the pending stretch drew as a diagonal across three states — and,
+worse, why the leg boundary was chosen on a line rather than a road.
+
+A distance threshold cannot decide this, and trying was the mistake. The spine
+now **retries with the probe** when the full road runs out of time. The full
+version is still preferred where it works, because it is the better guide to
+where a cut belongs; the probe is what happens when "where it works" turns out to
+be false for this particular trip. No threshold guessing, and the straight line
+goes back to being what it should be — the last resort when no road can be
+routed at all.
+
+---
+
+### F-40 · The chooser meant nothing past the first leg
+*Observed: 2026-08-16. Fixed.*
+
+> the seam is still making an unnecessary c detour over a more direct route just
+> to avoid one camera
+
+Not the seam. Later legs were planned as **fewest-cameras regardless of what the
+driver picked** — `minByOrNull { it.camerasPassed }`, hard-coded — so a driver
+who deliberately chose Balanced still got legs that would detour miles around a
+single camera, and had no way to say otherwise because the chooser only ever
+appears for the first leg. A C detour to avoid one camera is exactly what
+fewest-cameras means, and exactly what had not been asked for.
+
+The choice now governs the whole trip: it is passed to `planRemainingLegs`, and
+changing the selection re-requests the later legs against the new trade-off.
+
+Two details worth keeping:
+
+- **Restarting throws away landed legs.** That is the honest cost of changing
+  the trade-off and it only happens on a deliberate tap.
+- **The fallback errs toward the preference, never past it.** A leg through empty
+  country produces one route and nothing to choose between; when the preferred
+  option does not exist the fewest-cameras one is used, so nobody is ever handed
+  *more* cameras than they asked for.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

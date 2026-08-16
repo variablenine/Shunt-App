@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.PlanOutcome
 import app.shunt.solver.brouter.PlannedRoute
+import app.shunt.solver.brouter.RouteChoice
 import app.shunt.solver.charging.RangeCheck
 import app.shunt.solver.charging.RangeEstimate
 import app.shunt.solver.geo.haversineMeters
@@ -62,7 +63,7 @@ class PlanViewModel(
      * over its tail — see `LegJoin`.
      */
     private val onLaterLegsNeeded: (
-        (List<GeoPoint>, Destination, List<GeoPoint>, List<GeoPoint>) -> Unit
+        (List<GeoPoint>, Destination, List<GeoPoint>, List<GeoPoint>, RouteChoice) -> Unit
     )? = null,
     /**
      * Stop planning the rest of a trip and throw away what has been planned.
@@ -315,15 +316,7 @@ class PlanViewModel(
                 // are what turn a first-leg route into a whole one — waiting for
                 // Go meant the map showed a line stopping in open country for as
                 // long as somebody took to decide.
-                onLaterLegsNeeded?.invoke(
-                    outcome.remaining,
-                    destination,
-                    // The option the later legs will actually be joined onto.
-                    // Fewest-cameras is what the driver is being steered toward
-                    // and what a later leg is planned to continue from.
-                    (outcome.options.minByOrNull { it.camerasPassed } ?: outcome.options.first()).polyline,
-                    (outcome.options.minByOrNull { it.camerasPassed } ?: outcome.options.first()).waypoints,
-                )
+                requestLaterLegs(outcome.remaining, destination, outcome.options, selected = 0)
                 // Opened before the chooser is shown, and therefore before Go
                 // can be tapped. Doing it inside checkRange() left a window
                 // between the two where the gate did not exist yet, which is the
@@ -390,7 +383,35 @@ class PlanViewModel(
             // The whole point of the warning is that options differ in length,
             // so it has to follow the option actually selected.
             _state.update { it.copy(rangeCheck = rangeCheckFor(it.phase)) }
+            // And so do the legs after this one. Picking Balanced and then
+            // watching every later leg detour miles around a single camera is
+            // the chooser meaning nothing past the first stretch — the driver
+            // is only ever offered one, so it has to govern the whole trip.
+            //
+            // This restarts leg planning, which throws away whatever had
+            // landed. That is the honest cost of changing the trade-off, and it
+            // only happens on a deliberate tap.
+            requestLaterLegs(solved.remaining, solved.destination, solved.options, index)
         }
+    }
+
+    /**
+     * Ask for the rest of the trip, planned to the trade-off [selected] names.
+     *
+     * The lead leg's line and pins go with it so the join between this leg and
+     * the next can be repaired — see `LegJoin` — and they have to be *this*
+     * option's, not some other one's, or the seam would be computed against a
+     * road the driver is not taking.
+     */
+    private fun requestLaterLegs(
+        remaining: List<GeoPoint>,
+        destination: Destination,
+        options: List<PlannedRoute>,
+        selected: Int,
+    ) {
+        if (remaining.isEmpty()) return
+        val option = options.getOrNull(selected) ?: options.firstOrNull() ?: return
+        onLaterLegsNeeded?.invoke(remaining, destination, option.polyline, option.waypoints, option.choice)
     }
 
     /**

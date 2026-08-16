@@ -275,11 +275,33 @@ class BrouterPlanner(
         // MAX_LEG_METERS instead of trip length, which is what stops a
         // cross-country trip failing outright. The rest of the road gets planned
         // leg by leg, which was always the plan.
-        val spineTarget = spineProbe(points, maxLegMeters)
-        val direct = runRoutes(
+        var spineTarget = spineProbe(points, maxLegMeters)
+        var direct = runRoutes(
             spineTarget, emptyList(), headingDegrees, blocked,
             (budgetLeft() * SPINE_BUDGET_SHARE).toLong().coerceAtLeast(1L),
         )
+        // **If the full road ran out of time, ask for less of it rather than
+        // giving up on roads altogether.**
+        //
+        // A distance threshold cannot decide this, and trying was a mistake: a
+        // 1,289 km trip through the Midwest spent the whole 24.7 s allowance and
+        // came back with nothing, which fell through to the straight-line spine
+        // — so the cut was chosen on a line rather than a road, and the map drew
+        // the not-yet-planned stretch as a diagonal across three states. Under
+        // the threshold, so no probe; over the clock, so no answer.
+        //
+        // Retrying with the probe removes the guess. The full spine is still
+        // preferred where it works, because it is a better guide to where the
+        // cut belongs, and the probe is what happens when "where it works" turns
+        // out to be false for this particular trip.
+        if (direct.isNullOrEmpty() && maxLegMeters != null && spineTarget.last() == points.last()) {
+            routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine, full)") }
+            spineTarget = spineProbe(points, maxLegMeters, force = true)
+            direct = runRoutes(
+                spineTarget, emptyList(), headingDegrees, blocked,
+                (budgetLeft() * SPINE_BUDGET_SHARE).toLong().coerceAtLeast(1L),
+            )
+        }
         routingMillis += nowMillis() - startedAt
         routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
         var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
@@ -783,7 +805,12 @@ class BrouterPlanner(
      * Intermediate stops are kept: they are places the driver asked to be, and
      * dropping one to shorten a search would silently change the trip.
      */
-    private fun spineProbe(points: List<GeoPoint>, maxLegMeters: Double?): List<GeoPoint> {
+    private fun spineProbe(
+        points: List<GeoPoint>,
+        maxLegMeters: Double?,
+        /** Skip the distance threshold — the full spine has already been tried and failed. */
+        force: Boolean = false,
+    ): List<GeoPoint> {
         val limit = maxLegMeters ?: return points
         val straight = straightLength(points)
         // Only where the full spine is the thing that fails.
@@ -797,7 +824,7 @@ class BrouterPlanner(
         //
         // So the trade is only worth making where the alternative is the plan
         // failing outright, and this threshold is where that starts.
-        if (straight <= SPINE_FULL_LIMIT_METERS) return points
+        if (!force && straight <= SPINE_FULL_LIMIT_METERS) return points
         if (straight <= limit * SPINE_PROBE_MARGIN) return points
         val origin = points.first()
         // Aimed along the *remaining* straight line rather than at the final
