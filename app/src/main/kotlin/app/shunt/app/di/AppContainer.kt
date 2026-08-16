@@ -27,6 +27,7 @@ import app.shunt.solver.geo.BoundingBox
 import app.shunt.app.diag.DiagnosticLog
 import app.shunt.core.GeoPoint
 import app.shunt.app.plan.Destination
+import app.shunt.solver.brouter.LegJoin
 import app.shunt.solver.brouter.LegSplitter
 import app.shunt.solver.brouter.PlannedRoute
 import app.shunt.solver.brouter.PlanOutcome
@@ -369,6 +370,16 @@ class AppContainer(context: Context) {
     val planningLaterLegs = MutableStateFlow(false)
 
     /**
+     * The first leg's line, shortened because the leg after it doubled back
+     * over its tail — or null when no trim was needed, which is the usual case.
+     *
+     * Held separately because the first leg belongs to the plan screen, not
+     * here: this is the container asking for it to be drawn shorter, and the
+     * screen decides. See [LegJoin].
+     */
+    val trimmedLeadPolyline = MutableStateFlow<List<GeoPoint>?>(null)
+
+    /**
      * For work that outlives a screen but not the process — planning the later
      * legs of a trip in particular, which must survive the plan screen going
      * away when the driving sheet takes over.
@@ -399,6 +410,7 @@ class AppContainer(context: Context) {
         legJob?.cancel()
         legJob = null
         planningLaterLegs.value = false
+        trimmedLeadPolyline.value = null
         laterLegs.value = emptyList()
         // Conflated, so at most one can be waiting — but draining is what makes
         // this true regardless of the channel's capacity.
@@ -406,10 +418,20 @@ class AppContainer(context: Context) {
         liveDrivePlan.value = null
     }
 
-    fun planRemainingLegs(points: List<GeoPoint>, destination: Destination) {
+    fun planRemainingLegs(
+        points: List<GeoPoint>,
+        destination: Destination,
+        /**
+         * The line of the leg the driver is being shown, so the leg after it
+         * can be checked for doubling back over its tail. Empty simply means
+         * no trim is attempted at that join.
+         */
+        leadPolyline: List<GeoPoint> = emptyList(),
+    ) {
         legJob?.cancel()
         laterLegs.value = emptyList()
         planningLaterLegs.value = false
+        trimmedLeadPolyline.value = null
         if (points.size < 2) return
         planningLaterLegs.value = true
         legJob = appScope.launch(Dispatchers.Default) {
@@ -454,6 +476,35 @@ class AppContainer(context: Context) {
                             "(${chosen.camerasPassed} cameras)",
                     )
                 }
+                // Cut the out-and-back where this leg meets the one before it.
+                //
+                // A leg boundary is a hard waypoint chosen on the *direct* road,
+                // which is not where a camera-avoiding route goes — so the
+                // previous leg can drive out to touch it and this one come
+                // straight back the same way. Reported from a real plan: "a leg
+                // needs to go backwards after it found the way to the next
+                // spot". Both legs are correct routes; the spur is the overlap.
+                var leg = chosen
+                val previousLegs = laterLegs.value
+                val earlier = previousLegs.lastOrNull()?.polyline
+                    ?: trimmedLeadPolyline.value
+                    ?: leadPolyline
+                val trim = LegJoin.trimDoubleBack(earlier, chosen.polyline)
+                if (trim.changed) {
+                    diagnostics.record(
+                        DiagnosticLog.Kind.PLAN,
+                        "trimmed a ${trim.savedMeters.toInt()} m double-back at the leg boundary",
+                    )
+                    leg = chosen.copy(polyline = trim.next)
+                    // Shorten the leg before it to match, so the two still meet.
+                    if (previousLegs.isEmpty()) {
+                        trimmedLeadPolyline.value = trim.previous
+                    } else {
+                        laterLegs.value = previousLegs.dropLast(1) +
+                            previousLegs.last().copy(polyline = trim.previous)
+                    }
+                }
+
                 val legPlan = DrivePlan(
                     destination = destination,
                     // This leg's own end, not the trip's. `points.last()` is the
@@ -463,7 +514,7 @@ class AppContainer(context: Context) {
                     // destination the moment the extension landed.
                     chain = chosen.waypoints + (outcome.remaining.firstOrNull() ?: points.last()),
                     cameras = chosen.passedCameras,
-                    polyline = chosen.polyline,
+                    polyline = leg.polyline,
                     remaining = outcome.remaining,
                 )
                 legExtensions.trySend(legPlan)
@@ -471,7 +522,7 @@ class AppContainer(context: Context) {
                 // toward the destination is the visible difference between
                 // "still working" and "gave up", and it has to happen from a
                 // standstill as readily as while moving.
-                laterLegs.value = laterLegs.value + chosen
+                laterLegs.value = laterLegs.value + leg
                 diagnostics.record(
                     DiagnosticLog.Kind.PLAN,
                     "next leg ready: ${chosen.distanceMeters / 1000} km, ${chosen.camerasPassed} cameras",
@@ -506,7 +557,7 @@ class AppContainer(context: Context) {
     }
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
-        onLaterLegsNeeded = { points, destination -> planRemainingLegs(points, destination) },
+        onLaterLegsNeeded = { points, destination, lead -> planRemainingLegs(points, destination, lead) },
         onLaterLegsAbandoned = { cancelRemainingLegs() },
         log = { message, points ->
             diagnostics.record(

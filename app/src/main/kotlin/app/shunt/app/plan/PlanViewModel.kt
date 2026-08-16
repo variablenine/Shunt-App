@@ -56,7 +56,12 @@ class PlanViewModel(
      * have to reach the drive monitor as well as the map. See
      * `AppContainer.planRemainingLegs`.
      */
-    private val onLaterLegsNeeded: ((List<GeoPoint>, Destination) -> Unit)? = null,
+    /**
+     * Ask for the rest of a split trip. The third argument is the line of the
+     * leg being shown, so the leg after it can be checked for doubling back
+     * over its tail — see `LegJoin`.
+     */
+    private val onLaterLegsNeeded: ((List<GeoPoint>, Destination, List<GeoPoint>) -> Unit)? = null,
     /**
      * Stop planning the rest of a trip and throw away what has been planned.
      *
@@ -308,7 +313,14 @@ class PlanViewModel(
                 // are what turn a first-leg route into a whole one — waiting for
                 // Go meant the map showed a line stopping in open country for as
                 // long as somebody took to decide.
-                onLaterLegsNeeded?.invoke(outcome.remaining, destination)
+                onLaterLegsNeeded?.invoke(
+                    outcome.remaining,
+                    destination,
+                    // The option the later legs will actually be joined onto.
+                    // Fewest-cameras is what the driver is being steered toward
+                    // and what a later leg is planned to continue from.
+                    (outcome.options.minByOrNull { it.camerasPassed } ?: outcome.options.first()).polyline,
+                )
                 // Opened before the chooser is shown, and therefore before Go
                 // can be tapped. Doing it inside checkRange() left a window
                 // between the two where the gate did not exist yet, which is the

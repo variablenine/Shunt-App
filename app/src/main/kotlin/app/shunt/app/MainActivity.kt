@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
                 // readily as while driving.
                 val laterLegs by container.laterLegs.collectAsStateWithLifecycle()
                 val planningLaterLegs by container.planningLaterLegs.collectAsStateWithLifecycle()
+                val trimmedLead by container.trimmedLeadPolyline.collectAsStateWithLifecycle()
 
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
@@ -131,7 +132,11 @@ class MainActivity : ComponentActivity() {
                 var cameraRange by remember { mutableStateOf(container.cameraRangePercent) }
 
                 PlanScreen(
-                    state = state.copy(laterLegs = laterLegs, planningLaterLegs = planningLaterLegs),
+                    state = state.copy(
+                        laterLegs = laterLegs,
+                        planningLaterLegs = planningLaterLegs,
+                        trimmedLeadPolyline = trimmedLead,
+                    ),
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,
                     driveActivity = driveActivity,

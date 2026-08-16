@@ -282,6 +282,9 @@ Key files, by the question they answer:
   `ChargeStops.kt`, and `solver/charging/RangeCheck.kt`.
 - *What reaches the car?* `tesla/TessieVehicleNavClient.kt`.
 - *How is it all wired?* `app/di/AppContainer.kt` — the single DI seam.
+- *Why does the route double back at a leg boundary?* It did, and no longer
+  should — `solver/brouter/LegJoin.kt` trims the out-and-back where two legs
+  meet. See §6, "Cutting a long trip into legs".
 - *How do I test avoidance where there are no cameras?*
   `solver/camera/PracticeCameras.kt` — deterministic by construction (positions
   hash from the grid cell, so there is no seed to share and no state to get out
@@ -1043,6 +1046,27 @@ ever spend — 130.7 s, 688.7 km, 0 cameras — legs cost **+12.7% distance** fo
 same zero exposure. That is the real price of the boundaries, and it is worth
 knowing before anyone tunes `MAX_LEG_METERS`: raising it means fewer boundaries
 and less added distance, at the cost of a longer wait before the first leg.
+
+**The boundary can still cost a doubling-back, and that is trimmed rather than
+prevented.** Because the cut is chosen on the *direct* road, the leg after it may
+be planned freely from a point the camera-avoiding route never wanted to visit —
+so the first leg drives out to touch the boundary and the second comes straight
+back the same way. Both legs are correct; the spur is the overlap between them,
+which neither can see. `LegJoin.trimDoubleBack` finds the last point the two
+lines share and cuts both there, which is a trim rather than a re-plan: the join
+is a vertex of the first leg lying on the second, so what remains is a sub-path
+of what was already planned. Bounded to the join and to the tail of the previous
+leg, because a route that legitimately doubles back later — a switchback, a
+frontage road, a there-and-back to a charger — must survive intact. See F-24,
+including what it deliberately does *not* do to a drive already under way.
+
+**The chooser describes the whole trip as the legs land**, not just the first
+one: a running total of time, distance and cameras, growing as each leg arrives.
+It sits beside the option cards rather than inside them, and that is a
+correctness point rather than a layout one — the cards are a choice *for this
+leg*, while later legs are planned once and begin at the same boundary whichever
+card is picked, so folding their distance into "Fastest" would describe a trip
+nobody is being offered. See F-25.
 
 One thing the tiles make non-negotiable: **the trip's whole bounding box is
 checked for missing tiles up front**, not the first leg's. Later legs are planned

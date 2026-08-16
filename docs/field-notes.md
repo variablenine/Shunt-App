@@ -1402,6 +1402,83 @@ Three things worth knowing if these ever need adjusting:
 
 ---
 
+### F-24 · A leg doubles back over the one before it
+*Observed: 2026-08-16, from a planned route. Fixed; wants a look on a phone.*
+
+> a leg needs to go backwards after it found the way to the next spot, we should
+> make it so if it has to double back it can just delete the useless part of the
+> leg up to the point where it doesn't need to double back.
+
+Seen on the map as a route running east, turning south, and then running west
+again along a parallel road — miles out and the same miles back.
+
+**Why it happens, and why it is nobody's bug.** A leg boundary is a *hard
+waypoint*: the first leg must end at it, the next must start from it.
+`LegSplitter` picks it on the **direct** road, because before anything expensive
+has run that is the only geometry there is — and the direct road is not where a
+camera-avoiding route goes. So the two legs can disagree about the boundary: the
+first drives out to touch it, the second is planned freely from there and comes
+straight back the way it came. Both legs are perfectly correct routes. The spur
+is the *overlap between them*, which neither one can see.
+
+`LegJoin.trimDoubleBack` finds the last place the two lines are still together —
+the point after which the second stops retracing the first — and cuts both
+there. That is a trim, not a re-plan: the join point is a vertex of the first leg
+that also lies on the second, so what is left is a sub-path of what was already
+planned, and it can only be shorter.
+
+Three properties hold it in place:
+
+- **Only at the join.** The retrace is walked from the *start* of the second
+  leg and stops at the first point that is not on the first leg. A switchback, a
+  frontage road or a there-and-back to a charging stop all bring a route near
+  its own path later on, and every one of those is real route that must survive.
+- **Only near the end of the first leg** (`MAX_SPUR_METERS`). A boundary detour
+  is short by nature, so a cap means this can never remove a large piece of a
+  leg however oddly two lines happen to overlap — and it bounds the cost, which
+  is otherwise every point of one polyline against every point of another.
+- **Only a spur worth cutting** (`MIN_SPUR_METERS`). Legs meeting at a shared
+  waypoint always overlap a little; that is what a shared waypoint *means*.
+
+Camera labelling is safe by construction and the direction of the error is the
+right one: a trimmed route passes a **subset** of what the untrimmed pair
+passed, so a count carried over from before the trim can only overstate
+exposure. Overstating is safe here; understating is the thing this project
+exists to prevent.
+
+**What this does not yet do:** the chain already handed to the drive monitor
+keeps its pins. Pulling a waypoint out from under a car that may be driving
+toward it is the §6.1 failure, and the trim is not worth that risk — so on a
+drive already under way the car still passes through the boundary while the map
+shows the shorter line. Worth closing properly later, by trimming the pending
+extension rather than the live chain.
+
+---
+
+### F-25 · The chooser only ever described the first leg
+*Observed: 2026-08-16. Fixed.*
+
+> the fastest and fewest cameras menu should update information as legs are
+> calculated because right now it only gives info on the first leg
+
+True, and the banner said so — but "about 3600 km" next to "270.5 km" is a poor
+substitute for the trip actually being described. The later legs land over the
+following seconds and nothing was using them.
+
+The sheet now carries a **whole-trip line** that grows as each leg arrives:
+summed time, distance and camera count, with the number of legs so far, and a
+note saying whether more are still coming.
+
+**It is deliberately not folded into the option cards**, and that is the
+interesting part rather than a shortcut. Those three cards are a *choice between
+routes for this leg*. The later legs are planned once, as camera-free as they
+can be, and they begin at the same boundary whichever card is picked — so
+adding their distance into "Fastest" would describe a trip nobody is being
+offered. The selected option plus the later legs is a real trip; "Fastest" plus
+the later legs is not a thing that exists.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

@@ -127,7 +127,10 @@ fun PlanScreen(
 
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(
-            routePolyline = overlay.polyline,
+            // Shortened when the next leg doubled back over this one's tail —
+            // the spur is road nobody drives, and drawing it makes the route
+            // look like it is going somewhere it is not. See LegJoin.
+            routePolyline = state.trimmedLeadPolyline ?: overlay.polyline,
             laterLegLines = laterLegLines,
             passedCameras = overlay.passedCameras,
             steeringWaypoints = overlay.waypoints,
@@ -222,6 +225,8 @@ fun PlanScreen(
                     chargeStopAlternatives = state.chargeStopAlternatives,
                     onChargeFirst = actions.onChargeFirst,
                     onChargeAlternative = actions.onChargeAlternative,
+                    laterLegs = state.laterLegs,
+                    planningLaterLegs = state.planningLaterLegs,
                     onGo = actions.onGo,
                     onSelectRoute = actions.onSelectRoute,
                     onDownloadTile = actions.onDownloadTile,

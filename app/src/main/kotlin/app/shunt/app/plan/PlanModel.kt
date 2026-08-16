@@ -132,6 +132,12 @@ data class PlanUiState(
      * short: planning that has *stopped* short must not keep promising more.
      */
     val planningLaterLegs: Boolean = false,
+    /**
+     * The shown leg's line, shortened because the leg after it doubled back
+     * over its tail. Null when no trim was needed, which is the usual case.
+     * See `LegJoin`.
+     */
+    val trimmedLeadPolyline: List<GeoPoint>? = null,
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

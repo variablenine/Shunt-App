@@ -470,6 +470,44 @@ true.
 
 ---
 
+### B6 · No pointless doubling-back at a leg boundary
+*Fixed 2026-08-16.*
+
+**Setup.** A trip long enough to be cut into legs, through country where the
+camera-free route leaves the direct road — the boundary is chosen on the direct
+road, so the disagreement needs somewhere for the two to differ. Watch the map
+as the second leg lands.
+
+**Pass.** The two legs meet and carry on. Where the second leg would have
+retraced the first, both are shortened so they join at the point they diverge,
+and the diagnostic log carries a "trimmed a … m double-back" line.
+
+**Fail (as reported).** The route runs out to a point, turns, and comes back
+along a parallel road — miles out and the same miles back, for a boundary
+nobody asked to visit.
+
+**Known limit, not a failure.** On a drive already under way the car still
+passes through the boundary: the chain handed to the drive monitor keeps its
+pins, because pulling a waypoint out from under a moving car is the §6.1
+failure. The map shows the shorter line.
+
+---
+
+### D9 · The chooser describes the whole trip, not just the first leg
+*Fixed 2026-08-16.*
+
+**Setup.** Plan a trip long enough to be cut into legs and leave the chooser
+open while the later legs land.
+
+**Pass.** A "whole trip so far" line under the banner grows as each leg arrives —
+time, distance, cameras, leg count — and settles to "Whole trip … every leg
+planned" when the last one lands. Selecting a different option updates it.
+
+**Fail (as reported).** The sheet says "about 3600 km" and then only ever
+describes the first 270 km, however long you wait.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

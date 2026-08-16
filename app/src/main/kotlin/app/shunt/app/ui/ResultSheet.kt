@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +76,10 @@ fun ResultSheet(
     chargeStopAlternatives: List<Destination> = emptyList(),
     onChargeFirst: () -> Unit = {},
     onChargeAlternative: (Int) -> Unit = {},
+    /** Legs planned after this one, so the totals can grow as they land. */
+    laterLegs: List<PlannedRoute> = emptyList(),
+    /** Whether more legs are still coming. */
+    planningLaterLegs: Boolean = false,
 ) {
     // Never let the sheet cover the whole screen — keep the route visible above it.
     val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
@@ -97,6 +102,7 @@ fun ResultSheet(
                     phase, onGo, onSelectRoute, onDismiss, onSaveHome, onSaveWork,
                     rangeCheck, findingChargeStop, chargeStopSearchFailed,
                     chargeStopAlternatives, onChargeFirst, onChargeAlternative,
+                    laterLegs, planningLaterLegs,
                 )
                 is Phase.Pushing -> PushingContent(phase.destination)
                 is Phase.Driving -> DrivingContent(phase, chargingVia, driveActivity, onDismiss)
@@ -187,6 +193,8 @@ private fun SolvedContent(
     chargeStopAlternatives: List<Destination>,
     onChargeFirst: () -> Unit,
     onChargeAlternative: (Int) -> Unit,
+    laterLegs: List<PlannedRoute>,
+    planningLaterLegs: Boolean,
 ) {
     Text(
         "to ${phase.destination.title}",
@@ -213,12 +221,58 @@ private fun SolvedContent(
                     phase.wholeTripMeters?.let {
                         "This trip is about ${it / 1000} km. Planning it all at once takes " +
                             "minutes, so Shunt plans the first stretch now and the rest while " +
-                            "you drive — the figures below are for that first stretch."
+                            "you drive — the cards below are for that first stretch."
                     } ?: "Shunt plans the first stretch now and the rest while you drive; " +
-                        "the figures below are for that first stretch.",
+                        "the cards below are for that first stretch.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
+
+                // What the whole trip looks like so far, growing as each leg
+                // lands. Reported as missing: "the fastest and fewest cameras
+                // menu should update information as legs are calculated because
+                // right now it only gives info on the first leg."
+                //
+                // Kept out of the option cards themselves, and that is not
+                // squeamishness — it is the only honest place for it. Those
+                // cards are a *choice* between three routes for this leg, while
+                // the later legs are planned once, as few-cameras as they can
+                // be, and they start from the same boundary whichever card is
+                // picked. Adding their distance into "Fastest" would describe a
+                // trip nobody is being offered.
+                val selected = phase.options.getOrNull(phase.selected)
+                if (selected != null && (laterLegs.isNotEmpty() || planningLaterLegs)) {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.25f))
+                    Spacer(Modifier.height(8.dp))
+
+                    val legs = listOf(selected) + laterLegs
+                    val metres = legs.sumOf { it.distanceMeters.toLong() }
+                    val seconds = legs.sumOf { it.estimatedSeconds.toLong() }
+                    val cameras = legs.sumOf { it.camerasPassed }
+                    Text(
+                        if (planningLaterLegs) "Whole trip so far" else "Whole trip",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Text(
+                        "${formatDuration(seconds.toInt())} · ${metres / 1000} km · " +
+                            (if (cameras == 0) "camera-free" else cameraCount(cameras)) +
+                            "  (${legs.size} " + (if (legs.size == 1) "leg" else "legs") + ")",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (cameras == 0) safeColor() else MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Text(
+                        if (planningLaterLegs) {
+                            "Still planning the rest — these numbers grow as each leg lands."
+                        } else {
+                            "Every leg planned. This is the trip end to end."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
             }
         }
     }
