@@ -191,4 +191,34 @@ class LegSplitterTest {
         assertTrue(cut.point in line, "the cut must be a point of the spine it came from")
         assertEquals(line[cut.index], cut.point, "the reported index must locate the cut in the spine")
     }
+
+    @Test
+    fun `a stop the driver added is never cut in front of`() {
+        // Reported from a real plan: a Supercharger added to a long trip showed
+        // on the map but the route did not go there. It had fallen past the leg
+        // boundary, so the chooser's route ignored it entirely.
+        //
+        // A stop is the best boundary available — a point the route must pass
+        // through, chosen by the person driving — so nothing invented may come
+        // before it.
+        val line = spine(600)
+        val charger = GeoPoint(39.0 + 190_000 * metresNorth, -98.0)
+
+        assertNull(
+            LegSplitter.cut(line, noCameras(), stops = listOf(charger)),
+            "a leg boundary was placed before somewhere the driver asked to be",
+        )
+    }
+
+    @Test
+    fun `a stop far beyond the leg window still allows a cut`() {
+        // The stop is most of a day's driving away; refusing to split would hand
+        // back the two-minute plan splitting exists to prevent, and the driver
+        // reaches the stop on a later leg exactly as intended.
+        val line = spine(600)
+        val farStop = GeoPoint(39.0 + 500_000 * metresNorth, -98.0)
+
+        val cut = assertNotNull(LegSplitter.cut(line, noCameras(), stops = listOf(farStop)))
+        assertTrue(cut.alongMeters <= LegSplitter.MAX_LEG_METERS)
+    }
 }

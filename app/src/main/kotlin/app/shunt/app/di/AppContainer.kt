@@ -100,6 +100,14 @@ class AppContainer(context: Context) {
      */
     private val practicePrefs = appContext.getSharedPreferences("practice", Context.MODE_PRIVATE)
 
+    /**
+     * How far a camera is treated as seeing, as a percentage of the built-in
+     * estimate. See `CameraRangeSetting` for why this is adjustable at all.
+     */
+    var cameraRangePercent: Int
+        get() = practicePrefs.getInt("camera_range_percent", 100)
+        set(value) { practicePrefs.edit().putInt("camera_range_percent", value).apply() }
+
     var practiceCameras: Boolean
         get() = practicePrefs.getBoolean("enabled", false)
         set(value) {
@@ -151,6 +159,7 @@ class AppContainer(context: Context) {
         camerasIn = { bbox -> camerasFor(bbox) },
         diagnostics = { routingDiagnostic() },
         lastPassTimings = { brouterRouter.lastPassTimings },
+        cameraRangeScale = { cameraRangePercent / 100.0 },
     )
 
     /** One-line on-disk + engine state, surfaced on a no-route failure (alpha aid). */
@@ -387,7 +396,12 @@ class AppContainer(context: Context) {
                 val chosen = outcome.options.minByOrNull { it.camerasPassed } ?: return@launch
                 val legPlan = DrivePlan(
                     destination = destination,
-                    chain = chosen.waypoints + points.last(),
+                    // This leg's own end, not the trip's. `points.last()` is the
+                    // final destination, so on a trip that takes three legs it
+                    // put a waypoint hundreds of kilometres past the end of the
+                    // leg being appended — the car would have been aimed at the
+                    // destination the moment the extension landed.
+                    chain = chosen.waypoints + (outcome.remaining.firstOrNull() ?: points.last()),
                     cameras = chosen.passedCameras,
                     polyline = chosen.polyline,
                     remaining = outcome.remaining,
@@ -414,7 +428,7 @@ class AppContainer(context: Context) {
      * map is cheap once tiles are warm.
      */
     val viewportCameras: suspend (BoundingBox) -> List<MapCamera> = { bbox ->
-        camerasFor(bbox).map { it.toMapCamera() }
+        camerasFor(bbox).map { it.toMapCamera(cameraRangePercent / 100.0) }
     }
 
     init {
@@ -713,7 +727,7 @@ private fun app.shunt.tesla.NavCapabilityProbe.Step.toLine(): app.shunt.app.ui.N
     )
 
 /** A DeFlock/OSM camera reduced to what the map needs, with a friendly label. */
-private fun Camera.toMapCamera(): MapCamera {
+private fun Camera.toMapCamera(rangeScale: Double = 1.0): MapCamera {
     val manufacturer = tags["manufacturer"] ?: tags["brand"]
     val operator = tags["operator"]
     // An invented camera says so in the one place a user reads about a
@@ -731,6 +745,7 @@ private fun Camera.toMapCamera(): MapCamera {
         (tags["surveillance:type"] ?: tags["camera:type"])?.let { add(it) }
     }.joinToString(" · ").ifBlank { null }
     return MapCamera(
+        rangeScale = rangeScale,
         id = id,
         lat = location.lat,
         lon = location.lon,

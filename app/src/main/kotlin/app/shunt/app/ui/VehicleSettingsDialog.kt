@@ -49,6 +49,8 @@ fun VehicleSettingsDialog(
     diagnostics: DiagnosticsUi? = null,
     /** The practice-camera switch, or null to leave it out. */
     practice: PracticeUi? = null,
+    /** The camera-range slider, or null to leave it out. */
+    cameraRange: CameraRangeUi? = null,
     /**
      * Verifies the token by listing the account's vehicles. Read-only: it sends
      * no command, so it can't make the car do anything.
@@ -225,6 +227,11 @@ fun VehicleSettingsDialog(
 
                 Spacer(Modifier.height(12.dp))
                 TeslaWipWarning()
+
+                if (cameraRange != null) {
+                    Spacer(Modifier.height(16.dp))
+                    CameraRangeSetting(cameraRange.percent, cameraRange.onChange)
+                }
 
                 if (practice != null) {
                     Spacer(Modifier.height(16.dp))
@@ -406,3 +413,6 @@ data class DiagnosticsUi(
 
 /** The practice-camera switch and its current state. */
 data class PracticeUi(val enabled: Boolean, val onChange: (Boolean) -> Unit)
+
+/** How far cameras are treated as seeing, as a percentage. */
+data class CameraRangeUi(val percent: Int, val onChange: (Int) -> Unit)

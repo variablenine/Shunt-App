@@ -131,6 +131,27 @@ tag `service=emergency_access`. A crossover mapped as a bare `highway=service`
 with nothing to distinguish it is invisible to this, and the fix is to tag it in
 OpenStreetMap. If you find one, that is a mapping contribution, not a bug.
 
+### A0 · Which share format the car actually honours
+*The highest-value experiment available, and the app already contains it.*
+
+**Setup.** Vehicle settings → the navigation command probe. It tries plain
+coordinates, a `geo:` URI, an OpenStreetMap link and an Apple Maps link.
+
+**Why this first.** On a car requiring signed commands, Shunt falls through to
+Tessie's `share`, which takes a string the car resolves itself — currently bare
+`"lat,lon"`. Observed on a real drive: a house number came out as a *different*
+house number and the destination landed on the wrong side of the street, both of
+which are what address search does to a coordinate. If a different form is taken
+as an exact pin, that fixes the last hundred metres of every trip.
+
+**It matters most for charging.** A Supercharger resolved to a street address is
+one the car drives to the road outside, and FSD cannot park in a stall from
+there.
+
+**Record which forms landed and how precisely**, and put it in F-19. Do not
+change the share format without this — it is the only channel that works on such
+a car, and breaking it breaks everything.
+
 ### A7 · The waypoint the car receives is the waypoint on the screen
 *Two causes fixed, cause not confirmed.*
 

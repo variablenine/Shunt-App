@@ -78,6 +78,8 @@ data class VehicleSettingsUi(
     val diagnostics: DiagnosticsUi? = null,
     /** The practice-camera switch, or null to leave it out. */
     val practice: PracticeUi? = null,
+    /** The camera-range slider, or null to leave it out. */
+    val cameraRange: CameraRangeUi? = null,
 )
 
 /** Callbacks the plan screen raises; wired to PlanViewModel in MainActivity. */
@@ -118,6 +120,7 @@ fun PlanScreen(
     // at the end, which is the visible difference between "still working" and
     // "gave up".
     val overlay = routeOverlay(state.phase).withLaterLegs(state.laterLegs)
+    val laterLegLines = state.laterLegs.map { it.polyline }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showVehicleSettings by remember { mutableStateOf(false) }
@@ -125,6 +128,7 @@ fun PlanScreen(
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(
             routePolyline = overlay.polyline,
+            laterLegLines = laterLegLines,
             passedCameras = overlay.passedCameras,
             steeringWaypoints = overlay.waypoints,
             routeCameras = overlay.nearbyCameras,
@@ -200,6 +204,7 @@ fun PlanScreen(
                 onProbeNav = vehicleSettings.onProbeNav,
                 diagnostics = vehicleSettings.diagnostics,
                 practice = vehicleSettings.practice,
+                cameraRange = vehicleSettings.cameraRange,
                 onDismiss = { showVehicleSettings = false },
             )
         }
@@ -530,8 +535,10 @@ private fun destinationOf(phase: Phase): GeoPoint? = when (phase) {
 /** The overlay with any later legs of the trip appended. */
 private fun RouteOverlay.withLaterLegs(legs: List<PlannedRoute>): RouteOverlay {
     if (legs.isEmpty()) return this
+    // Deliberately *not* merging the lines: those are drawn as separate
+    // features so no straight segment is ever drawn between two legs. Only the
+    // cameras and pins are merged, which have no continuity to break.
     return copy(
-        polyline = polyline + legs.flatMap { it.polyline },
         passedCameras = passedCameras + legs.flatMap { leg -> leg.passedCameras.map { it.location } },
         waypoints = waypoints + legs.flatMap { it.waypoints },
         nearbyCameras = nearbyCameras + legs.flatMap { leg -> leg.nearbyCameras.map { it.location } },

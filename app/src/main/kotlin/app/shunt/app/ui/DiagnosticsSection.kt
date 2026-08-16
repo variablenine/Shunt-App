@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -138,3 +139,47 @@ fun PracticeCamerasSetting(enabled: Boolean, onChange: (Boolean) -> Unit) {
         Switch(checked = enabled, onCheckedChange = onChange)
     }
 }
+
+/**
+ * How far a camera is treated as seeing, as a percentage of the built-in
+ * estimate.
+ *
+ * Nobody publishes the read range of an ALPR, and it varies with the lens, the
+ * mounting height, the traffic speed and the weather — so the figure in the app
+ * is a *policy* about standoff rather than a measurement, and it is worth being
+ * able to turn. Higher plans wider detours around the same cameras; lower
+ * accepts closer passes for shorter trips.
+ */
+@Composable
+fun CameraRangeSetting(percent: Int, onChange: (Int) -> Unit) {
+    HorizontalDivider()
+    Spacer(Modifier.height(12.dp))
+    Text("How far cameras see", style = MaterialTheme.typography.titleSmall)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        when {
+            percent > 100 -> "$percent% — routes give cameras a wider berth, and detour more to do it."
+            percent < 100 -> "$percent% — routes pass closer to cameras, and detour less."
+            else -> "$percent% — the built-in estimate."
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Applies to routing, the camera counts, the drive warnings and the cones " +
+            "on the map together, so they always agree.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Slider(
+        value = percent.toFloat(),
+        onValueChange = { onChange(it.toInt()) },
+        valueRange = MIN_CAMERA_RANGE_PERCENT.toFloat()..MAX_CAMERA_RANGE_PERCENT.toFloat(),
+        steps = 0,
+    )
+}
+
+/** Bounds on the camera-range setting; a scale of zero would disable avoidance. */
+const val MIN_CAMERA_RANGE_PERCENT = 25
+const val MAX_CAMERA_RANGE_PERCENT = 400

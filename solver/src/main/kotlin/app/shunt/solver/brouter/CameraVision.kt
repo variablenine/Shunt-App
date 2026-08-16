@@ -14,9 +14,29 @@ import app.shunt.solver.geo.haversineMeters
  * ([OMNI_RANGE_M], deliberately larger, to keep more distance since we can't
  * tell where it points).
  */
-data class CameraVision(val location: GeoPoint, val directionDegrees: Double?) {
+data class CameraVision(
+    val location: GeoPoint,
+    val directionDegrees: Double?,
+    /**
+     * Multiplier on how far this camera is treated as seeing.
+     *
+     * The base figures are an estimate — nobody publishes the read range of a
+     * Flock unit, and it varies with the lens, the mounting height, the speed of
+     * the traffic and the weather. So the number is a *policy* about how much
+     * standoff a driver wants, not a measurement, and it is worth being able to
+     * turn: raising it plans wider detours around the same cameras, lowering it
+     * accepts closer passes for shorter trips.
+     *
+     * Applied here rather than by editing the constants so that it flows through
+     * everything at once — the routing nogos, the "which cameras does this route
+     * pass" count, the approach warnings, and the cones drawn on the map all ask
+     * this same object, so they cannot disagree about what a camera can see.
+     */
+    val rangeScale: Double = 1.0,
+) {
 
-    val range: Double get() = if (directionDegrees == null) OMNI_RANGE_M else DIRECTIONAL_RANGE_M
+    val range: Double
+        get() = (if (directionDegrees == null) OMNI_RANGE_M else DIRECTIONAL_RANGE_M) * rangeScale
 
     /** True if this camera can see point [p]. */
     fun sees(p: GeoPoint): Boolean {

@@ -76,6 +76,12 @@ Working and reasonably trusted:
 - A rolling week of diagnostics (`DiagnosticLog`), exportable to a file the user
   attaches to an email. Never uploaded, never scheduled; coordinates are stripped
   unless the person exporting turns them on, and the log expires by itself.
+- An adjustable camera reach (`CameraVision.rangeScale`, a slider in settings).
+  Nobody publishes an ALPR's read range and it varies with the lens, the height
+  and the traffic, so the built-in figure is a *policy* about standoff rather
+  than a measurement. The scale flows through routing, the camera counts, the
+  drive warnings and the cones drawn on the map together, so they cannot
+  disagree about what a camera can see.
 - Practice cameras (`PracticeCameras`): a deterministic field of invented ALPRs,
   **snapped onto real roads** with BRouter's own waypoint matching, switched on in
   settings, so avoidance can be exercised where the real ones have been removed.
@@ -900,7 +906,14 @@ rather than announcing arrival. It should be close to unreachable — the bounda
 is at least `MIN_LEG_METERS` of driving away and a leg plans in seconds — but
 announcing arrival in open country is the worse failure.
 
-**Where the cut goes is the entire problem, and it is not a distance.** A leg
+**A stop the driver added is never cut in front of.** Reported from a real plan:
+a Supercharger added to a long trip appeared on the map but the route did not go
+there — it had fallen past the first leg's boundary, so the chooser's route
+ignored it and only a later leg would have reached it. A stop is the best
+boundary available anyway, better than anything `LegSplitter` can invent: a point
+the route must pass through, chosen by the person driving.
+
+**Where the cut goes is otherwise the entire problem, and it is not a distance.** A leg
 boundary is a hard waypoint both legs must touch, so it costs the difference
 between the best route *through that point* and the best route overall. Cutting
 at a fixed fraction puts it wherever it lands — and on a long trip the fastest

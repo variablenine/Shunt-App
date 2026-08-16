@@ -85,6 +85,16 @@ data class MapCamera(
     val directionDegrees: Double?,
     val title: String,
     val subtitle: String?,
+    /**
+     * How far this camera is treated as seeing, relative to the built-in
+     * estimate — the same scale the router used.
+     *
+     * Carried on the camera rather than read from a setting at draw time so the
+     * cone on the map is always the shape the route was planned against. A map
+     * that draws a different reach from the one the avoidance used is worse than
+     * no cone at all: it makes a correct route look wrong.
+     */
+    val rangeScale: Double = 1.0,
 )
 
 /**
@@ -162,6 +172,12 @@ private const val MAX_VIEWPORT_SPAN_DEG = 3.0
 @Composable
 fun RouteMap(
     routePolyline: List<GeoPoint>,
+    /**
+     * Later legs of a long trip, each as its own line. Drawn as separate
+     * features from [routePolyline] so no straight segment is ever drawn
+     * between two of them.
+     */
+    laterLegLines: List<List<GeoPoint>> = emptyList(),
     passedCameras: List<GeoPoint>,
     /**
      * The shaping pins Shunt will send the car through. Worth drawing: the car
@@ -195,6 +211,7 @@ fun RouteMap(
      */
     destination: GeoPoint? = null,
 ) {
+    val routeLines = listOf(routePolyline) + laterLegLines
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val styleUrl = stringResource(R.string.map_style_url)
@@ -320,7 +337,7 @@ fun RouteMap(
             if (showLocation && hasLocationPermission && !locationActivated.value) {
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
-            renderRoute(loadedStyle, routePolyline, passedCameras, steeringWaypoints, routeCameras, destination)
+            renderRoute(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
             renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey, destination) }
@@ -398,7 +415,8 @@ private fun centerOnUserLocation(view: MapView): Boolean {
 
 private fun renderRoute(
     style: Style,
-    polyline: List<GeoPoint>,
+    /** Each leg's line separately; see below for why they are never merged. */
+    lines: List<List<GeoPoint>>,
     passed: List<GeoPoint>,
     waypoints: List<GeoPoint> = emptyList(),
     nearby: List<GeoPoint> = emptyList(),
@@ -423,9 +441,18 @@ private fun renderRoute(
         )
     }
 
-    if (polyline.size >= 2) {
-        val line = Feature.fromGeometry(
-            LineString.fromLngLats(polyline.map { Point.fromLngLat(it.lon, it.lat) }),
+    // **One feature per leg, never one line through all of them.** Joining the
+    // legs of a long trip into a single LineString draws a straight segment
+    // across country wherever two of them do not share an endpoint exactly —
+    // which is what put a ruled line from Milwaukee to Chicago across a planned
+    // route. Separate features cannot do that whatever the legs contain.
+    if (lines.any { it.size >= 2 }) {
+        val line = FeatureCollection.fromFeatures(
+            lines.filter { it.size >= 2 }.map { leg ->
+                Feature.fromGeometry(
+                    LineString.fromLngLats(leg.map { Point.fromLngLat(it.lon, it.lat) }),
+                )
+            },
         )
         val source = style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)
         if (source != null) {
@@ -679,14 +706,14 @@ private fun visionFeature(cam: MapCamera): Feature {
         for (i in 0..steps) {
             val bearing = direction - CameraVision.FOV_HALF_ANGLE +
                 (2 * CameraVision.FOV_HALF_ANGLE) * i / steps
-            val edge = destinationPoint(apex, bearing, CameraVision.DIRECTIONAL_RANGE_M)
+            val edge = destinationPoint(apex, bearing, CameraVision.DIRECTIONAL_RANGE_M * cam.rangeScale)
             ring += Point.fromLngLat(edge.lon, edge.lat)
         }
         ring += Point.fromLngLat(apex.lon, apex.lat) // close back to the apex
     } else {
         val steps = 24
         for (i in 0..steps) {
-            val edge = destinationPoint(apex, 360.0 * i / steps, CameraVision.OMNI_RANGE_M)
+            val edge = destinationPoint(apex, 360.0 * i / steps, CameraVision.OMNI_RANGE_M * cam.rangeScale)
             ring += Point.fromLngLat(edge.lon, edge.lat)
         }
     }

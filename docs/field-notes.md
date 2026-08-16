@@ -1150,6 +1150,67 @@ The empty-search message now says so, rather than reading as a dead end.
 The other half of the answer is the one CLAUDE.md §3 has always given: add the
 place to OpenStreetMap, so it is searchable for everyone and not just here.
 
+### F-19 · The destination the car takes is not quite the one that was sent
+*Observed: 2026-08-16, on a successful real drive. Not fixed — the experiment that settles it is in the app already.*
+
+The drive itself worked: routed around cameras, no trouble for 95% of it. What
+was wrong was the last hundred metres.
+
+> routing to [a house number] shows as [a lower house number] on my car and wants
+> to pull over slightly before my driveway. And then routing out there, on the
+> app it shows the destination being off to the left side of the road, but when
+> it got sent to my car it was on the right side of the road
+
+Two symptoms, one cause, and it is the sharpest evidence yet for F-2. On a car
+that requires signed commands, Shunt falls through to Tessie's `share`, which
+takes a **string** the car resolves itself — and what it is given is bare
+`"lat,lon"`. Tesla appears to put that through *address search* rather than
+treating it as a pin: address search snaps to the nearest known house number
+(hence the lower number) and to a side of the street (hence the wrong side).
+Six decimal places of precision does not help if the string is not being read as
+a coordinate at all.
+
+**Do not guess the fix.** `NavCapabilityProbe` already exists for exactly this
+question and already tries four forms — plain coordinates, a `geo:` URI, an
+OpenStreetMap link, and an Apple Maps link. Run it from vehicle settings and see
+which ones land and how precisely. Changing `shareValue` on a hunch risks
+breaking the one channel that currently works at all.
+
+**This matters more than a hundred metres**, because of what it implies for
+charging. A Supercharger sent as something the car resolves to a street address
+is a Supercharger the car will drive *to the street outside*, and FSD cannot
+park in a stall from there. The maintainer put it directly: "we need to make sure
+it's actually routing to the charger as a location not an address, so fsd will
+properly park in a charging stall automatically." Whatever the probe says the
+right form is, chargers need it most.
+
+### F-20 · A ruled line across the map, and a Supercharger that was not routed to
+*Observed: 2026-08-16, from the chooser. Both fixed; unconfirmed.*
+
+Two separate faults in one screenshot, both introduced by leg splitting.
+
+**The line.** A straight blue line ran across country from the top of the map to
+the destination, alongside the real route. The legs of a long trip were being
+concatenated into a *single* LineString for drawing, so wherever two of them did
+not share an endpoint exactly, the map drew a straight segment between them —
+which at that zoom is a ruled line across two states. Each leg is now its own
+feature, which cannot produce a joining segment whatever the legs contain. Worth
+remembering as a general rule: **merging polylines that are not guaranteed
+contiguous is a drawing bug waiting to happen.**
+
+**The Supercharger.** Adding one put a marker on the map but the route did not go
+there. It had fallen *past the first leg's boundary*: the leg was cut at a
+synthetic quiet point that came earlier, so the route being shown ignored the
+stop entirely and only some later leg would have reached it. `LegSplitter` now
+never cuts in front of a stop the driver added — which is the right rule
+regardless, because a stop is a better boundary than anything the splitter can
+invent: it is a point the route must pass through, chosen by the person driving.
+
+Found while fixing it, and worse than either: the leg being handed to the drive
+monitor was given the *trip's* final destination as its last waypoint rather than
+its own end. On a three-leg trip that aimed the car hundreds of kilometres past
+the leg the moment the extension landed.
+
 ---
 
 ## Resolved

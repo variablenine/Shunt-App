@@ -114,6 +114,15 @@ class BrouterPlanner(
      * that: the seam is what makes planning testable without a map tile.
      */
     private val lastPassTimings: () -> List<PlanTimings.Timed> = { emptyList() },
+    /**
+     * How far a camera is treated as seeing, as a multiple of the built-in
+     * estimate. A function rather than a value so a change in settings applies
+     * to the next plan without rebuilding the planner.
+     *
+     * Read once per plan and carried on every [CameraVision] it makes, so the
+     * routing, the labelling, the warnings and the map cannot disagree.
+     */
+    private val cameraRangeScale: () -> Double = { 1.0 },
 ) {
     /**
      * Plan a trip. [onProgress] reports coarse 0f..1f progress with a label, so
@@ -232,7 +241,15 @@ class BrouterPlanner(
         val tripCameras = camerasAlong(spine) ?: return cameraDataUnavailable()
         cameraMillis += nowMillis() - startedAt
         val cut = maxLegMeters?.let { limit ->
-            LegSplitter.cut(spine, CameraIndex(visionsOf(tripCameras)), maxLegMeters = limit)
+            LegSplitter.cut(
+                spine = spine,
+                cameras = CameraIndex(visionsOf(tripCameras)),
+                maxLegMeters = limit,
+                // Everything between origin and destination is somewhere the
+                // driver asked to be — a charging stop they picked, a stop they
+                // added. A leg must not end short of the first of them.
+                stops = points.drop(1).dropLast(1),
+            )
         }
         val legPoints: List<GeoPoint>
         val remaining: List<GeoPoint>
@@ -306,7 +323,7 @@ class BrouterPlanner(
         }
 
         val fastest = routes.first()
-        val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
+        val visions = cameras.map { CameraVision(it.location, it.directionDegrees, cameraRangeScale()) }
         // One grid, reused for every option and every waypoint check below.
         // Asking each camera to walk the whole route in turn is cameras ×
         // points, which on a cross-state trip is tens of millions of distance
@@ -475,7 +492,7 @@ class BrouterPlanner(
         cameras.filter { camera -> nearSpine(camera.location, spine, corridorMeters + SPINE_SAMPLE_METERS) }
 
     private fun visionsOf(cameras: List<Camera>): List<CameraVision> =
-        cameras.map { CameraVision(it.location, it.directionDegrees) }
+        cameras.map { CameraVision(it.location, it.directionDegrees, cameraRangeScale()) }
 
     /**
      * Whether every point of [line] is inside the corridor drawn around [spine].
@@ -549,7 +566,7 @@ class BrouterPlanner(
         blocked: List<GeoPoint> = emptyList(),
         budgetMillis: Long? = null,
     ): List<BrouterRoute>? {
-        val visions = cameras.map { CameraVision(it.location, it.directionDegrees) }
+        val visions = cameras.map { CameraVision(it.location, it.directionDegrees, cameraRangeScale()) }
         val request = RouteRequest(points, visions, headingDegrees, blocked, budgetMillis)
         val found = runCatching { route(request) }.getOrNull()
         if (!found.isNullOrEmpty() || blocked.isEmpty()) return found

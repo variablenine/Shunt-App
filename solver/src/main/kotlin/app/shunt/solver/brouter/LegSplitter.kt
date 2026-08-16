@@ -123,6 +123,22 @@ object LegSplitter {
         minLegMeters: Double = MIN_LEG_METERS,
         maxLegMeters: Double = MAX_LEG_METERS,
         quietRadiusMeters: Double = QUIET_RADIUS_METERS,
+        /**
+         * Places the driver asked to visit, in order. **A cut is never made
+         * before the first of them.**
+         *
+         * Reported from a real plan: a Supercharger added to the trip appeared
+         * on the map but the route did not go there. It had fallen past the leg
+         * boundary — the first leg was planned to a synthetic cut point that
+         * came earlier, so the route on the chooser ignored the stop entirely
+         * and only a later leg would have reached it.
+         *
+         * A stop is the *best possible* boundary anyway, and better than
+         * anything this can invent: it is a point the route must pass through,
+         * chosen by the person driving. So a stop inside the leg window ends the
+         * leg, and a stop before the window suppresses the cut altogether.
+         */
+        stops: List<GeoPoint> = emptyList(),
     ): Cut? {
         if (spine.size < 2) return null
         require(minLegMeters <= maxLegMeters) { "a leg cannot be both at least $minLegMeters and at most $maxLegMeters" }
@@ -131,6 +147,13 @@ object LegSplitter {
         // Short enough to plan in one go. Splitting a trip that does not need it
         // buys nothing and spends a hard waypoint.
         if (total <= maxLegMeters) return null
+
+        // A stop the driver added is where this leg ends, and nothing invented
+        // may come before it. Inside the window it *is* the cut; before the
+        // window there is nothing to cut at all, because any boundary would sit
+        // between the driver and somewhere they asked to be.
+        val firstStop = stops.firstOrNull()?.let { stop -> alongOf(spine, stop) }
+        if (firstStop != null && firstStop <= maxLegMeters) return null
 
         var best: Cut? = null
         var along = 0.0
@@ -176,6 +199,25 @@ object LegSplitter {
     private fun isBefore(stop: GeoPoint, points: List<GeoPoint>, cut: GeoPoint): Boolean {
         val origin = points.first()
         return haversineMeters(origin, stop) < haversineMeters(origin, cut)
+    }
+
+    /**
+     * Roughly how far along [spine] the point nearest [p] sits.
+     *
+     * Nearest-vertex rather than a projection: the spine is sampled every few
+     * kilometres and this only has to decide which side of a leg boundary a stop
+     * falls on, which is a question about tens of kilometres.
+     */
+    private fun alongOf(spine: List<GeoPoint>, p: GeoPoint): Double {
+        var along = 0.0
+        var bestAlong = 0.0
+        var bestDistance = Double.MAX_VALUE
+        for (i in spine.indices) {
+            if (i > 0) along += haversineMeters(spine[i - 1], spine[i])
+            val d = haversineMeters(spine[i], p)
+            if (d < bestDistance) { bestDistance = d; bestAlong = along }
+        }
+        return bestAlong
     }
 
     private fun lengthOf(line: List<GeoPoint>): Double =
