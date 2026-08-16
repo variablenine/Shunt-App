@@ -1917,6 +1917,28 @@ belongs next to the lead, not next to the trip.
 
 ---
 
+### F-38 · The map jumps back to your location when you back out of planning
+*Observed: 2026-08-16. Fixed.*
+
+> I don't want the map to go right back to my location after I hit back from the
+> route planning
+
+The auto-centre effect was keyed on the route's length, so it re-fired every time
+a route went *away* — backing out of planning pulled the map from wherever the
+driver had been looking straight back to their own dot.
+
+The intent behind it was sound and is kept: someone who has just opened the app
+and looked at nothing yet wants the map on them, so the nearby cameras load
+without panning there first. That is a **once** though. After it, the map is
+where the person chose to put it, and moving it is the app overruling them — the
+same rule as the drive-follow camera, and §6.1 applied to the screen.
+
+So it centres once and never again, and does not centre at all if they have
+already moved the map themselves — which is the clearest possible statement that
+they did not want to be there.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

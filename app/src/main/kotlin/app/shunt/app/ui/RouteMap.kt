@@ -517,12 +517,28 @@ fun RouteMap(
         }
     }
 
-    // Once we have a location fix and no route is shown, center on the user so
-    // the nearby cameras load without them having to pan there first.
-    LaunchedEffect(showLocation, hasLocationPermission, routePolyline.size) {
-        if (!showLocation || !hasLocationPermission || routePolyline.size >= 2) return@LaunchedEffect
+    // Centre on the user **once**, when the map first has a fix and nothing to
+    // show, so the nearby cameras load without them having to pan there first.
+    //
+    // Keyed on the route's length, it re-fired every time a route went away —
+    // so backing out of route planning yanked the map from wherever the driver
+    // had been looking straight back to their own dot. Reported as "I don't want
+    // the map to go right back to my location after I hit back from the route
+    // planning", and they are right: the first centring is a convenience for
+    // someone who has not looked anywhere yet, and after that it is the app
+    // overruling where they chose to look.
+    //
+    // Suppressed outright once they have moved the map themselves, which is the
+    // clearest possible statement that they did not want to be here.
+    var centredOnce by remember { mutableStateOf(false) }
+    LaunchedEffect(showLocation, hasLocationPermission) {
+        if (centredOnce || !showLocation || !hasLocationPermission) return@LaunchedEffect
+        if (routePolyline.size >= 2 || touchedAt > 0L) return@LaunchedEffect
         repeat(20) {
-            if (centerOnUserLocation(mapView)) return@LaunchedEffect
+            if (centerOnUserLocation(mapView)) {
+                centredOnce = true
+                return@LaunchedEffect
+            }
             delay(500)
         }
     }
