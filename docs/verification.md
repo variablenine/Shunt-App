@@ -359,6 +359,25 @@ with the toggle off — the second is a privacy bug and should stop a release.
 
 ---
 
+### D5 · Cancelling actually cancels
+*Fixed 2026-08-16.*
+
+**Setup.** Plan a long trip — long enough to be cut into legs — wait a moment for
+the line to start growing, then cancel.
+
+**Pass.** The route, the later legs, the pins and the destination pin all
+disappear at once, and nothing keeps being planned in the background. Planning
+the same trip again re-frames the map on it.
+
+**Fail (as reported).** "When I cancel a route it needs to cancel the leg
+calculations too. In fact, the route needs to disappear, it hasn't done that this
+whole time." Two causes: the map only ever *set* the route source and skipped it
+entirely when there was nothing to draw, so it kept the last line forever; and
+the background leg planning belonged to the container, which nothing told to
+stop.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

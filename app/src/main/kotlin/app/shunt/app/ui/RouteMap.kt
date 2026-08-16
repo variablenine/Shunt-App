@@ -446,7 +446,12 @@ private fun renderRoute(
     // across country wherever two of them do not share an endpoint exactly —
     // which is what put a ruled line from Milwaukee to Chicago across a planned
     // route. Separate features cannot do that whatever the legs contain.
-    if (lines.any { it.size >= 2 }) {
+    // **Built and set unconditionally, including when it is empty.** Guarding
+    // this on "are there any lines" is how a cancelled trip kept its route drawn
+    // for the rest of the session: with nothing to draw the block was skipped
+    // entirely, so the source kept whatever was last put in it and the line
+    // stayed on the map with no state behind it. Clearing is a state too.
+    run {
         val line = FeatureCollection.fromFeatures(
             lines.filter { it.size >= 2 }.map { leg ->
                 Feature.fromGeometry(
@@ -732,7 +737,10 @@ private fun fitRouteOnce(
     // picked may be off-screen, and framing it is what makes a long press on a
     // far part of the map feel like it did something.
     if (polyline.size < 2) {
-        val target = destination ?: return
+        // Cancelled back to an empty map: forget what was framed, so planning
+        // the *same* trip again still moves the camera to it rather than
+        // deciding it is already showing.
+        val target = destination ?: run { fitKey.value = null; return }
         val key = target.hashCode()
         if (key == fitKey.value) return
         fitKey.value = key

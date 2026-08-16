@@ -57,6 +57,15 @@ class PlanViewModel(
      * `AppContainer.planRemainingLegs`.
      */
     private val onLaterLegsNeeded: ((List<GeoPoint>, Destination) -> Unit)? = null,
+    /**
+     * Stop planning the rest of a trip and throw away what has been planned.
+     *
+     * Called from every path back to browsing. Without it a cancelled trip kept
+     * planning in the background and kept its legs on the map — reported as
+     * *"when I cancel a route it needs to cancel the leg calculations too. In
+     * fact, the route needs to disappear, it hasn't done that this whole time"*.
+     */
+    private val onLaterLegsAbandoned: (() -> Unit)? = null,
     /** Reads the car's remaining range; absent, no range warning is shown. */
     private val rangeReader: VehicleRangeReader? = null,
     /** Finds a charging stop on the way; absent, the offer isn't made. */
@@ -78,6 +87,7 @@ class PlanViewModel(
     val state: StateFlow<PlanUiState> = _state.asStateFlow()
 
     private var searchJob: Job? = null
+    private var legsJob: Job? = null
 
     /**
      * The last push found a car that takes only a single destination. Remembered
@@ -653,7 +663,7 @@ class PlanViewModel(
     /** Cancel the drive (user tapped cancel). The activity stops the service. */
     fun onStopDrive() {
         if (_state.value.phase is Phase.Driving) {
-            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false).clearedOfCharging() }
+            backToBrowsing()
         }
     }
 
@@ -672,7 +682,7 @@ class PlanViewModel(
     /** The monitor reported arrival; leave the driving phase. */
     fun onArrived() {
         if (_state.value.phase is Phase.Driving) {
-            _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false).clearedOfCharging() }
+            backToBrowsing()
         }
     }
 
@@ -695,7 +705,29 @@ class PlanViewModel(
 
     /** Back to browsing (dismiss the chooser / clear an error). */
     fun onDismissResult() {
-        _state.update { it.copy(phase = Phase.Browsing, query = "", suggestions = emptyList(), rangeCheck = null, chargeStopSearchFailed = false).clearedOfCharging() }
+        backToBrowsing()
+    }
+
+    /**
+     * Back to an empty map, with nothing still running.
+     *
+     * The single way out of every non-browsing phase, because leaving by any
+     * other door is how a cancelled trip came to keep planning its later legs in
+     * the background and keep drawing them. Cancelling has to mean cancelling.
+     */
+    private fun backToBrowsing() {
+        legsJob?.cancel()
+        onLaterLegsAbandoned?.invoke()
+        _state.update {
+            it.copy(
+                phase = Phase.Browsing,
+                query = "",
+                suggestions = emptyList(),
+                rangeCheck = null,
+                chargeStopSearchFailed = false,
+                laterLegs = emptyList(),
+            ).clearedOfCharging()
+        }
     }
 
     /**

@@ -376,6 +376,23 @@ class AppContainer(context: Context) {
      * itself as unfinished — which is bad, but is not the same as being stranded,
      * and is far better than blocking Go on the whole trip.
      */
+    /**
+     * Stop planning the rest of a trip and throw away what has been planned.
+     *
+     * Everything the trip left behind goes at once: the job, the legs the map is
+     * drawing, and anything queued for the drive monitor. A cancelled trip that
+     * kept a leg in the channel would have handed it to the *next* drive.
+     */
+    fun cancelRemainingLegs() {
+        legJob?.cancel()
+        legJob = null
+        laterLegs.value = emptyList()
+        // Conflated, so at most one can be waiting — but draining is what makes
+        // this true regardless of the channel's capacity.
+        while (legExtensions.tryReceive().isSuccess) Unit
+        liveDrivePlan.value = null
+    }
+
     fun planRemainingLegs(points: List<GeoPoint>, destination: Destination) {
         legJob?.cancel()
         laterLegs.value = emptyList()
@@ -444,6 +461,7 @@ class AppContainer(context: Context) {
 
     private fun planViewModel(): PlanViewModel = PlanViewModel(
         onLaterLegsNeeded = { points, destination -> planRemainingLegs(points, destination) },
+        onLaterLegsAbandoned = { cancelRemainingLegs() },
         log = { message, points ->
             diagnostics.record(
                 DiagnosticLog.Kind.PLAN,
