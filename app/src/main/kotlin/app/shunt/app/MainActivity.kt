@@ -117,6 +117,7 @@ class MainActivity : ComponentActivity() {
                 val laterLegs by container.laterLegs.collectAsStateWithLifecycle()
                 val planningLaterLegs by container.planningLaterLegs.collectAsStateWithLifecycle()
                 val trimmedLead by container.trimmedLeadPolyline.collectAsStateWithLifecycle()
+                val aimedAt by container.aimedAt.collectAsStateWithLifecycle()
 
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
@@ -136,6 +137,7 @@ class MainActivity : ComponentActivity() {
                         laterLegs = laterLegs,
                         planningLaterLegs = planningLaterLegs,
                         trimmedLeadPolyline = trimmedLead,
+                        aimedAt = aimedAt,
                     ),
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,

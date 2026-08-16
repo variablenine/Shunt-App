@@ -163,9 +163,45 @@ private const val PENDING_FRAME_MILLIS = 90L
  */
 private const val PENDING_MIN_METERS = 1_000.0
 
+/**
+ * How long after the driver last moved the map before it resumes framing the
+ * drive itself. See [frameDrive].
+ *
+ * Long enough to look at something — the road ahead, a camera a mile off — and
+ * short enough that the map is useful again without being asked. Erring long is
+ * the safe direction: taking the map back too early is the app overriding a
+ * deliberate action, which is the thing §6.1 is about.
+ */
+private const val FOLLOW_RESUME_MILLIS = 12_000L
+
+/** How often the follow camera re-frames. Slow: each one is an animation. */
+private const val FOLLOW_TICK_MILLIS = 3_000L
+
+/**
+ * Padding around the driver-and-next-pin box, as a fraction of the view.
+ *
+ * Generous at the bottom because the driving sheet covers it, and because what
+ * a driver needs to see is the road *ahead* rather than an evenly centred box.
+ */
+private const val FOLLOW_PADDING_FRACTION = 0.22
+
+/** Never zoom in past this framing two points that are almost the same place. */
+private const val FOLLOW_MAX_ZOOM = 16.5
+
 /** Place-name layers Shunt adds to the basemap. See [addPlaceLabels]. */
 private const val POI_LAYER = "shunt-poi-labels"
 private const val PARK_LAYER = "shunt-park-labels"
+
+/**
+ * The dot under each place name, marking where the place actually is.
+ *
+ * A floating label says roughly *around here*, which on a map you are using to
+ * find a turn is not the same thing at all — the name can sit a car's length
+ * off, or on the wrong side of a road. Reported as missing: "the little
+ * locations that show up on the map should have little dots or something to
+ * indicate where they are currently."
+ */
+private const val POI_DOT_LAYER = "shunt-poi-dots"
 
 /**
  * The vector source the basemap already draws from, and the layers inside it
@@ -294,6 +330,13 @@ fun RouteMap(
      * nowhere.
      */
     planningAhead: Boolean = false,
+    /**
+     * The pin the car is currently aiming at, while a drive is running.
+     *
+     * Non-null turns on [followDrive] — the map keeps the driver and this point
+     * both in frame instead of sitting wherever it was last left.
+     */
+    followTo: GeoPoint? = null,
 ) {
     val routeLines = listOf(routePolyline) + laterLegLines
     val context = LocalContext.current
@@ -304,6 +347,12 @@ fun RouteMap(
         MapLibre.getInstance(context)
         MapView(context)
     }
+
+    // When the driver last moved the map themselves. Any pan, zoom or rotate
+    // suspends the automatic framing below — a map that snaps back while
+    // somebody is looking ahead at their route is the §6.1 mistake in
+    // miniature, overriding something they just did on purpose.
+    var touchedAt by remember { mutableStateOf(0L) }
     var style by remember { mutableStateOf<Style?>(null) }
     var viewportCameras by remember { mutableStateOf<List<MapCamera>>(emptyList()) }
     var selectedCamera by remember { mutableStateOf<MapCamera?>(null) }
@@ -348,6 +397,15 @@ fun RouteMap(
                 // we can fetch the cameras now visible.
                 map.addOnCameraIdleListener {
                     requestedBounds = runCatching { map.visibleBounds() }.getOrNull()
+                }
+                // Only *gesture*-driven movement counts as the driver taking
+                // over. Using onCameraMove instead would have the follow camera
+                // treat its own easing as a manual pan and switch itself off on
+                // the first frame.
+                map.addOnCameraMoveStartedListener { reason ->
+                    if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) {
+                        touchedAt = System.currentTimeMillis()
+                    }
                 }
                 // Tap a charger to add it, or a camera dot to see its details.
                 // Chargers are tested first: they are the smaller, deliberate
@@ -424,6 +482,24 @@ fun RouteMap(
         }
     }
 
+    // Keep the driver and the pin they are heading for both on screen.
+    //
+    // Reported as missing: "as someone is moving along the route, the app should
+    // automatically adjust the map zoom and position to include the driver
+    // marker and the next waypoint, but only if the driver hasn't touched the
+    // map positioning or zoom after a certain amount of time."
+    LaunchedEffect(followTo, hasLocationPermission, showLocation) {
+        val target = followTo
+        if (target == null || !showLocation || !hasLocationPermission) return@LaunchedEffect
+        while (true) {
+            val idleFor = System.currentTimeMillis() - touchedAt
+            if (idleFor >= FOLLOW_RESUME_MILLIS) {
+                frameDrive(mapView, target)
+            }
+            delay(FOLLOW_TICK_MILLIS)
+        }
+    }
+
     // Once we have a location fix and no route is shown, center on the user so
     // the nearby cameras load without them having to pan there first.
     LaunchedEffect(showLocation, hasLocationPermission, routePolyline.size) {
@@ -453,6 +529,48 @@ fun RouteMap(
                 onClose = { selectedCamera = null },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp),
             )
+        }
+    }
+}
+
+/**
+ * Put the driver and the point they are heading for both on screen.
+ *
+ * Deliberately a *fit* rather than a follow-the-dot camera. Centring on the car
+ * and holding a zoom is what most navigation apps do, and it answers "where am
+ * I"; the question this app exists to answer is "where am I going and what is
+ * between me and it", which is a question about the gap between two points. So
+ * the frame is the box containing both, and it tightens by itself as the car
+ * closes on the pin.
+ *
+ * Silent about failure on purpose: it runs on a timer, and a map that is not
+ * laid out yet or has no fix yet is an ordinary state, not an error.
+ */
+private fun frameDrive(view: MapView, target: GeoPoint) {
+    runCatching {
+        view.getMapAsync { map ->
+            runCatching {
+                val here = map.locationComponent.lastKnownLocation ?: return@getMapAsync
+                val bounds = LatLngBounds.Builder()
+                    .include(LatLng(here.latitude, here.longitude))
+                    .include(LatLng(target.lat, target.lon))
+                    .build()
+                val pad = (minOf(view.width, view.height) * FOLLOW_PADDING_FRACTION).toInt()
+                    .coerceAtLeast(1)
+                val update = CameraUpdateFactory.newLatLngBounds(bounds, pad, pad, pad, pad)
+                // Cap the zoom rather than the padding: two points a hundred
+                // metres apart would otherwise fill the screen with one junction
+                // and no context at all.
+                val camera = map.getCameraForLatLngBounds(bounds, intArrayOf(pad, pad, pad, pad))
+                if (camera != null && camera.zoom > FOLLOW_MAX_ZOOM) {
+                    map.easeCamera(
+                        CameraUpdateFactory.newLatLngZoom(camera.target!!, FOLLOW_MAX_ZOOM),
+                        FOLLOW_TICK_MILLIS.toInt() / 3,
+                    )
+                } else {
+                    map.easeCamera(update, FOLLOW_TICK_MILLIS.toInt() / 3)
+                }
+            }
         }
     }
 }
@@ -790,8 +908,10 @@ private fun addPlaceLabels(style: Style) {
             PropertyFactory.textHaloColor("rgba(0,0,0,0.85)"),
             PropertyFactory.textHaloWidth(1.2f),
             PropertyFactory.textMaxWidth(8f),
+            // Anchored above the point with the label pushed down, so the dot
+            // sits where the place is and the name hangs beneath it.
             PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
-            PropertyFactory.textOffset(arrayOf(0f, 0.4f)),
+            PropertyFactory.textOffset(arrayOf(0f, 0.55f)),
             // Left at the default (false), which is what makes MapLibre thin
             // the labels out as they collide. A dense high street would
             // otherwise draw every name on top of every other.
@@ -809,20 +929,48 @@ private fun addPlaceLabels(style: Style) {
         style.addLayer(parks)
     }
 
+    // The dot itself, under the POI names. Small and dim by design: it marks a
+    // position, and it shares the map with camera dots that a driver is
+    // actually looking for. Anything more prominent would compete with them.
+    runCatching {
+        val dots = CircleLayer(POI_DOT_LAYER, BASEMAP_SOURCE).apply {
+            setSourceLayer(POI_SOURCE_LAYER)
+            minZoom = POI_MIN_ZOOM
+            withProperties(
+                PropertyFactory.circleRadius(2.2f),
+                PropertyFactory.circleColor("rgb(150,150,145)"),
+                PropertyFactory.circleOpacity(0.8f),
+                // A dark ring so a dot on a pale road is still a dot.
+                PropertyFactory.circleStrokeWidth(0.8f),
+                PropertyFactory.circleStrokeColor("rgba(0,0,0,0.8)"),
+            )
+        }
+        dots.setFilter(poiVisible())
+        style.addLayer(dots)
+    }
+
     runCatching {
         val poi = label(POI_LAYER, POI_SOURCE_LAYER, POI_MIN_ZOOM, 11f, "rgb(190,190,185)")
         // Hold the least significant back for two more zoom levels. Without
         // this, zooming to a town centre paints a solid block of text over the
         // very roads the route is drawn on.
-        poi.setFilter(
-            Expression.any(
-                Expression.gte(Expression.zoom(), Expression.literal(POI_MIN_ZOOM + 2f)),
-                Expression.lt(Expression.toNumber(Expression.get("rank")), Expression.literal(POI_RANK_LIMIT)),
-            ),
-        )
+        poi.setFilter(poiVisible())
         style.addLayer(poi)
     }
 }
+
+/**
+ * Which POIs are worth drawing at all — shared by the dots and the names so the
+ * two can never disagree about what is on the map.
+ *
+ * Below two zoom levels above [POI_MIN_ZOOM] only the significant ones show,
+ * because a town centre at z14 is otherwise a solid block of text over the very
+ * roads the route runs on.
+ */
+private fun poiVisible(): Expression = Expression.any(
+    Expression.gte(Expression.zoom(), Expression.literal(POI_MIN_ZOOM + 2f)),
+    Expression.lt(Expression.toNumber(Expression.get("rank")), Expression.literal(POI_RANK_LIMIT)),
+)
 
 private fun straightenOneWayArrows(style: Style, context: Context) {
     // Our own arrow, drawn pointing +X, replaces the basemap's.

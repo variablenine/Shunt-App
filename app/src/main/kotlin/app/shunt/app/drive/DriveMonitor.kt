@@ -48,6 +48,14 @@ class DriveMonitor(
      */
     private val onActivity: (DriveActivity) -> Unit = {},
     /**
+     * The pin the car is aiming at right now, republished as it advances.
+     *
+     * For the map, which frames the driver and this point together so the
+     * stretch being driven is always the stretch on screen. Read-only: nothing
+     * here acts on it, so a listener that misses one has lost nothing.
+     */
+    private val onAim: (GeoPoint?) -> Unit = {},
+    /**
      * Works out a fresh camera-aware plan from the vehicle's current position
      * when it has left the planned route, or null if it can't. Absent, leaving
      * the route is still detected and alerted — just not recovered from.
@@ -195,6 +203,7 @@ class DriveMonitor(
                     offRoute = engine.isOffRoute,
                 )
                 previous = update
+                onAim(engine.remainingChain().firstOrNull())
                 if (!due) return@collect
 
                 onActivity(DriveActivity.CheckingCharging)

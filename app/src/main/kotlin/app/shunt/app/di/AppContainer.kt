@@ -340,6 +340,12 @@ class AppContainer(context: Context) {
     val liveDrivePlan = MutableStateFlow<DrivePlan?>(null)
 
     /**
+     * The pin the car is aiming at right now, so the map can keep it and the
+     * driver in frame together. Null when no drive is running.
+     */
+    val aimedAt = MutableStateFlow<GeoPoint?>(null)
+
+    /**
      * Legs planned after the driver set off, on their way to the drive monitor.
      *
      * Conflated because only the newest matters: each extension carries the

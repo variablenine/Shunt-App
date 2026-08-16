@@ -84,6 +84,9 @@ class DriveMonitorService : Service() {
                 container.driveStatus.value = status
                 if (status is DriveStatus.Arrived) stopSelf()
             },
+            // For the map's follow camera: it frames the driver and this point
+            // together, so the stretch being driven is the stretch on screen.
+            onAim = { container.aimedAt.value = it },
             // Leaving the route voids the camera avoidance, so recover it:
             // re-plan on-device from where the car actually is.
             replan = { from, heading, blocked ->

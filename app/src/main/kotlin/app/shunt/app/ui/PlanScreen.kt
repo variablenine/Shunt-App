@@ -145,6 +145,9 @@ fun PlanScreen(
             onLongPress = actions.onMapLongPress.takeIf { state.phase is Phase.Browsing },
             destination = destinationOf(state.phase),
             planningAhead = state.planningLaterLegs,
+            // Only while driving. Framing the trip against a pin the driver has
+            // not set off toward would take the map away from them for nothing.
+            followTo = state.aimedAt.takeIf { state.phase is Phase.Driving },
         )
 
         // Whether the search panel is expanded over the map.

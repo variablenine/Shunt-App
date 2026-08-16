@@ -138,6 +138,11 @@ data class PlanUiState(
      * See `LegJoin`.
      */
     val trimmedLeadPolyline: List<GeoPoint>? = null,
+    /**
+     * The pin the car is aiming at while a drive is running, for the map's
+     * follow camera. Null when nothing is being driven.
+     */
+    val aimedAt: GeoPoint? = null,
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

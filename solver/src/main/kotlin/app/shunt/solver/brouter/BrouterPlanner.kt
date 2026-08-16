@@ -241,7 +241,23 @@ class BrouterPlanner(
         // every trip paid for the whole search twice.
         onProgress(0.15f, "Finding the direct route")
         startedAt = nowMillis()
-        val direct = runRoutes(points, emptyList(), headingDegrees, blocked, budgetLeft())
+        // **Capped, and that cap is what keeps a very long trip plannable at
+        // all.** This pass is cheap relative to an avoidance pass, but it is
+        // over the *whole* trip while everything after it works on one leg — so
+        // on a cross-country route it is the expensive one. Measured on a real
+        // 3,598 km trip: 64 s of a 71 s plan.
+        //
+        // Given the whole budget it can take the whole budget, and then every
+        // pass that follows gets the 1 ms floor and dies. The driver sees "No
+        // route found — the offline map for this area may be incomplete", which
+        // is not what happened and sends them to re-download tiles they already
+        // have. Running out here is *recoverable* — the spine falls back to the
+        // straight line below, which only costs a fatter corridor — so this is
+        // exactly the pass to take time away from.
+        val direct = runRoutes(
+            points, emptyList(), headingDegrees, blocked,
+            (budgetLeft() * SPINE_BUDGET_SHARE).toLong().coerceAtLeast(1L),
+        )
         routingMillis += nowMillis() - startedAt
         routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
         var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
@@ -340,7 +356,7 @@ class BrouterPlanner(
                 if (pass == 0) timed else timed.copy(label = "${timed.label} (widen ${pass + 1})")
             }
             routes = fresh ?: return PlanOutcome.Failed("Routing failed.")
-            if (routes.isEmpty()) return noRoute()
+            if (routes.isEmpty()) return noRoute(anyPassRanOut(routingPasses))
             if (avoidanceCount(routes) > avoidanceCount(carried)) carried = routes
 
             val escaping = routes.filterNot { withinCorridor(it.polyline, spine) }
@@ -668,10 +684,32 @@ class BrouterPlanner(
     private fun avoidanceCount(routes: List<BrouterRoute>): Int =
         routes.count { it.choice != RouteChoice.FASTEST }
 
-    private fun noRoute(): PlanOutcome {
+    /**
+     * No route came back.
+     *
+     * [ranOutOfTime] separates the two reasons, and getting that wrong is worse
+     * than unhelpful: a driver told "the offline map for this area may be
+     * incomplete" goes and re-downloads tiles they already have, for a trip that
+     * simply needed longer to think about. The passes themselves say which it
+     * was — a search that hit its ceiling is labelled, so this reads the labels
+     * rather than guessing.
+     */
+    private fun noRoute(ranOutOfTime: Boolean = false): PlanOutcome {
         val detail = diagnostics()?.takeIf { it.isNotBlank() }?.let { "\n\n[$it]" } ?: ""
-        return PlanOutcome.Failed("No route found — the offline map for this area may be incomplete.$detail")
+        return PlanOutcome.Failed(
+            if (ranOutOfTime) {
+                "Planning ran out of time on this trip — it's long enough that the " +
+                    "search couldn't finish. Try again, or pick a nearer destination " +
+                    "and extend it once you're moving."
+            } else {
+                "No route found — the offline map for this area may be incomplete.$detail"
+            },
+        )
     }
+
+    /** Whether any search in this plan hit its ceiling rather than finishing. */
+    private fun anyPassRanOut(passes: List<PlanTimings.Timed>): Boolean =
+        passes.any { "out of time" in it.label || "over budget" in it.label }
 
     companion object {
         /** Pad the origin→destination box so an avoidance detour stays covered. */
@@ -721,6 +759,23 @@ class BrouterPlanner(
 
         /** How many times to widen the camera area to cover a detouring route. */
         private const val MAX_REFINEMENT_PASSES = 4
+
+        /**
+         * The share of a plan's budget the direct-road pass may spend.
+         *
+         * It runs over the *whole* trip while every pass after it works on one
+         * leg, so on a cross-country route it is the expensive search rather
+         * than the cheap one — 64 s of a 71 s plan, measured on a real 3,598 km
+         * trip. Left uncapped it can spend everything and leave the passes that
+         * actually decide the route with the 1 ms floor, which comes back to the
+         * driver as "no route found".
+         *
+         * A third is deliberately generous to what follows, because running out
+         * *here* costs little: the spine falls back to the straight line between
+         * the trip's points, and the only consequence is a corridor drawn around
+         * a cruder shape. Every other pass failing has no fallback at all.
+         */
+        private const val SPINE_BUDGET_SHARE = 0.33
 
         /** One spine point per this much road. See `sampleSpine`. */
         private const val SPINE_SAMPLE_METERS = 5_000.0

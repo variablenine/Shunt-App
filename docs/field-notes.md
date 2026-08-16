@@ -1554,6 +1554,96 @@ to fix against.
 
 ---
 
+### F-27 · "No route found" on a very long trip
+*Observed: 2026-08-16, routing to San Francisco. Cause identified, fixed;
+unconfirmed.*
+
+The plan failed outright — "No route found — the offline map for this area may be
+incomplete" — with a diagnostic listing thirty-odd tiles all present, including
+the ones covering the destination. The message was wrong twice over: the map was
+complete, and re-downloading it would have changed nothing.
+
+**The clock ran out, and the spine took it.** The direct-road pass runs over the
+*whole* trip while every pass after it works on a single leg, so on a
+cross-country route it is the expensive search rather than the cheap one — the
+app's own breakdown, from the screenshot before this one, reads
+`fastest (spine) 1 m 04 s` of a `1 m 11 s` plan on a 3,598 km trip. It was given
+`budgetLeft()`, meaning all of it. A slightly harder trip spends the lot, every
+pass after it gets the 1 ms floor, even the trivially cheap `fastest` pass times
+out, `routes` comes back empty, and that is reported as no route existing.
+
+Two fixes, and the second matters as much as the first:
+
+- **`SPINE_BUDGET_SHARE`** caps that pass at a third of the plan's budget.
+  Running out *there* is recoverable in a way running out anywhere else is not:
+  the spine falls back to the straight line between the trip's points, and the
+  only cost is a corridor drawn around a cruder shape. Every other pass failing
+  has no fallback at all, so this is exactly the pass to take time from.
+- **The failure now says which failure it was.** Blaming the offline map for a
+  timeout sends somebody to re-download hundreds of megabytes they already have.
+  The passes label themselves when they hit a ceiling, so the message reads
+  those labels rather than guessing.
+
+Worth noting for whoever picks this up: the trip that *succeeded* minutes earlier
+took 1 m 11 s of a 75 s budget, which is to say it was already at the edge. Trips
+of this length are working with almost no margin, and the real answer at the top
+end is probably to cut the trip before planning the spine over all of it rather
+than after.
+
+---
+
+### F-28 · Paragraphs on a screen someone is driving past
+*Observed: 2026-08-16. Fixed.*
+
+> On a navigation app we cant have long paragraphs and lots of words to read when
+> someone's driving. It needs to be simplified, and just give the data. The fsd
+> warning needs to be simplified to get the message across, because no driver is
+> going to be reading a whole paragraph about the limitations.
+
+The FSD caveat was five lines carefully explaining which parts of the vehicle
+path are proven. It is now one: *"FSD nav is in early testing — stay ready to
+take over."* That is not a weaker warning. **A paragraph shown to a driver is
+weaker than a sentence, because it does not get read at all** — the detail was
+protecting the project, not the person.
+
+Same pass over the result sheet: the leg banner explaining *why* Shunt splits
+long trips became `3598 km total · rest planned as you drive`; "Still planning
+the rest — these numbers grow as each leg lands" became `still planning…`; the
+camera block's three-sentence explanations became a phrase each. Every number
+survived. The rule is now written down in CLAUDE.md §9 so it does not have to be
+rediscovered: on the map and the driving screens, the number and the noun;
+reasons go where somebody is sitting still.
+
+---
+
+### F-29 · The map does not follow the drive
+*Observed: 2026-08-16. Fixed; unconfirmed on a drive.*
+
+> as someone is moving along the route, the app should automatically adjust the
+> map zoom and position to include the driver marker and the next waypoint, but
+> only if the driver hasn't touched the map positioning or zoom after a certain
+> amount of time.
+
+Implemented as a **fit rather than a follow-the-dot camera**, which is the one
+design decision here worth arguing. Centring on the car at a fixed zoom is what
+most navigation apps do and it answers "where am I". The question this app exists
+to answer is "where am I going, and what is between me and it" — a question about
+the gap between two points. So the frame is the box containing the driver and the
+pin the car is aiming at, and it tightens by itself as the car closes on it.
+
+The pin comes from a new `onAim` callback on `DriveMonitor`, published as the
+chain advances, so the map is always framing the stretch actually being driven.
+
+**Any gesture suspends it for `FOLLOW_RESUME_MILLIS`.** That is the §6.1 rule
+applied to the screen rather than the car: a map that snaps back while somebody
+is deliberately looking a few miles ahead is the app overriding a person, and
+being right about the framing does not make it less annoying. Only
+`REASON_API_GESTURE` counts — listening to camera movement generally would have
+the follow camera read its own easing as a manual pan and switch itself off on
+the first frame.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

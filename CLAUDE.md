@@ -1526,6 +1526,57 @@ cannot be undone by a follow-up commit.
 
 ---
 
+### Where this is heading (stated by the maintainer, August 2026)
+
+Recorded because it shapes what "finished" means, **not** as licence to start any
+of it. None of this should drive a decision on its own.
+
+> I have a long term goal of making this app somewhat like waze, but with a
+> modern (almost tron like) sleek electrical theme. Eventually I am going to want
+> to give the user the ability to connect their osm account and be able to easily
+> add flock cameras they come across as they drive, in the same way that Waze
+> lets you report hidden police officers as you drive. Maybe something that lets
+> you mark it down and then after your drive you can go back and make edits,
+> where precisely it was, which direction it was facing, etc and then confirm.
+> That is all for much later though, long after we have made the beta release.
+
+Three things follow that are worth holding now, because they are cheap now and
+expensive later:
+
+- **Report-then-refine is the right shape** for camera contribution. A driver at
+  70 mph can press one button; direction, exact position and tags are a job for
+  afterwards, sitting still. Anything built here should capture a rough mark
+  cheaply and edit it later, never demand accuracy at the moment of sighting.
+- **An OSM account is the one credential that does not break §3.** It is the
+  user's own, it grants nothing to this project, and it cannot be revoked *at*
+  us — the same shape as the optional Tessie connection. Contributing back to
+  OSM is also the answer this project already gives to missing places and
+  untagged crossovers, so it closes a loop rather than opening one.
+- **The visual direction is a theme, not a rewrite.** The map is already dark and
+  the accent colours already read as electrical. Whatever happens there must not
+  cost legibility at a glance — see the driving-text rule below.
+
+### Text a driver has to read is a safety surface
+
+> On a navigation app we cant have long paragraphs and lots of words to read when
+> someone's driving. It needs to be simplified, and just give the data.
+
+Taken as a standing rule rather than a one-off tidy-up. **A paragraph shown to
+someone driving is not a stronger warning than a sentence — it is a weaker one,
+because it does not get read.** The FSD caveat was five lines explaining exactly
+which parts are unproven; it is now one line, and it is more likely to do its job.
+
+The rule, concretely:
+
+- Anything on the map, the result sheet, or the driving sheet gets **the number
+  and the noun**. Reasons, caveats and history go to settings, the README or the
+  field notes, where somebody is sitting still.
+- The exception is a choice the driver is actively making — the camera list on
+  the result sheet is long *because* it is the thing being decided.
+- Settings screens may be as wordy as they need to be. Nobody reads those at
+  70 mph, and the ones that change what the app believes about the world
+  (practice cameras, camera reach) have to explain themselves.
+
 ## 10. Roadmap
 
 Ordered roughly by what unblocks real use.

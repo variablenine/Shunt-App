@@ -525,6 +525,48 @@ round where the passes read "gave up — out of time".
 
 ---
 
+### D10 · A very long trip plans at all
+*Fixed 2026-08-16.*
+
+**Setup.** Plan a trip of 3,000 km or more, across the country.
+
+**Pass.** A chooser appears for the first leg. If planning genuinely cannot
+finish it says so in those words.
+
+**Fail (as reported).** "Couldn't plan this trip — No route found — the offline
+map for this area may be incomplete", listing tiles that are all present. That
+message means the map; if you see it with the tiles there, the real cause was the
+clock and the message is lying.
+
+---
+
+### C5 · The map follows the drive without fighting you
+*Fixed 2026-08-16.*
+
+**Setup.** Start a drive and leave the map alone. Then pan away deliberately and
+wait.
+
+**Pass.** The map keeps your marker and the next pin both in frame, tightening as
+you approach. When you pan away it stays where you put it, and resumes framing
+about twelve seconds after you stop touching it.
+
+**Fail.** The map snapping back while you are still moving it, or never resuming.
+The first is the worse one — that is the app overriding you.
+
+---
+
+### D11 · Nothing on a driving screen takes more than a glance
+*Added 2026-08-16.*
+
+**Setup.** Look at the result sheet and the driving sheet as if at a set of
+lights.
+
+**Pass.** Numbers and short labels. The FSD line is one sentence.
+
+**Fail.** Any paragraph. Reasons and caveats belong in settings or the README.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the
