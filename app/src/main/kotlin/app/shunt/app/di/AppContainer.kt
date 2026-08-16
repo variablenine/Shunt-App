@@ -27,6 +27,9 @@ import app.shunt.solver.geo.BoundingBox
 import app.shunt.app.diag.DiagnosticLog
 import app.shunt.core.GeoPoint
 import app.shunt.app.plan.Destination
+import app.shunt.solver.brouter.CameraIndex
+import app.shunt.solver.brouter.CameraVision
+import app.shunt.solver.brouter.RouteRequest
 import app.shunt.solver.brouter.LegJoin
 import app.shunt.solver.brouter.LegSplitter
 import app.shunt.solver.brouter.PlannedRoute
@@ -508,11 +511,25 @@ class AppContainer(context: Context) {
                 val earlier = previousLegs.lastOrNull()?.polyline
                     ?: trimmedLeadPolyline.value
                     ?: leadPolyline
-                val trim = LegJoin.trimDoubleBack(earlier, chosen.polyline)
+                // Re-plan the neighbourhood of the boundary first, then fall
+                // back to trimming an exact retrace if that finds nothing.
+                //
+                // The boundary is a waypoint nobody asked for, chosen on the
+                // direct road before either leg existed, and both legs get bent
+                // to touch it — which draws a C around the line the trip
+                // actually wanted. A trim cannot help with that because no road
+                // is driven twice. Taking the constraint away and routing the
+                // few kilometres either side again can. See LegJoin.seamOf.
+                val seamed = rejoinAtBoundary(earlier, chosen.polyline)
+                val trim = seamed ?: LegJoin.trimDoubleBack(earlier, chosen.polyline)
                 if (trim.changed) {
                     diagnostics.record(
                         DiagnosticLog.Kind.PLAN,
-                        "trimmed a ${trim.savedMeters.toInt()} m double-back at the leg boundary",
+                        if (seamed != null) {
+                            "re-planned the leg boundary, saving ${trim.savedMeters.toInt()} m"
+                        } else {
+                            "trimmed a ${trim.savedMeters.toInt()} m double-back at the leg boundary"
+                        },
                     )
                     // Pins go with the road they were placed on. A pin left
                     // out on the removed spur is not untidy, it is a target the
@@ -565,6 +582,69 @@ class AppContainer(context: Context) {
             }
         }
     }
+
+    /**
+     * Route the few kilometres either side of a leg boundary again, without the
+     * boundary, and take the result only if it is better on **both** counts.
+     *
+     * The gain is real — the boundary is a constraint nobody asked for — but so
+     * is the risk, because this is the one place a route is assembled from two
+     * plans rather than produced by one. So the bar is deliberately high:
+     *
+     * - **Shorter**, by more than `MIN_SEAM_GAIN_METERS`, or the join was fine.
+     * - **No more cameras**, measured against the same set the legs were planned
+     *   against. A shorter join that picks up a camera is not an improvement on
+     *   this app, it is the opposite of the point.
+     * - **Drivable without pins.** The replacement is the *fastest* path through
+     *   the window, which is what the car takes when left alone — see below for
+     *   why that is the safe choice rather than the lazy one.
+     *
+     * Returns null on anything unexpected, which leaves the caller trimming as
+     * before. A join that is merely imperfect is a far better outcome than one
+     * assembled wrongly.
+     */
+    private suspend fun rejoinAtBoundary(
+        earlier: List<GeoPoint>,
+        next: List<GeoPoint>,
+    ): LegJoin.Trimmed? = runCatching {
+        val seam = LegJoin.seamOf(earlier, next) ?: return null
+        val bbox = BoundingBox.of(listOf(seam.from, seam.to))
+            .expand(BrouterPlanner.ROUTE_BBOX_MARGIN_METERS)
+        val cameras = camerasFor(bbox)
+        val scale = cameraRangePercent / 100.0
+        val visions = cameras.map { CameraVision(it.location, it.directionDegrees, scale) }
+
+        val replanned = withContext(Dispatchers.Default) {
+            brouterRouter.route(RouteRequest(listOf(seam.from, seam.to), visions))
+        }
+        // **The plain fastest road through the window, and that is the whole
+        // trick.**
+        //
+        // The obvious choice is the fewest-cameras option, and it is wrong here.
+        // A replacement seam is new road that carries **no pins** — the pins that
+        // were in this window belonged to the geometry being replaced, and
+        // producing new ones would mean running the refiner over the seam, which
+        // is a routing pass per candidate on a leg being planned in the
+        // background. Without pins the car drives the window its own way, so a
+        // seam that is only camera-free *because of avoidance routing* would be
+        // exactly the road the car does not take.
+        //
+        // Splicing the fastest path removes that gap entirely: it is what the
+        // car does unaided, so it needs no pins to be honoured. The safety comes
+        // from the test below instead — it is accepted only if the road the car
+        // would take anyway is no worse than what it drives today.
+        val fastest = replanned.firstOrNull { it.choice == RouteChoice.FASTEST } ?: return null
+
+        // What the old join passes, so "no worse" is measured rather than
+        // assumed. Both windows come from routes already planned against this
+        // same camera set, so this is like for like.
+        val index = CameraIndex(visions)
+        val before = index.seeing(earlier.subList(seam.fromIndex, earlier.size)).size +
+            index.seeing(next.subList(0, seam.toIndex + 1)).size
+        if (fastest.distinctCamerasPassed > before) return null
+
+        LegJoin.spliceSeam(earlier, next, seam, fastest.polyline) ?: return null
+    }.getOrNull()
 
     /**
      * Every known camera in a map viewport, for the DeFlock-style display.

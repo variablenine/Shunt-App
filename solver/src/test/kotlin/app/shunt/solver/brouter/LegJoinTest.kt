@@ -141,4 +141,78 @@ class LegJoinTest {
         assertTrue(!LegJoin.trimDoubleBack(line, emptyList()).changed)
         assertTrue(!LegJoin.trimDoubleBack(listOf(origin), line).changed)
     }
+
+    @Test
+    fun `the seam window is a real stretch either side of the boundary`() {
+        // The window has to reach back into the first leg and forward into the
+        // second, because a boundary that bends the route bends it on both
+        // sides — re-planning only one of them leaves half the C in place.
+        val previous = run(origin, 90.0, 1_000.0, 40) // 39 km east
+        val next = run(previous.last(), 0.0, 1_000.0, 40) // 39 km north
+
+        val seam = LegJoin.seamOf(previous, next)
+
+        assertTrue(seam != null, "a 39 km leg is long enough to give up a window")
+        assertTrue(seam!!.fromIndex in 1 until previous.lastIndex, "the window must start inside the first leg")
+        assertTrue(seam.toIndex in 1 until next.lastIndex, "and end inside the second")
+        assertTrue(seam.currentMeters > 0.0, "and describe road that is currently driven")
+    }
+
+    @Test
+    fun `a leg too short to give up a window is left alone`() {
+        // A leg that is mostly seam has nothing left to be a leg, and this must
+        // never quietly turn into re-planning the whole thing.
+        val previous = run(origin, 90.0, 200.0, 5) // 800 m
+        val next = run(previous.last(), 0.0, 200.0, 5)
+
+        assertTrue(LegJoin.seamOf(previous, next) == null)
+    }
+
+    @Test
+    fun `splicing a shorter path through the seam joins both legs cleanly`() {
+        // The C: out east, then north. A straight diagonal between the window
+        // ends is shorter, which is exactly the shape a boundary produces and
+        // that trimDoubleBack cannot touch — no road is driven twice.
+        val previous = run(origin, 90.0, 1_000.0, 40)
+        val next = run(previous.last(), 0.0, 1_000.0, 40)
+        val seam = LegJoin.seamOf(previous, next)!!
+        // The direct line between the window ends, sampled.
+        val direct = (0..20).map { i ->
+            GeoPoint(
+                seam.from.lat + (seam.to.lat - seam.from.lat) * i / 20.0,
+                seam.from.lon + (seam.to.lon - seam.from.lon) * i / 20.0,
+            )
+        }
+
+        val spliced = LegJoin.spliceSeam(previous, next, seam, direct)
+
+        assertTrue(spliced != null, "a shorter path through the seam must be taken")
+        assertTrue(spliced!!.savedMeters > 0, "and must report what it saved")
+        // The two legs must still meet, or the drive has a hole in it.
+        assertTrue(
+            haversineMeters(spliced.previous.last(), spliced.next.first()) < 1.0,
+            "the spliced legs must join exactly",
+        )
+        // Road outside the window is untouched.
+        assertEquals(previous.first(), spliced.previous.first())
+        assertEquals(next.last(), spliced.next.last())
+        assertTrue(
+            lengthOf(spliced.previous) + lengthOf(spliced.next) <
+                lengthOf(previous) + lengthOf(next),
+            "and the whole thing must get shorter",
+        )
+    }
+
+    @Test
+    fun `a seam replacement that saves nothing is refused`() {
+        // Two legs already going the same way have a straight seam, so a
+        // re-plan finds the same road back. Replacing it would be churn, and
+        // would move the boundary for no gain.
+        val previous = run(origin, 90.0, 1_000.0, 40)
+        val next = run(previous.last(), 90.0, 1_000.0, 40)
+        val seam = LegJoin.seamOf(previous, next)!!
+        val same = previous.subList(seam.fromIndex, previous.size) + next.subList(0, seam.toIndex + 1)
+
+        assertTrue(LegJoin.spliceSeam(previous, next, seam, same) == null)
+    }
 }

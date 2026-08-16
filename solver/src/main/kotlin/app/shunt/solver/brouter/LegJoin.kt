@@ -96,6 +96,126 @@ object LegJoin {
      */
     const val PIN_ON_ROUTE_METERS = 400.0
 
+    /**
+     * How far back into the previous leg, and forward into the next, a seam
+     * re-plan reaches.
+     *
+     * The window has to be wide enough that the re-plan has somewhere else to
+     * go — a few kilometres either side of the boundary is a junction or two,
+     * which is the scale at which a "C" around the direct road actually forms —
+     * and narrow enough that it is a cheap search and cannot quietly re-plan the
+     * whole leg.
+     */
+    const val SEAM_BACK_METERS = 12_000.0
+    const val SEAM_FORWARD_METERS = 12_000.0
+
+    /** Below this saving the seam is not worth replacing; the join was already fine. */
+    const val MIN_SEAM_GAIN_METERS = 500.0
+
+    /**
+     * The stretch either side of a leg boundary that a re-plan may replace.
+     *
+     * [from] and [to] are points both legs already drive through, so a path
+     * between them can be spliced in without inventing anything.
+     */
+    data class Seam(
+        val fromIndex: Int,
+        val toIndex: Int,
+        val from: GeoPoint,
+        val to: GeoPoint,
+        /** What the two legs currently drive between those points. */
+        val currentMeters: Double,
+    )
+
+    /**
+     * The window around the join of [previous] and [next] worth re-planning.
+     *
+     * **This is the fix the trim could not be.** `trimDoubleBack` removes an
+     * exact retrace — the second leg driving back down the first leg's own road
+     * — and nothing else. A boundary far more often produces a *loop*: the first
+     * leg bends out to touch a point on the direct road, the second leaves it by
+     * a different road, and the pair draw a C around the line the trip actually
+     * wanted. Reported that way: "it still isn't really taking an optimal route
+     * and making sort of a C around a more direct path."
+     *
+     * There is nothing to trim there, because no road is driven twice. The only
+     * thing wrong is the constraint itself — a waypoint nobody asked for, chosen
+     * before either route existed. So the answer is to take it away and route the
+     * neighbourhood again, which is what the maintainer proposed: "go back and
+     * redo further back up to a point there's not a bunch of waypoints around".
+     *
+     * Null when either leg is too short to give up a window — a leg that is
+     * mostly seam has nothing left to be a leg.
+     */
+    fun seamOf(
+        previous: List<GeoPoint>,
+        next: List<GeoPoint>,
+        backMeters: Double = SEAM_BACK_METERS,
+        forwardMeters: Double = SEAM_FORWARD_METERS,
+    ): Seam? {
+        if (previous.size < 2 || next.size < 2) return null
+        val fromIndex = indexWithinOfEnd(previous, backMeters)
+        val toIndex = indexWithinOfStart(next, forwardMeters)
+        // Both windows must be real. Zero means the leg was shorter than the
+        // window, and re-planning a whole leg through here is not what this is.
+        if (fromIndex <= 0 || toIndex >= next.lastIndex) return null
+        return Seam(
+            fromIndex = fromIndex,
+            toIndex = toIndex,
+            from = previous[fromIndex],
+            to = next[toIndex],
+            currentMeters = lengthOf(previous, fromIndex, previous.lastIndex) +
+                lengthOf(next, 0, toIndex),
+        )
+    }
+
+    /**
+     * [previous] and [next] with the seam replaced by [path].
+     *
+     * The join moves to wherever [path] crosses from one leg to the other, which
+     * is deliberately *not* the old boundary — that point was the problem. The
+     * split is made at the point of [path] nearest the old join so the two legs
+     * stay roughly the lengths they were planned to be; everything either side is
+     * untouched road.
+     */
+    fun spliceSeam(
+        previous: List<GeoPoint>,
+        next: List<GeoPoint>,
+        seam: Seam,
+        path: List<GeoPoint>,
+    ): Trimmed? {
+        if (path.size < 2) return null
+        val gain = seam.currentMeters - lengthOf(path, 0, path.lastIndex)
+        if (gain < MIN_SEAM_GAIN_METERS) return null
+
+        // Where the replacement should hand over from one leg to the other.
+        // Halfway along it by distance, which keeps the boundary near where the
+        // splitter meant it to be without pinning it to the point that bent the
+        // route in the first place.
+        val half = lengthOf(path, 0, path.lastIndex) / 2
+        var walked = 0.0
+        var handover = path.lastIndex / 2
+        for (i in 1..path.lastIndex) {
+            walked += haversineMeters(path[i - 1], path[i])
+            if (walked >= half) { handover = i; break }
+        }
+
+        val newPrevious = previous.subList(0, seam.fromIndex) + path.subList(0, handover + 1)
+        val newNext = path.subList(handover, path.size) + next.subList(seam.toIndex + 1, next.size)
+        if (newPrevious.size < 2 || newNext.size < 2) return null
+        return Trimmed(newPrevious, newNext, gain)
+    }
+
+    /** The last index of [line] within [meters] of its start, walking forward. */
+    private fun indexWithinOfStart(line: List<GeoPoint>, meters: Double): Int {
+        var walked = 0.0
+        for (i in 1..line.lastIndex) {
+            walked += haversineMeters(line[i - 1], line[i])
+            if (walked > meters) return i - 1
+        }
+        return line.lastIndex
+    }
+
     /** What came back from a trim: the two legs, and how much road it saved. */
     data class Trimmed(
         val previous: List<GeoPoint>,

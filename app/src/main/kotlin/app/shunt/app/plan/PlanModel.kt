@@ -233,6 +233,8 @@ sealed interface Phase {
          * claim that they are the best routes for it. See CLAUDE.md §7.10.
          */
         val carriedForward: Boolean = false,
+        /** The direct road onward from the leg boundary, for the pending line. */
+        val directAhead: List<GeoPoint> = emptyList(),
     ) : Phase {
         val chosen: PlannedRoute get() = options[selected.coerceIn(options.indices)]
     }

@@ -150,6 +150,9 @@ fun PlanScreen(
             // Only while driving. Framing the trip against a pin the driver has
             // not set off toward would take the map away from them for nothing.
             followTo = state.aimedAt.takeIf { state.phase is Phase.Driving },
+            // The direct road onward, so the pending stretch follows real roads
+            // instead of cutting across country.
+            directAhead = (state.phase as? Phase.Solved)?.directAhead.orEmpty(),
         )
 
         // Whether the search panel is expanded over the map.

@@ -85,6 +85,16 @@ sealed interface PlanOutcome {
          * plainly to the driver — see CLAUDE.md §7.10.
          */
         val carriedForward: Boolean = false,
+        /**
+         * The direct road onward from the leg boundary, when these options are
+         * only the first leg.
+         *
+         * Free — it is a slice of the spine that was planned to choose the cut —
+         * and it lets the map draw the part not yet planned along **roads that
+         * exist** rather than as a straight line across country. Each leg that
+         * lands then replaces a piece of it with the camera-avoiding version.
+         */
+        val directAhead: List<GeoPoint> = emptyList(),
     ) : PlanOutcome {
         /** Whether these options stop short of the destination. */
         val isPartial: Boolean get() = remaining.isNotEmpty()
@@ -307,6 +317,9 @@ class BrouterPlanner(
         }
         val legPoints: List<GeoPoint>
         val remaining: List<GeoPoint>
+        // Kept before the spine is truncated at the cut: this is the part the
+        // legs after this one will cover, and the map draws it while they do.
+        var directAhead: List<GeoPoint> = emptyList()
         if (cut == null) {
             legPoints = points
             remaining = emptyList()
@@ -314,6 +327,7 @@ class BrouterPlanner(
             val (first, rest) = LegSplitter.split(points, cut.point)
             legPoints = first
             remaining = rest
+            directAhead = spine.subList(cut.index, spine.size)
             spine = spine.subList(0, cut.index + 1)
         }
         // The trip's own length, for the banner. Taken from the spine when it
@@ -495,6 +509,7 @@ class BrouterPlanner(
             remaining = remaining,
             wholeTripMeters = wholeTripMeters,
             carriedForward = carriedForward,
+            directAhead = directAhead,
         )
     }
 

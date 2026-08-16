@@ -337,6 +337,8 @@ fun RouteMap(
      * both in frame instead of sitting wherever it was last left.
      */
     followTo: GeoPoint? = null,
+    /** The direct road onward from what is planned. See [renderPending]. */
+    directAhead: List<GeoPoint> = emptyList(),
 ) {
     val routeLines = listOf(routePolyline) + laterLegLines
     val context = LocalContext.current
@@ -470,15 +472,30 @@ fun RouteMap(
     // finished plan costs nothing — this is a redraw of a style layer several
     // times a second, and the phone is often planning routes on every other
     // core while it runs.
-    var pendingPhase by remember { mutableStateOf(0) }
     val pendingTail = remember(routeLines, destination, planningAhead) {
         if (!planningAhead) null else routeLines.lastOrNull { it.size >= 2 }?.lastOrNull()
     }
-    LaunchedEffect(pendingTail, destination) {
+    // **The dash phase is deliberately not Compose state.**
+    //
+    // It was, and that is what made the animation jump: every frame changed a
+    // `remember`ed value, which recomposed the whole `AndroidView` update block
+    // — re-running renderRoute, renderChargers, renderCameras and the fit check
+    // eleven times a second, each of them rebuilding GeoJSON for the entire
+    // route. The line stuttered because the map was being rebuilt underneath it.
+    //
+    // Setting one paint property on one layer is all this ever needed, so it is
+    // done straight to the style and Compose is not told about it at all.
+    LaunchedEffect(pendingTail, destination, style) {
+        val loaded = style ?: return@LaunchedEffect
         if (pendingTail == null || destination == null) return@LaunchedEffect
+        var phase = 0
         while (true) {
             delay(PENDING_FRAME_MILLIS)
-            pendingPhase = (pendingPhase + 1) % PENDING_DASHES.size
+            phase = (phase + 1) % PENDING_DASHES.size
+            runCatching {
+                loaded.getLayerAs<LineLayer>(PENDING_LAYER)
+                    ?.setProperties(PropertyFactory.lineDasharray(PENDING_DASHES[phase]))
+            }
         }
     }
 
@@ -517,7 +534,7 @@ fun RouteMap(
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
             renderRoute(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
-            renderPending(loadedStyle, pendingTail, destination, pendingPhase)
+            renderPending(loadedStyle, pendingTail, destination, directAhead)
             renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey, destination) }
@@ -658,7 +675,16 @@ private fun renderPending(
     style: Style,
     tail: GeoPoint?,
     destination: GeoPoint?,
-    phase: Int,
+    /**
+     * The direct road onward from the end of what is planned, when it is known.
+     *
+     * The spine is already computed to choose the leg boundary, so following it
+     * costs nothing and says far more than a straight line: the pending stretch
+     * runs along roads that exist, and each leg that lands replaces a piece of
+     * it with the camera-avoiding version. Empty falls back to the straight
+     * line, which is all there is on a trip whose spine could not be routed.
+     */
+    directAhead: List<GeoPoint>,
 ) {
     val show = tail != null && destination != null &&
         // Nothing to draw once the plan has arrived where it is going. The
@@ -668,15 +694,14 @@ private fun renderPending(
     val features = if (!show) {
         FeatureCollection.fromFeatures(emptyList())
     } else {
+        // From the end of what is planned, along the direct road where it is
+        // known, and on to the destination.
+        val ahead = directAhead.filter { onwardOf(tail!!, it, destination!!) }
+        val line = listOf(tail!!) + ahead + destination!!
         FeatureCollection.fromFeatures(
             arrayOf(
                 Feature.fromGeometry(
-                    LineString.fromLngLats(
-                        listOf(
-                            Point.fromLngLat(tail!!.lon, tail.lat),
-                            Point.fromLngLat(destination!!.lon, destination.lat),
-                        ),
-                    ),
+                    LineString.fromLngLats(line.map { Point.fromLngLat(it.lon, it.lat) }),
                 ),
             ),
         )
@@ -699,12 +724,19 @@ private fun renderPending(
             ),
         )
     }
-    if (!show) return
-    runCatching {
-        style.getLayerAs<LineLayer>(PENDING_LAYER)
-            ?.setProperties(PropertyFactory.lineDasharray(PENDING_DASHES[phase % PENDING_DASHES.size]))
-    }
 }
+
+/**
+ * Whether a point on the direct road still lies ahead of [tail].
+ *
+ * The spine covers the whole trip, and the part behind the planned route would
+ * draw the pending line backwards through road already covered. Compared by
+ * distance to the destination, which is coarse and is all this needs: it only
+ * has to drop the points already passed.
+ */
+private fun onwardOf(tail: GeoPoint, p: GeoPoint, destination: GeoPoint): Boolean =
+    app.shunt.solver.geo.haversineMeters(p, destination) <
+        app.shunt.solver.geo.haversineMeters(tail, destination)
 
 private fun renderRoute(
     style: Style,

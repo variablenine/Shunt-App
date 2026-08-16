@@ -1809,6 +1809,78 @@ several metros rather than tuning against one.
 
 ---
 
+### F-35 · A C around the direct road at a leg boundary
+*Observed: 2026-08-16. Fixed; unconfirmed on a phone.*
+
+> is it possible to just go back and redo further back up to a point there's not
+> a bunch of waypoints around? I'm noticing that it still isn't really taking an
+> optimal route and making sort of a C around a more direct path
+
+Right diagnosis and the right fix. `LegJoin.trimDoubleBack` only removes an
+**exact retrace** — the second leg driving back down the first leg's own road.
+What a boundary usually produces is a **loop**: the first leg bends out to touch
+a point on the direct road, the second leaves it by a different road, and the
+pair draw a C around the line the trip wanted. No road is driven twice, so there
+is nothing to trim. The only thing wrong is the constraint, and the constraint is
+a waypoint nobody asked for, chosen on the direct spine before either route
+existed.
+
+So `LegJoin.seamOf` takes a window either side of the boundary — points both legs
+already drive through — the join is routed again *without* the boundary, and
+`spliceSeam` puts the result in. Falls back to trimming when it finds nothing.
+
+**"This doesn't create new seams does it?"** — the question that found the real
+hole, and worth recording with its answer.
+
+*Geometrically, no.* The replacement starts at a point on the previous leg and
+ends at a point on the next, and the handover is a single shared vertex, so the
+legs meet exactly. More importantly the **new** boundary sits on a road both legs
+already drive, whereas the original was chosen on the direct spine before either
+route existed — which is exactly why the original bent both legs and this one
+cannot.
+
+*But the pins were a hole.* A replacement seam is new road carrying **no pins**;
+the ones in that window belonged to the geometry being replaced, and producing
+new ones means running the refiner over the seam — a routing pass per candidate,
+on a leg being planned in the background. Without pins the car drives the window
+its own way, so a seam that is camera-free *because of avoidance routing* would
+be precisely the road the car does not take.
+
+The fix is to splice the **plain fastest** path through the window rather than
+the fewest-cameras one. That sounds backwards for this app and is not: the
+fastest path is what the car drives unaided, so it needs no pins to be honoured.
+The safety comes from the acceptance test instead — the seam is taken only if it
+is shorter by more than `MIN_SEAM_GAIN_METERS` **and** passes no more cameras
+than the two legs currently pass through that same window, measured against the
+same camera set. Anything else, or any error at all, and the old join stands.
+
+---
+
+### F-36 · The pending line was jumpy
+*Observed: 2026-08-16. Fixed.*
+
+> the pending path animation is kinda buggy and jumpy
+
+Self-inflicted. The marching-dash phase was Compose state, so every frame changed
+a remembered value and recomposed the whole `AndroidView` update block — which
+re-ran `renderRoute`, `renderChargers`, `renderCameras` and the fit check
+**eleven times a second**, each rebuilding GeoJSON for the entire route. The line
+stuttered because the map was being rebuilt underneath it.
+
+Setting one paint property on one layer is all it ever needed, so the animation
+now runs straight against the style from a `LaunchedEffect` and Compose is never
+told. General lesson worth keeping: **an animation driven through recomposition
+costs whatever the whole composable costs, not what the animation costs.**
+
+Also asked for and done: the pending stretch now follows the **direct road**
+rather than cutting a straight line across country. The spine is already computed
+to choose the leg boundary, so `PlanOutcome.Routes.directAhead` is a free slice of
+it, and each leg that lands replaces a piece with the camera-avoiding version. It
+falls back to the straight line when the spine could not be routed, which is all
+there is in that case.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

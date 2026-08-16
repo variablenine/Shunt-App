@@ -339,6 +339,7 @@ class PlanViewModel(
                             remaining = outcome.remaining,
                             wholeTripMeters = outcome.wholeTripMeters,
                             carriedForward = outcome.carriedForward,
+                            directAhead = outcome.directAhead,
                         ),
                         chargeStopSearchFailed = false,
                         checkingRange = gate != null,
