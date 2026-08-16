@@ -276,6 +276,33 @@ private fun SolvedContent(
             }
         }
     }
+    if (phase.carriedForward) {
+        // Said plainly, because the alternative is a route that looks fully
+        // considered and is not. The counts below are true — every option is
+        // measured against the whole camera set — but the search that produced
+        // them ran against a narrower one before it ran out of time.
+        Spacer(Modifier.height(6.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+                Text(
+                    "Planning ran out of time",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    "These routes came from an earlier round of the search, so there " +
+                        "may be a better one. The camera counts are still measured " +
+                        "against every camera on the way.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+    }
     Spacer(Modifier.height(12.dp))
 
     // Choose a route. With only one option (no cameras nearby) this is a single

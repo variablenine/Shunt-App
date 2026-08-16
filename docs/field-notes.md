@@ -1479,6 +1479,81 @@ the later legs is not a thing that exists.
 
 ---
 
+### F-26 · The last leg still took the fastest route
+*Observed: 2026-08-16, from a planned route into San Francisco. Reproduced,
+fixed; unconfirmed on a drive.*
+
+> we are still having a problem where the last leg still is taking the fastest
+> route
+
+With a screenshot showing the last leg drawn as an unbroken line of red camera
+markers all the way in. F-21 had already stopped a watched destination cancelling
+the hard block, and it was not enough — this is a **different cause with the same
+symptom**, which is why it survived the first fix.
+
+**Reproduced against real tiles and the real camera set**, a two-leg trip ending
+in the Bay Area:
+
+```
+leg 2   75.1 s   104.3 km   126 cameras
+        options: FASTEST=126c/104km
+        blocked (7 at an endpoint, unblockable) (no route)      12.2 s
+        fewest (fallback) (no route)                            29.4 s
+        balanced                                                20.0 s
+        fastest (widen 2)                                        0.7 s
+        blocked (...) (gave up — out of time) (widen 2)           6.6 s
+        fewest (fallback) (gave up — out of time) (widen 2)       4.4 s
+        balanced (skipped — over budget) (widen 2)                0.0 s
+```
+
+Read that from the top and the whole thing is there. Round one found no
+hard-blocked route (12 s), no weighted fallback (29 s), and **did** produce a
+balanced route (20 s). That route left the camera corridor, which forced a widen
+— and a widen is the entire chooser run again out of the same budget. Round two
+had seconds left, so everything except the trivially cheap `fastest` pass gave
+up. `fastest` never leaves the corridor, so the loop declared the camera set
+settled and returned it alone.
+
+**The balanced route was found, and then thrown away**, which is the part worth
+being annoyed about. This is §7.10 / F-16 exactly, arriving on the leg most
+likely to trigger it: the last one is the only leg ending at the driver's real
+destination, so it carries the densest camera set and is the likeliest to detour
+outside its corridor.
+
+The fix is the one §7.10 had already argued for and nobody had built: keep the
+earlier round's routes and re-label them against the wider camera set. Same trip,
+same tiles, same 75 s budget:
+
+| leg 2 | before | after |
+|---|---|---|
+| options | `FASTEST` alone | `FASTEST` + `BALANCED` |
+| best available | **126 cameras** | **21 cameras** |
+| whole trip | 128 cameras | 23 cameras |
+
+Sound because the labelling is recomputed from the final camera set for every
+option whichever round it came from, and because a carried route is always
+covered by that set — the widen exists to cover the escaping routes and grows the
+spine to include their geometry. The sheet says the search ran out of time, so a
+route that is merely *available* is not presented as the best one found.
+
+**Two loose threads from this measurement, neither chased yet.**
+
+- The weighted `fewest` fallback returned **no route at all** after 26–29 s.
+  A weighted nogo is a price, not a wall, so a route should always exist. Worth
+  suspecting `FEWEST_WEIGHT` (20,000/metre) overflowing BRouter's integer cost
+  accumulation on a long route through dense zones.
+- A camera-free route into that metro may genuinely not exist — every bridge
+  approach is watched — which would make the hard block's "no route" correct
+  rather than a bug. The 21-camera balanced route is the honest answer either
+  way, and it is 105 fewer than what was being shown.
+
+Note the app gives a later leg `LEG_PASS_BUDGET_MILLIS` (5 minutes) rather than
+the 75 s the benchmark used, so on a phone round two has far more room and may
+finish outright. The measurement above is the worst case, which is the right one
+to fix against.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

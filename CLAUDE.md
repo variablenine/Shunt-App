@@ -868,20 +868,16 @@ them, and add new observations as they come in. Detail lives in
    to hand anyone. The same trip at 330 km widens too, but has budget left and
    comes back with all three.
 
-   Nothing here is a bug to fix in place; it is a design question about what to
-   do when the widen round runs out. The option that looks right and has not been
-   built: keep the *previous* round's routes and re-label them against the wider
-   camera set. That stays inside the rule the loop exists to enforce — a route is
-   never labelled against cameras it was not measured against — while giving up
-   only the claim that the route is *optimal*, which is a far smaller loss than
-   showing the fastest road alone. It needs saying plainly in the UI if it is
-   done.
+   **Fixed, August 2026, and the fix is the one this entry proposed**: keep the
+   previous round's routes and re-label them against the wider camera set. See
+   §7, "When the widen runs out, keep what was already found", and field note
+   F-26 — reproduced on a real last leg into San Francisco, where it was the
+   difference between 126 cameras and 21.
 
-   *Partly relieved.* A later leg of a split trip now gets
-   `LEG_PASS_BUDGET_MILLIS` rather than the kerbside figure (see below), which
-   removes the commonest way this was reached in practice, and a leg that still
-   comes back holding only the fastest road is written to the diagnostic log
-   rather than accepted in silence. The design question above is unchanged.
+   A later leg of a split trip also gets `LEG_PASS_BUDGET_MILLIS` rather than the
+   kerbside figure (see below), which removes the commonest way the second round
+   ran out at all, and a leg that still comes back holding only the fastest road
+   is written to the diagnostic log rather than accepted in silence.
 
 11. **The last leg of a long trip did not avoid cameras at all.** *Fixed,
    unconfirmed on a drive.* Reported from routes into Washington DC and San
@@ -941,6 +937,44 @@ Measured on a four-leg benchmark trip ending on top of a camera in dense metro:
 the last leg went from 3 cameras with the block skipped and two options, to 2
 cameras — both at the destination — with all three options and the block
 attempted. Legs 1–3 came back byte-identical, which is the check that matters.
+
+### When the widen runs out, keep what was already found
+
+A widen is not a slightly wider camera set. It is **the whole chooser run a
+second time out of the same budget** — and when that second round runs out, what
+comes back is the one pass cheap enough to always finish: the plain fastest road.
+That is the single worst answer this app can give, and it arrives looking like a
+considered one.
+
+Reproduced against real tiles on the last leg of a trip into San Francisco, which
+is where a driver reported it:
+
+| leg into a dense metro | before | after |
+|---|---|---|
+| options returned | `FASTEST` alone | `FASTEST` + `BALANCED` |
+| cameras on the best one | **126** | **21** |
+
+The breakdown says exactly what happened: round one spent 12 s proving no
+hard-blocked route exists, 26 s on the weighted fallback finding none either, and
+17 s producing a balanced route — which then left the corridor. Round two got
+what was left, ran out, and only `fastest` survived.
+
+So the earlier round is kept (`carried` in `BrouterPlanner.plan`). Two things
+make that sound rather than merely better than nothing:
+
+- **The labelling is recomputed from the final camera set**, for every option,
+  whichever round it came from — `passedCameras` already was, and
+  `exposureMeters` now is too. The rule the fixed-point loop exists to enforce is
+  untouched: no route is ever described against cameras it was not measured
+  against.
+- **Every carried route is genuinely covered by that final set.** The widen
+  exists precisely to cover the routes that escaped, and the spine grows to
+  include their own geometry — so a route that escaped is on the new spine, and
+  one that did not was inside the narrower corridor already.
+
+What is given up is the claim that the route is *optimal* for the wider set, and
+the result sheet says so in those words rather than presenting it as a finished
+search.
 
 ### Cutting a long trip into legs
 
@@ -1505,10 +1539,11 @@ Ordered roughly by what unblocks real use.
 - **[high] Confirm leg planning on a real long drive.** Wired through and
   measured in the benchmark (§6, "Cutting a long trip into legs"), never driven.
   The things to watch are in `docs/verification.md` B4.
-- **[high] Don't hand the driver the fastest road when the widen runs out** —
-  §7.10 and field note F-16. This is the one open problem where the app's own
-  measured behaviour is the opposite of its purpose, and it is reproducible in
-  the repository's benchmark rather than needing a car.
+- ~~**[high] Don't hand the driver the fastest road when the widen runs out**~~
+  Done: the previous round's routes are carried forward and re-labelled against
+  the wider camera set. §7, "When the widen runs out, keep what was already
+  found", and F-26. Measured on a real last leg into San Francisco: 126 cameras
+  → 21.
 - **[high] Charging re-route on long trips** — §7.1.
 - **[high] Waypoint fidelity on the car** — §7.2. Getting a coarse location is
   worse than getting none, because it looks like it worked.

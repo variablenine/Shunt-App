@@ -303,4 +303,69 @@ class BrouterPlannerTest {
         )
         assertIs<PlanOutcome.Failed>(planner.plan(origin, destination))
     }
+
+    @Test
+    fun `a widen that runs out of time keeps the earlier round's options`() = runTest {
+        // The failure this exists to prevent, measured on a real last leg into a
+        // dense metro: round one produced a balanced route, that route left the
+        // camera corridor, round two ran out of time, and the driver was handed
+        // the plain fastest road past 126 cameras. A widen is the whole chooser
+        // run a second time out of one budget, and losing it must not cost the
+        // options that were already found.
+        val far = destinationPoint(origin, 90.0, 90_000.0)
+        val detour = listOf(origin, destinationPoint(origin, 0.0, 80_000.0), far)
+        var round = 0
+        val planner = BrouterPlanner(
+            route = { (points, _, _) ->
+                round++
+                when (round) {
+                    // The spine: the cheap no-camera pass the corridor is drawn
+                    // around, before the chooser runs at all.
+                    1 -> listOf(BrouterRoute(RouteChoice.FASTEST, points, 90_000, 3_600, 0, 0))
+                    // Round one of the chooser: fastest, plus an avoidance option
+                    // that leaves the corridor and so forces the widen.
+                    2 -> listOf(
+                        BrouterRoute(RouteChoice.FASTEST, points, 90_000, 3_600, 0, 0),
+                        BrouterRoute(RouteChoice.BALANCED, detour, 120_000, 5_400, 0, 0),
+                    )
+                    // The widen round: everything but the cheap fastest pass ran
+                    // out of time, which is exactly what the breakdown showed.
+                    else -> listOf(BrouterRoute(RouteChoice.FASTEST, points, 90_000, 3_600, 0, 0))
+                }
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { emptyList() },
+        )
+
+        val outcome = planner.plan(origin, far)
+
+        assertIs<PlanOutcome.Routes>(outcome)
+        assertTrue(
+            outcome.options.any { it.choice != RouteChoice.FASTEST },
+            "the avoidance option found in the first round must survive: " +
+                outcome.options.map { it.choice },
+        )
+        assertTrue(
+            outcome.carriedForward,
+            "and the driver must be told the search did not finish",
+        )
+    }
+
+    @Test
+    fun `a search that finishes cleanly is never marked as carried forward`() = runTest {
+        // The flag drives a warning on the result sheet, and a warning that
+        // fires on ordinary trips is one people learn to ignore.
+        val planner = BrouterPlanner(
+            route = { (points, _, _) ->
+                listOf(BrouterRoute(RouteChoice.FASTEST, points, 2_000, 180, 0, 0))
+            },
+            missingTiles = { emptyList() },
+            camerasIn = { emptyList() },
+        )
+
+        val outcome = planner.plan(origin, destination)
+
+        assertIs<PlanOutcome.Routes>(outcome)
+        assertTrue(!outcome.carriedForward, "nothing was lost, so nothing was carried")
+    }
 }

@@ -508,6 +508,23 @@ describes the first 270 km, however long you wait.
 
 ---
 
+### B7 · The last leg is not the fastest road
+*Fixed 2026-08-16.*
+
+**Setup.** A long trip — several legs — ending on a pin in a dense metro. Let
+every leg land and look at the last one on the map.
+
+**Pass.** The last leg detours like the others. If the sheet says "Planning ran
+out of time", that is the safety net working: the routes shown came from an
+earlier round of the search and their camera counts are still true.
+
+**Fail (as reported).** The last leg drawn as an unbroken line of camera markers
+straight down the fastest road. Export the log — a "next leg has NO avoidance
+option" line confirms it, and the planning breakdown will show a `(widen 2)`
+round where the passes read "gave up — out of time".
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

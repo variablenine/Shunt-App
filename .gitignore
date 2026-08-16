@@ -30,6 +30,10 @@ captures/
 # --- OS ---
 .DS_Store
 
-# Benchmark working directory: .rd5 tiles and a DeFlock dump, hundreds of
-# megabytes, and exactly the place a real trip's data would end up. See CLAUDE.md §8.
+# Benchmark working directories: .rd5 tiles and a DeFlock dump, hundreds of
+# megabytes, and exactly the place a real trip's data would end up. Matched by
+# prefix because a second region often wants its own (bench-sf, bench-metro,
+# ...) and one that slipped the pattern would commit somebody's travel. See
+# CLAUDE.md §8.
 bench/
+bench-*/

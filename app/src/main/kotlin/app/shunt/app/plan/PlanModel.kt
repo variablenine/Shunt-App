@@ -219,6 +219,13 @@ sealed interface Phase {
          */
         val remaining: List<GeoPoint> = emptyList(),
         val wholeTripMeters: Int? = null,
+        /**
+         * These options came from an earlier, narrower round of the search
+         * because the round after a corridor widen ran out of time. They are
+         * labelled honestly against the full camera set; what is given up is the
+         * claim that they are the best routes for it. See CLAUDE.md §7.10.
+         */
+        val carriedForward: Boolean = false,
     ) : Phase {
         val chosen: PlannedRoute get() = options[selected.coerceIn(options.indices)]
     }

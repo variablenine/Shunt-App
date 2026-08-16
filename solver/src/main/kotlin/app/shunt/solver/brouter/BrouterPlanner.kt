@@ -73,6 +73,16 @@ sealed interface PlanOutcome {
          * as if it were the trip's would be a plain lie.
          */
         val wholeTripMeters: Int? = null,
+        /**
+         * These options come from an earlier, narrower round of the search,
+         * because the round that followed a corridor widen ran out of time.
+         *
+         * They are labelled against the full camera set and every one of them is
+         * covered by it, so the counts shown are true. What is no longer claimed
+         * is that they are the *best* routes for that wider set. Worth saying
+         * plainly to the driver — see CLAUDE.md §7.10.
+         */
+        val carriedForward: Boolean = false,
     ) : PlanOutcome {
         /** Whether these options stop short of the destination. */
         val isPartial: Boolean get() = remaining.isNotEmpty()
@@ -294,6 +304,31 @@ class BrouterPlanner(
         var routes: List<BrouterRoute> = emptyList()
         var covered = false
 
+        /**
+         * The best set of options any round produced.
+         *
+         * A widen is not a slightly wider camera set — it is **the whole chooser
+         * run a second time out of the same budget**, and when that second round
+         * runs out the driver is handed the plain fastest road, which is the one
+         * thing this app exists not to do. Measured on a real last leg into a
+         * dense metro: round one produced a balanced route in 20 s, that route
+         * left the corridor, round two ran out of time, and the answer was the
+         * fastest road past 126 cameras.
+         *
+         * So the earlier round is kept. What that gives up is the claim that the
+         * route is *optimal* for the wider camera set. What it keeps is the
+         * claim that actually matters — that the route is labelled against every
+         * camera we know about — because the labelling below is recomputed from
+         * the final set regardless of which round a route came from.
+         *
+         * **And every carried route is genuinely covered by that final set**,
+         * which is what makes this sound rather than merely better than nothing:
+         * the widen exists precisely to cover the routes that escaped, the spine
+         * grows to include their own geometry, and a route that did not escape
+         * was inside the narrower corridor to begin with.
+         */
+        var carried: List<BrouterRoute> = emptyList()
+
         for (pass in 0 until MAX_REFINEMENT_PASSES) {
             onProgress(0.4f + 0.12f * pass, if (pass == 0) "Planning routes" else "Widening the camera search")
             startedAt = nowMillis()
@@ -306,6 +341,7 @@ class BrouterPlanner(
             }
             routes = fresh ?: return PlanOutcome.Failed("Routing failed.")
             if (routes.isEmpty()) return noRoute()
+            if (avoidanceCount(routes) > avoidanceCount(carried)) carried = routes
 
             val escaping = routes.filterNot { withinCorridor(it.polyline, spine) }
             if (escaping.isEmpty()) {
@@ -330,6 +366,13 @@ class BrouterPlanner(
                     "detouring outside the area checked. Try a shorter trip or plan again.",
             )
         }
+
+        // A later round that came back holding fewer avoidance options than an
+        // earlier one lost them to the clock, not to the roads. Take the earlier
+        // ones; they are labelled against the final camera set below. See
+        // `carried` above for why that is sound.
+        val carriedForward = avoidanceCount(routes) < avoidanceCount(carried)
+        if (carriedForward) routes = carried
 
         val fastest = routes.first()
         val visions = cameras.map { CameraVision(it.location, it.directionDegrees, cameraRangeScale()) }
@@ -373,7 +416,14 @@ class BrouterPlanner(
                     .mapNotNull { byLocation[it.location] },
                 distanceMeters = r.distanceMeters,
                 estimatedSeconds = r.estimatedSeconds,
-                exposureMeters = r.exposureMeters,
+                // Recomputed here rather than taken from the router, because a
+                // route carried over from an earlier round was measured against
+                // that round's narrower camera set. Every number the driver
+                // reads has to describe the set we finished with.
+                exposureMeters = CameraVision.metersSeen(
+                    r.polyline,
+                    index.within(r.polyline, CameraVision.OMNI_RANGE_M * cameraRangeScale() + NEARBY_CAMERA_METERS),
+                ).toInt(),
                 addedSecondsVsFastest = r.estimatedSeconds - fastest.estimatedSeconds,
                 hardAvoidanceFailed = r.hardAvoidanceFailed,
                 unavoidableAtEndpoints = r.unavoidableAtEndpoints,
@@ -387,6 +437,7 @@ class BrouterPlanner(
             timings = PlanTimings(stages, routingPasses),
             remaining = remaining,
             wholeTripMeters = wholeTripMeters,
+            carriedForward = carriedForward,
         )
     }
 
@@ -605,6 +656,17 @@ class BrouterPlanner(
             } ?: 0
         return (stops + shaping).sortedBy { progressAlong(it) }
     }
+
+    /**
+     * How many real avoidance options a round produced — everything that is not
+     * the plain fastest road.
+     *
+     * The measure of whether a round is worth keeping. One that comes back with
+     * only `fastest` has not decided there is no camera-free route; it has run
+     * out of time to look.
+     */
+    private fun avoidanceCount(routes: List<BrouterRoute>): Int =
+        routes.count { it.choice != RouteChoice.FASTEST }
 
     private fun noRoute(): PlanOutcome {
         val detail = diagnostics()?.takeIf { it.isNotBlank() }?.let { "\n\n[$it]" } ?: ""
