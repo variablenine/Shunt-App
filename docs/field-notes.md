@@ -1171,10 +1171,54 @@ Six decimal places of precision does not help if the string is not being read as
 a coordinate at all.
 
 **Do not guess the fix.** `NavCapabilityProbe` already exists for exactly this
-question and already tries four forms — plain coordinates, a `geo:` URI, an
-OpenStreetMap link, and an Apple Maps link. Run it from vehicle settings and see
-which ones land and how precisely. Changing `shareValue` on a hunch risks
-breaking the one channel that currently works at all.
+question. Run it from vehicle settings and see which forms land and how
+precisely. Changing `shareValue` on a hunch risks breaking the one channel that
+currently works at all.
+
+**First run, 2026-08-16, on the maintainer's car — and the probe answered
+nothing.** Every channel was either rejected or "accepted, car state
+unreadable":
+
+```
+x navigation_waypoints_request          rejected
+x navigation_gps_request order=1        rejected
+x navigation_gps_request order=3        rejected
+x share coordinates                     accepted, car state unreadable
+x share geo: URI                        rejected
+x share OpenStreetMap link              rejected
+x share Apple Maps link                 accepted, car state unreadable
+```
+
+Two things came out of it, and the second matters more than the first.
+
+**The car is narrower than assumed.** Only two forms are accepted at all —
+bare coordinates and an Apple Maps link. `geo:` and OpenStreetMap were rejected
+outright, so the obvious "send something unambiguous" fixes for F-19 are not
+available on this car. That is a real finding.
+
+**The probe could not tell whether either of them worked**, which makes it
+useless for the question it exists to answer. `TessieAccountClient.activeRoute`
+read `use_cache=true` — Tessie's *cached* state — so the read-back six seconds
+after a command was answered from state captured before the command was ever
+sent. It reads `use_cache=false` for the probe now, which wakes the car; that is
+the right trade for an explicit parked diagnostic and the wrong one for the
+drive monitor's charging reads, which stay cached and free.
+
+"Accepted, car state unreadable" was also doing double duty for *the car could
+not be asked* and *the car was asked and is navigating nowhere* — and the second
+is the damning one, because it means a server accepted a command the car then
+ignored. The two are reported separately now.
+
+Google Maps links were added to the probe at the maintainer's request ("add
+Google's in there too since I've had luck with that"), in both the `api=1`
+search form and the short `maps.google.com/?q=` form a phone's share sheet
+produces. **This does not breach the keyless rule in §3**: nothing calls Google.
+Shunt hands the *car* a URL string through Tessie's share command, exactly as a
+person sharing a link would, and the car resolves it with whatever credentials
+Tesla already has. No account, no key, and nothing that can be revoked.
+
+Re-run the probe on this build before drawing any further conclusions — the
+previous results say only that the read-back was broken.
 
 **This matters more than a hundred metres**, because of what it implies for
 charging. A Supercharger sent as something the car resolves to a street address
@@ -1316,6 +1360,45 @@ avoidance having been tried and failed.
 scale, where the two agree. `NogoCoverageTest` holds the real invariant — the
 blocked shape must contain what the counter sees — and it now runs at several
 scales, which is the only version of that test that could have failed.
+
+---
+
+### F-23 · The map does not name anything
+*Observed: 2026-08-16. Fixed; wants a look on a phone.*
+
+> I want names of various places to show up on the map just like osm and Google
+> maps.
+
+The basemap draws city, town, street and water names and nothing else — no
+shops, no restaurants, no parks, no schools. It is not a bug in Shunt's code so
+much as a property of the style: OpenFreeMap's dark style descends from Dark
+Matter, which was designed as a *backdrop* for somebody else's data and
+deliberately omits POIs so they do not compete with it. Inspecting the style
+confirms it — 15 symbol layers, drawing only `place`, `transportation_name` and
+`water_name`.
+
+On a navigation map that is a real gap. A driver looking at a camera detour has
+nothing to recognise the turn by, and no way to tell what is around them.
+
+**The names were already being downloaded.** The tile manifest at
+`tiles.openfreemap.org/planet` carries a `poi` source-layer from z11 and a
+`park` one from z4, both with `name` and `rank` — the style just has no layer
+drawing them. So `RouteMap.addPlaceLabels` adds two symbol layers over the
+source that is already there: no extra request, no new host, nothing that could
+need an account.
+
+Three things worth knowing if these ever need adjusting:
+
+- **The font stack is not a choice.** `Noto Sans Regular` is the only stack the
+  style ships glyphs for; naming any other renders nothing at all, silently.
+- **They are added at style-load time, before any of Shunt's own layers**, so
+  every route line, camera dot and pin sits above them. Labels must never be
+  able to obscure the two things a driver is looking for.
+- **Density is managed by rank, not by hiding.** `symbol-sort-key` is the POI's
+  own OpenMapTiles rank, so when MapLibre thins colliding labels it keeps the
+  more significant one rather than whichever drew first. Below z16 the low
+  ranks are filtered out entirely, because a town centre at z14 is otherwise a
+  solid block of text over the roads the route runs on.
 
 ---
 

@@ -422,6 +422,56 @@ at ×3, the same route both times.
 
 ---
 
+### D7 · The map names the places on it
+*Added 2026-08-16.*
+
+**Setup.** Zoom in on a town centre, at street level and a couple of levels out.
+
+**Pass.** Shops, restaurants, schools and parks are named, thinning out sensibly
+as you zoom out rather than piling on top of each other. Labels sit *under* the
+route line, the camera dots and the pins — never over them.
+
+**Fail.** No names at all (the basemap style changed its source id and
+`addPlaceLabels` silently did nothing), or a solid block of text over the roads
+the route runs on.
+
+---
+
+### D8 · A trip still being planned says so
+*Added 2026-08-16.*
+
+**Setup.** Plan a trip long enough to be cut into legs and watch the map while
+the later legs land.
+
+**Pass.** A semitransparent dashed line runs from the end of the planned route
+to the destination pin, its dashes marching along it, and it shortens as each
+leg arrives and disappears when the last one lands.
+
+**Fail.** The dashed line still there after planning has finished or failed —
+it is a promise that something is coming, and it must not outlive that being
+true.
+
+---
+
+### A5 · The car capability probe answers a question
+*Fixed 2026-08-16.*
+
+**Setup.** Park the car, awake, and run "Probe navigation commands" from vehicle
+settings. It changes what the car is navigating to, several times.
+
+**Pass.** Each accepted channel says either "WORKS — the car moved to this
+point" or "accepted, but the car did not move to it". Both are answers.
+
+**Fail (as reported).** Every accepted channel reading "accepted, car state
+unreadable" — which is not an answer and cannot be told apart from the car
+ignoring the command. The cause was reading Tessie's *cached* state moments
+after issuing a command; the probe reads uncached now, which wakes the car.
+Also worth noting from that run: this car rejected `geo:` URIs and OpenStreetMap
+links outright, accepting only bare coordinates and an Apple Maps link. Google
+Maps links are now probed too.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

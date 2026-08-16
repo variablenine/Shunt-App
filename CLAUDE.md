@@ -61,7 +61,11 @@ Working and reasonably trusted:
 - On-device camera-aware route planning (BRouter), with a Fastest → Balanced →
   Fewest-cameras chooser.
 - The map: dark basemap, every known camera with its facing cone, tap for
-  details, the route, live location.
+  details, the route, live location, and **place names** — shops, parks,
+  amenities. The basemap style draws none of those (it descends from Dark
+  Matter, a deliberate backdrop style), but the tiles it fetches carry them, so
+  `RouteMap.addPlaceLabels` renders `poi` and `park` from the source that is
+  already loaded. No extra request, no new host. See F-23.
 - The drive monitor: camera-approach warnings, waypoint advancement, off-route
   detection, escalating haptics, **spoken alerts** and notifications. Works
   fully offline — the speech is Android's on-device TTS, no account or key

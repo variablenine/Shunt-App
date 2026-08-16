@@ -149,8 +149,114 @@ class NavCapabilityProbeTest {
                 "share geo: URI",
                 "share OpenStreetMap link",
                 "share Apple Maps link",
+                // Google is a *string handed to the car*, not a call to Google.
+                // Added because a real car rejected everything except plain
+                // coordinates and the Apple link, and the maintainer has had
+                // Google links work by hand. See ShareFormat.GOOGLE_MAPS.
+                "share Google Maps link",
+                "share Google Maps place link",
             ),
             channels,
+        )
+    }
+
+    @Test
+    fun `nothing in a probed share string calls Google`() {
+        // The keyless rule (CLAUDE.md SS3) is about services Shunt depends on,
+        // and a URL sent to a car is not one — but the difference is easy to
+        // lose later, so it is pinned here. Every format must be a literal
+        // coordinate string with no key, no redirect and nothing for Shunt
+        // itself to fetch.
+        val p = GeoPoint(39.0, -98.0)
+        for (format in NavCapabilityProbe.ShareFormat.entries) {
+            val rendered = format.render(p)
+            assertTrue(
+                "39.0" in rendered && ("-98.0" in rendered || "-98%2C" in rendered || "%2C-98" in rendered),
+                "${format.label} must carry the coordinates literally: $rendered",
+            )
+            assertTrue(
+                "key=" !in rendered && "apikey" !in rendered.lowercase(),
+                "${format.label} must not carry a credential: $rendered",
+            )
+        }
+    }
+
+    @Test
+    fun `the read-back asks the car, not Tessie's cache`() = runTest {
+        // The bug this exists to prevent, seen on a real car: every accepted
+        // step reported "car state unreadable" because the state was read from
+        // a cache filled BEFORE the command was sent. A probe that reads a
+        // cache is measuring the cache, and its answers are worthless.
+        val stateQueries = mutableListOf<String>()
+        dispatch { request ->
+            val path = request.path.orEmpty()
+            if (path.contains("/state")) {
+                stateQueries += path
+                MockResponse().setBody(stateAimedAt(pointA))
+            } else {
+                MockResponse().setBody("""{"result":true,"response":{"result":true,"reason":""}}""")
+            }
+        }
+
+        probe().run(pointA, pointB)
+
+        assertTrue(stateQueries.isNotEmpty(), "the probe must read the car back at all")
+        assertTrue(
+            stateQueries.all { "use_cache=false" in it },
+            "every read-back must bypass the cache: $stateQueries",
+        )
+    }
+
+    @Test
+    fun `an unreadable car says why, rather than just being unreadable`() = runTest {
+        // "Accepted, car state unreadable" was the entire result on a real car,
+        // and it is not an answer — it cannot be told apart from the car
+        // ignoring the command. Whatever the reason is, it has to reach the
+        // person reading the report.
+        dispatch { request ->
+            if (request.path.orEmpty().contains("/state")) {
+                MockResponse().setResponseCode(408)
+            } else {
+                MockResponse().setBody("""{"result":true,"response":{"result":true,"reason":""}}""")
+            }
+        }
+
+        val accepted = probe().run(pointA, pointB).filter { it.accepted }
+
+        assertTrue(accepted.isNotEmpty(), "the fixture must accept something")
+        for (step in accepted) {
+            assertTrue(
+                step.readProblem != null,
+                "${step.channel} was accepted but its read failed silently",
+            )
+            assertTrue(
+                "car state unreadable" !in step.verdict,
+                "${step.channel} must say why, not just that: ${step.verdict}",
+            )
+        }
+    }
+
+    @Test
+    fun `a car that answers with no route is not confused with a failed read`() = runTest {
+        // Two very different findings that used to look identical: the car
+        // could not be asked, versus the car was asked and is navigating
+        // nowhere. The second is a real result — the server accepted a command
+        // the car then ignored, which is the most damning thing this can find.
+        dispatch { request ->
+            if (request.path.orEmpty().contains("/state")) {
+                MockResponse().setBody(stateAimedAt(null))
+            } else {
+                MockResponse().setBody("""{"result":true,"response":{"result":true,"reason":""}}""")
+            }
+        }
+
+        val accepted = probe().run(pointA, pointB).filter { it.accepted }
+
+        assertTrue(accepted.isNotEmpty(), "the fixture must accept something")
+        assertTrue(
+            accepted.all { it.readProblem == "the car reports no active route" },
+            "an answering car with no route must be reported as such: " +
+                accepted.map { it.readProblem },
         )
     }
 

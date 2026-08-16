@@ -54,11 +54,21 @@ class NavCapabilityProbe(
         val carDestinationName: String? = null,
         /** True when the car's own state moved to the point this step sent. */
         val landed: Boolean = false,
+        /**
+         * Why the read-back said nothing, when it said nothing.
+         *
+         * "Accepted, car state unreadable" was the whole result on a real car
+         * and it is not an answer — it does not say whether the car ignored the
+         * command, was asleep, or was simply never asked. A probe whose failure
+         * mode is indistinguishable from its success mode is worth nothing, so
+         * the reason is carried rather than collapsed.
+         */
+        val readProblem: String? = null,
     ) {
         val verdict: String get() = when {
             landed -> "WORKS — the car moved to this point"
             accepted && carAimedAt != null -> "accepted, but the car did not move to it"
-            accepted -> "accepted, car state unreadable"
+            accepted -> "accepted, but ${readProblem ?: "car state unreadable"}"
             else -> "rejected"
         }
     }
@@ -82,9 +92,20 @@ class NavCapabilityProbe(
                 .getOrElse { e -> false to "threw: ${e.message}" }
             // Only wait and read when something was accepted; a rejected command
             // has nothing to have changed.
+            // Uncached, and that is the difference between this probe working
+            // and not. Tessie's cached state is whatever it last captured, so
+            // reading it moments after issuing a command answers from *before*
+            // the command — which is why every accepted step on a real car came
+            // back "car state unreadable" and the probe proved nothing. Waking
+            // the car is the correct cost here: this is an explicit, parked
+            // diagnostic that already warns it will redirect the navigation.
+            var readError: String? = null
             val active = if (accepted) {
                 settle()
-                runCatching { account.activeRoute(bearerToken, vin) }.getOrNull()
+                runCatching { account.activeRoute(bearerToken, vin, fresh = true) }
+                    .onFailure { readError = "couldn't read the car: ${it.message ?: it.toString()}" }
+                    .getOrNull()
+                    .also { if (it == null && readError == null) readError = "the car did not answer" }
             } else {
                 null
             }
@@ -101,6 +122,16 @@ class NavCapabilityProbe(
                 carAimedAt = aimedAt,
                 carDestinationName = active?.destinationName,
                 landed = aimedAt != null && isSamePlace(aimedAt, target),
+                readProblem = when {
+                    !accepted -> null
+                    readError != null -> readError
+                    // The car answered and said it is navigating nowhere. That
+                    // is a real result, not a failed read: the command was
+                    // accepted by the server and the car did not act on it.
+                    active == null -> "the car did not answer"
+                    aimedAt == null -> "the car reports no active route"
+                    else -> null
+                },
             )
             steps += step
             onStep(step)
@@ -157,6 +188,38 @@ class NavCapabilityProbe(
         /** Apple Maps — no account, and a link format the car may well know. */
         APPLE_MAPS("Apple Maps link") {
             override fun render(p: GeoPoint) = "https://maps.apple.com/?ll=${p.lat},${p.lon}&q=Waypoint"
+        },
+
+        /**
+         * Google Maps, because the maintainer has had it work by hand:
+         *
+         * > add Google's in there too since I've had luck with that
+         *
+         * **This is not the Google API, and does not breach the keyless rule in
+         * CLAUDE.md §3.** Nothing here calls Google. Shunt hands the *car* a URL
+         * string through Tessie's share command, exactly as a person sharing a
+         * link from their phone would, and the car resolves it with whatever
+         * credentials Tesla already has. No account, no key, no card, and no
+         * request from this app to any Google host — so there is nothing that
+         * could be revoked out from under a user.
+         *
+         * The `api=1` search form rather than a short link: it carries the
+         * coordinates literally, so what the car receives is inspectable, and
+         * there is no redirect that could resolve to somewhere else. Which is
+         * the whole subject of field note F-19 — a share string the car
+         * re-geocodes is how 132 Birch St became 116.
+         */
+        GOOGLE_MAPS("Google Maps link") {
+            override fun render(p: GeoPoint) =
+                "https://www.google.com/maps/search/?api=1&query=${p.lat}%2C${p.lon}"
+        },
+
+        /**
+         * The Google form a phone's share sheet actually produces, which is not
+         * the one above and may well be the one the car knows best.
+         */
+        GOOGLE_MAPS_PLACE("Google Maps place link") {
+            override fun render(p: GeoPoint) = "https://maps.google.com/?q=${p.lat},${p.lon}"
         },
         ;
 

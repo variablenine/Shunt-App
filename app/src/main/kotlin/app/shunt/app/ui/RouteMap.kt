@@ -60,6 +60,7 @@ import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.LineLayer
@@ -125,6 +126,78 @@ private const val PASSED_SOURCE = "cameras-passed"
 private const val PASSED_LAYER = "cameras-passed-dots"
 private const val CHARGER_SOURCE = "route-chargers"
 private const val CHARGER_LAYER = "route-charger-dots"
+
+/**
+ * The dashed line from the end of what has been planned to where the trip is
+ * actually going. See [renderPending].
+ */
+private const val PENDING_SOURCE = "route-pending"
+private const val PENDING_LAYER = "route-pending-line"
+
+/**
+ * The marching-ants cycle for that line, in dash-pattern phases.
+ *
+ * MapLibre has no dash *offset* to animate, so movement is faked the way
+ * Mapbox's own "animate a line" example does it: cycle a set of patterns whose
+ * gap walks along the line. Each entry is (dash, gap) in line-widths.
+ */
+private val PENDING_DASHES: List<Array<Float>> = listOf(
+    arrayOf(0f, 4f, 3f),
+    arrayOf(0.5f, 4f, 2.5f),
+    arrayOf(1f, 4f, 2f),
+    arrayOf(1.5f, 4f, 1.5f),
+    arrayOf(2f, 4f, 1f),
+    arrayOf(2.5f, 4f, 0.5f),
+    arrayOf(3f, 4f, 0f),
+)
+
+/** How fast the ants march. Slow enough to read as "working", not as urgent. */
+private const val PENDING_FRAME_MILLIS = 90L
+
+/**
+ * Below this the plan has effectively arrived and there is nothing pending.
+ *
+ * Generous, because a leg boundary is chosen for being a quiet point on a road
+ * near the destination rather than the destination itself, and a few hundred
+ * metres of dashes twitching over the final address would look like a fault.
+ */
+private const val PENDING_MIN_METERS = 1_000.0
+
+/** Place-name layers Shunt adds to the basemap. See [addPlaceLabels]. */
+private const val POI_LAYER = "shunt-poi-labels"
+private const val PARK_LAYER = "shunt-park-labels"
+
+/**
+ * The vector source the basemap already draws from, and the layers inside it
+ * that carry names.
+ *
+ * These are OpenMapTiles schema names, not ours — the source id comes from the
+ * style document and the source-layers from the tile manifest.
+ */
+private const val BASEMAP_SOURCE = "openmaptiles"
+private const val POI_SOURCE_LAYER = "poi"
+private const val PARK_SOURCE_LAYER = "park"
+
+/**
+ * Zoom at which shop and amenity names appear.
+ *
+ * The tiles carry them from z11, which is a whole county at once and would be
+ * an unreadable wall of text over a route. Fourteen is roughly a
+ * neighbourhood, and about where Google starts naming businesses.
+ */
+private const val POI_MIN_ZOOM = 14.0f
+
+/** Parks are big and few, so they can be named far earlier than a shop can. */
+private const val PARK_MIN_ZOOM = 11.0f
+
+/**
+ * How prominent a POI must be to be drawn at [POI_MIN_ZOOM].
+ *
+ * OpenMapTiles ranks POIs within each tile, 1 being the most significant. Two
+ * zoom levels further in the limit is lifted entirely — by then there is room
+ * for everything the area actually contains.
+ */
+private const val POI_RANK_LIMIT = 12L
 
 /** The basemap's own one-way arrow layers. See [straightenOneWayArrows]. */
 private const val ONE_WAY_LAYER = "road_oneway"
@@ -210,6 +283,17 @@ fun RouteMap(
      * seconds and the press looks like it missed.
      */
     destination: GeoPoint? = null,
+    /**
+     * Whether more legs of this trip are still being planned.
+     *
+     * Drives the dashed line from the end of what is planned to the
+     * destination — see [renderPending]. Passed in rather than inferred from a
+     * gap in the geometry, because those are two genuinely different states: a
+     * trip still being planned should say so, while a trip that finished
+     * planning and simply ends where it ends should not sprout a line to
+     * nowhere.
+     */
+    planningAhead: Boolean = false,
 ) {
     val routeLines = listOf(routePolyline) + laterLegLines
     val context = LocalContext.current
@@ -257,6 +341,9 @@ fun RouteMap(
             map.setStyle(builder) { loaded ->
                 style = loaded
                 straightenOneWayArrows(loaded, context)
+                // Before anything of ours is added, so every route, camera and
+                // pin layer lands on top of the labels rather than under them.
+                addPlaceLabels(loaded)
                 // Report the viewport whenever the user stops moving the map so
                 // we can fetch the cameras now visible.
                 map.addOnCameraIdleListener {
@@ -321,6 +408,22 @@ fun RouteMap(
         viewportCameras = runCatching { fetcher(bounds) }.getOrDefault(viewportCameras)
     }
 
+    // The marching ants. Only ticks while something is actually pending, so a
+    // finished plan costs nothing — this is a redraw of a style layer several
+    // times a second, and the phone is often planning routes on every other
+    // core while it runs.
+    var pendingPhase by remember { mutableStateOf(0) }
+    val pendingTail = remember(routeLines, destination, planningAhead) {
+        if (!planningAhead) null else routeLines.lastOrNull { it.size >= 2 }?.lastOrNull()
+    }
+    LaunchedEffect(pendingTail, destination) {
+        if (pendingTail == null || destination == null) return@LaunchedEffect
+        while (true) {
+            delay(PENDING_FRAME_MILLIS)
+            pendingPhase = (pendingPhase + 1) % PENDING_DASHES.size
+        }
+    }
+
     // Once we have a location fix and no route is shown, center on the user so
     // the nearby cameras load without them having to pan there first.
     LaunchedEffect(showLocation, hasLocationPermission, routePolyline.size) {
@@ -338,6 +441,7 @@ fun RouteMap(
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
             renderRoute(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
+            renderPending(loadedStyle, pendingTail, destination, pendingPhase)
             renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey, destination) }
@@ -411,6 +515,77 @@ private fun centerOnUserLocation(view: MapView): Boolean {
         }
     }
     return moved
+}
+
+/**
+ * The dashed, semitransparent line from the end of what has been planned to
+ * where the trip is actually going.
+ *
+ * A long trip is cut into legs and only the first is ready when the driver
+ * looks at the chooser (see `LegSplitter`); the rest arrive over the following
+ * seconds. Until they do, the drawn route simply *stops* somewhere in open
+ * country, which reads as the route being wrong rather than as the app still
+ * working. This says the difference out loud: a solid line for road that has
+ * been planned, a marching dashed one for the part that has not.
+ *
+ * Deliberately drawn as a straight line rather than the direct road. It is not
+ * a route and must not be mistakable for one — it is a statement that something
+ * is still coming, and the movement is what carries that.
+ *
+ * Cleared by setting the source to an empty collection rather than by skipping
+ * the update, which is the same trap that once left a cancelled route on the
+ * map forever: a source that is only ever *set* keeps its last value.
+ */
+private fun renderPending(
+    style: Style,
+    tail: GeoPoint?,
+    destination: GeoPoint?,
+    phase: Int,
+) {
+    val show = tail != null && destination != null &&
+        // Nothing to draw once the plan has arrived where it is going. The
+        // threshold is generous: a leg boundary lands on a road near the
+        // destination, not on top of it.
+        app.shunt.solver.geo.haversineMeters(tail, destination) > PENDING_MIN_METERS
+    val features = if (!show) {
+        FeatureCollection.fromFeatures(emptyList())
+    } else {
+        FeatureCollection.fromFeatures(
+            arrayOf(
+                Feature.fromGeometry(
+                    LineString.fromLngLats(
+                        listOf(
+                            Point.fromLngLat(tail!!.lon, tail.lat),
+                            Point.fromLngLat(destination!!.lon, destination.lat),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    }
+
+    val source = style.getSourceAs<GeoJsonSource>(PENDING_SOURCE)
+    if (source != null) {
+        source.setGeoJson(features)
+    } else {
+        style.addSource(GeoJsonSource(PENDING_SOURCE, features))
+        style.addLayer(
+            LineLayer(PENDING_LAYER, PENDING_SOURCE).withProperties(
+                PropertyFactory.lineColor("#8ab4f8"),
+                PropertyFactory.lineWidth(3f),
+                // Semitransparent on purpose: this is the one line on the map
+                // that is not a road, and it should never read as solidly as
+                // the route it is waiting for.
+                PropertyFactory.lineOpacity(0.45f),
+                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            ),
+        )
+    }
+    if (!show) return
+    runCatching {
+        style.getLayerAs<LineLayer>(PENDING_LAYER)
+            ?.setProperties(PropertyFactory.lineDasharray(PENDING_DASHES[phase % PENDING_DASHES.size]))
+    }
 }
 
 private fun renderRoute(
@@ -565,6 +740,90 @@ private fun renderRoute(
  * which is a worse bug than the one being fixed, because nobody would be
  * looking for it.
  */
+/**
+ * Name the places on the map — shops, restaurants, parks, schools — the way
+ * OpenStreetMap and Google do.
+ *
+ * The basemap does not. OpenFreeMap's dark style descends from Dark Matter,
+ * which is a *backdrop* style: it draws city, town, street and water names and
+ * deliberately nothing else, because it was designed to sit under somebody
+ * else's data. On a navigation map that is a real gap — a driver looking at a
+ * detour has no way to tell what is around them, and no landmark to recognise
+ * the turn by.
+ *
+ * **The names were already being downloaded.** The tiles Shunt fetches carry a
+ * `poi` source-layer from z11 and a `park` one from z4, both with `name` and
+ * `rank`; the style simply has no layer drawing them. So this costs no extra
+ * request, no new host, and nothing that could need an account — it is the same
+ * keyless OpenFreeMap tile, rendered more fully.
+ *
+ * Everything here is wrapped in `runCatching` for the same reason
+ * [straightenOneWayArrows] is: the style is fetched at run time from a server
+ * this project does not control, and a basemap that changed its source id must
+ * degrade to a map without labels rather than to no map at all.
+ */
+private fun addPlaceLabels(style: Style) {
+    if (style.getSource(BASEMAP_SOURCE) == null) return
+
+    // Bright enough to read against the dark basemap, with a dark halo so a
+    // label crossing a road or a route line stays legible. Deliberately dimmer
+    // than the route and the camera dots: this is context, and it must never
+    // compete with the two things the driver is actually looking for.
+    fun label(
+        id: String,
+        sourceLayer: String,
+        from: Float,
+        size: Float,
+        colour: String,
+    ): SymbolLayer = SymbolLayer(id, BASEMAP_SOURCE).apply {
+        setSourceLayer(sourceLayer)
+        minZoom = from
+        withProperties(
+            // `name_en` where the tile has it, else the local name — the same
+            // preference the style's own label layers express.
+            PropertyFactory.textField(Expression.coalesce(Expression.get("name_en"), Expression.get("name"))),
+            // The one font stack the style ships glyphs for. Naming anything
+            // else renders nothing at all, silently.
+            PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
+            PropertyFactory.textSize(size),
+            PropertyFactory.textColor(colour),
+            PropertyFactory.textHaloColor("rgba(0,0,0,0.85)"),
+            PropertyFactory.textHaloWidth(1.2f),
+            PropertyFactory.textMaxWidth(8f),
+            PropertyFactory.textAnchor(Property.TEXT_ANCHOR_TOP),
+            PropertyFactory.textOffset(arrayOf(0f, 0.4f)),
+            // Left at the default (false), which is what makes MapLibre thin
+            // the labels out as they collide. A dense high street would
+            // otherwise draw every name on top of every other.
+            PropertyFactory.textAllowOverlap(false),
+            PropertyFactory.textOptional(true),
+            // Lower rank is more significant, and MapLibre keeps the lower sort
+            // key when two labels collide — so the ranking survives the
+            // thinning rather than being decided by draw order.
+            PropertyFactory.symbolSortKey(Expression.toNumber(Expression.get("rank"))),
+        )
+    }
+
+    runCatching {
+        val parks = label(PARK_LAYER, PARK_SOURCE_LAYER, PARK_MIN_ZOOM, 11f, "rgb(150,180,150)")
+        style.addLayer(parks)
+    }
+
+    runCatching {
+        val poi = label(POI_LAYER, POI_SOURCE_LAYER, POI_MIN_ZOOM, 11f, "rgb(190,190,185)")
+        // Hold the least significant back for two more zoom levels. Without
+        // this, zooming to a town centre paints a solid block of text over the
+        // very roads the route is drawn on.
+        poi.setFilter(
+            Expression.any(
+                Expression.gte(Expression.zoom(), Expression.literal(POI_MIN_ZOOM + 2f)),
+                Expression.lt(Expression.toNumber(Expression.get("rank")), Expression.literal(POI_RANK_LIMIT)),
+            ),
+        )
+        style.addLayer(poi)
+    }
+}
+
 private fun straightenOneWayArrows(style: Style, context: Context) {
     // Our own arrow, drawn pointing +X, replaces the basemap's.
     //

@@ -141,6 +141,7 @@ fun PlanScreen(
             // Only while browsing: a long press mid-drive would abandon the trip.
             onLongPress = actions.onMapLongPress.takeIf { state.phase is Phase.Browsing },
             destination = destinationOf(state.phase),
+            planningAhead = state.planningLaterLegs,
         )
 
         // Whether the search panel is expanded over the map.

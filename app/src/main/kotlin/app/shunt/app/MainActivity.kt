@@ -115,6 +115,7 @@ class MainActivity : ComponentActivity() {
                 // the line grows to the destination — from a standstill as
                 // readily as while driving.
                 val laterLegs by container.laterLegs.collectAsStateWithLifecycle()
+                val planningLaterLegs by container.planningLaterLegs.collectAsStateWithLifecycle()
 
                 LaunchedEffect(driveStatus) {
                     if (driveStatus is DriveStatus.Arrived) {
@@ -130,7 +131,7 @@ class MainActivity : ComponentActivity() {
                 var cameraRange by remember { mutableStateOf(container.cameraRangePercent) }
 
                 PlanScreen(
-                    state = state.copy(laterLegs = laterLegs),
+                    state = state.copy(laterLegs = laterLegs, planningLaterLegs = planningLaterLegs),
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,
                     driveActivity = driveActivity,

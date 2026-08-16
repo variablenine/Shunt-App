@@ -90,13 +90,23 @@ class TessieAccountClient(
     }
 
     /**
-     * Read the car's current state from Tessie's cache. `use_cache=true` means
-     * this never wakes the vehicle — it is safe to call while it sleeps.
+     * Read the car's current state.
+     *
+     * Cached by default (`use_cache=true`), which never wakes the vehicle and is
+     * what makes the drive monitor's charging reads free — the whole reason
+     * those can run every 45 seconds without costing the car anything.
+     *
+     * [fresh] asks the car itself instead, and **will wake it**. That is the
+     * wrong trade for anything on a timer and the only correct one for the
+     * capability probe: a probe that sends a command and then reads a cache is
+     * measuring the cache. Every accepted step came back "car state unreadable"
+     * on a real car for exactly that reason — the read was answered from state
+     * captured before the command was ever sent.
      */
-    suspend fun activeRoute(token: String, vin: String): ActiveRoute? {
+    suspend fun activeRoute(token: String, vin: String, fresh: Boolean = false): ActiveRoute? {
         if (token.isBlank() || vin.isBlank()) return null
         val request = Request.Builder()
-            .url("$baseUrl/$vin/state?use_cache=true")
+            .url("$baseUrl/$vin/state?use_cache=${!fresh}")
             .header("Authorization", "Bearer $token")
             .get()
             .build()

@@ -358,6 +358,17 @@ class AppContainer(context: Context) {
     val laterLegs = MutableStateFlow<List<PlannedRoute>>(emptyList())
 
     /**
+     * Whether more legs of the current trip are still being planned.
+     *
+     * The map draws a dashed line from the end of what is planned to the
+     * destination while this is true. It is a distinct fact from "the drawn
+     * route stops short", which is why it is tracked rather than inferred: a
+     * trip whose planning has *finished* short of the destination — because a
+     * leg failed — must not keep promising something is on the way.
+     */
+    val planningLaterLegs = MutableStateFlow(false)
+
+    /**
      * For work that outlives a screen but not the process — planning the later
      * legs of a trip in particular, which must survive the plan screen going
      * away when the driving sheet takes over.
@@ -387,6 +398,7 @@ class AppContainer(context: Context) {
     fun cancelRemainingLegs() {
         legJob?.cancel()
         legJob = null
+        planningLaterLegs.value = false
         laterLegs.value = emptyList()
         // Conflated, so at most one can be waiting — but draining is what makes
         // this true regardless of the channel's capacity.
@@ -397,8 +409,14 @@ class AppContainer(context: Context) {
     fun planRemainingLegs(points: List<GeoPoint>, destination: Destination) {
         legJob?.cancel()
         laterLegs.value = emptyList()
+        planningLaterLegs.value = false
         if (points.size < 2) return
+        planningLaterLegs.value = true
         legJob = appScope.launch(Dispatchers.Default) {
+            // Every exit from the loop below has to clear this, including
+            // cancellation — a flag left set draws a line to the destination
+            // that nothing is ever going to fill in.
+            try {
             var points = points
             while (points.size >= 2 && isActive) {
                 diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
@@ -460,6 +478,9 @@ class AppContainer(context: Context) {
                 )
                 if (outcome.remaining.size < 2) return@launch
                 points = outcome.remaining
+            }
+            } finally {
+                planningLaterLegs.value = false
             }
         }
     }

@@ -126,6 +126,12 @@ data class PlanUiState(
      * readily as while driving, because the phone plans them either way.
      */
     val laterLegs: List<PlannedRoute> = emptyList(),
+    /**
+     * Whether more legs are still on the way, which the map shows as a dashed
+     * line running on to the destination. Distinct from `laterLegs` being
+     * short: planning that has *stopped* short must not keep promising more.
+     */
+    val planningLaterLegs: Boolean = false,
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */
