@@ -596,6 +596,21 @@ or saying planning ran out of time. Both mean the same thing here.
 
 ---
 
+### B9 · Every leg keeps its pins
+*Fixed 2026-08-16.*
+
+**Setup.** Plan a trip long enough to be cut into legs and let them all land.
+
+**Pass.** White pins appear along **every** leg, not just the first.
+
+**Fail (as reported).** Leg one pinned, everything after it bare. Note this was a
+map bug rather than a routing one — the car was still being steered through the
+later pins — so a drive would have behaved correctly while the screen looked
+wrong. Worth knowing, because "the map shows no pins" and "the car has no pins"
+are very different problems.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

@@ -1881,6 +1881,42 @@ there is in that case.
 
 ---
 
+### F-37 · All pins vanish after the first leg
+*Observed: 2026-08-16. Fixed same day; introduced the same day.*
+
+> We lose all pins after the first leg
+
+With a screenshot showing leg one properly pinned and everything after it bare.
+
+Self-inflicted, one line, and worth recording because of the shape of the
+mistake rather than its size. The trimmed-lead plumbing added for F-32 published
+`trimmedLeadWaypoints` — **one leg's** surviving pins after a spur was cut — and
+the map used it like this:
+
+```kotlin
+steeringWaypoints = state.trimmedLeadWaypoints ?: overlay.waypoints
+```
+
+`overlay.waypoints` is every leg's pins merged. So the moment a trim or a seam
+re-plan fired at the first boundary, a value describing *one leg* replaced a
+value describing *the trip*, and every later leg's pins went with it. Before a
+trim fired it looked perfect, which is why it survived a build.
+
+The fix substitutes at the right level — the trimmed pins replace the lead leg's
+inside the overlay, and the later legs merge on top afterwards.
+
+**Display only, which is the one piece of luck here.** The chain actually sent to
+the car is built per leg in `AppContainer.planRemainingLegs` and reaches the
+monitor through its own channel, so the vehicle was still being steered through
+the later pins the whole time. The map was lying about the route, not losing it.
+
+General lesson, since this is the second time a leg-scoped value has been used
+where a trip-scoped one belonged (see also the leg chain in F-20): **name and
+place these so the scope is obvious at the call site.** A `trimmedLead…` value
+belongs next to the lead, not next to the trip.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

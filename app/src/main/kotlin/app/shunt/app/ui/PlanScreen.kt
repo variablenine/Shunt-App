@@ -119,7 +119,18 @@ fun PlanScreen(
     // line grows toward the destination as they land rather than appearing whole
     // at the end, which is the visible difference between "still working" and
     // "gave up".
-    val overlay = routeOverlay(state.phase).withLaterLegs(state.laterLegs)
+    // The trimmed lead replaces **only the lead leg's** pins, then the later
+    // legs are merged on top.
+    //
+    // Substituting it for the whole set — which is what this did — dropped every
+    // later leg's pins the instant a trim or a seam re-plan fired at the first
+    // boundary, because `trimmedLeadWaypoints` describes one leg and was being
+    // used as if it described the trip. Reported as "we lose all pins after the
+    // first leg", and that is exactly the shape: leg one pinned, everything
+    // after it bare.
+    val overlay = routeOverlay(state.phase)
+        .let { lead -> state.trimmedLeadWaypoints?.let { lead.copy(waypoints = it) } ?: lead }
+        .withLaterLegs(state.laterLegs)
     val laterLegLines = state.laterLegs.map { it.polyline }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -133,9 +144,10 @@ fun PlanScreen(
             routePolyline = state.trimmedLeadPolyline ?: overlay.polyline,
             laterLegLines = laterLegLines,
             passedCameras = overlay.passedCameras,
-            // Minus any pin left standing on a spur the leg trim removed — a
-            // pin off the route is a target the car would be steered to.
-            steeringWaypoints = state.trimmedLeadWaypoints ?: overlay.waypoints,
+            // Every leg's pins, with any left standing on a trimmed spur
+            // already removed — a pin off the route is a target the car would
+            // be steered to.
+            steeringWaypoints = overlay.waypoints,
             routeCameras = overlay.nearbyCameras,
             chargers = state.chargersOnRoute.mapIndexed { index, place ->
                 MapCharger(index.toLong(), place.location.lat, place.location.lon, place.title)
