@@ -86,13 +86,22 @@ sealed interface PlanOutcome {
          */
         val carriedForward: Boolean = false,
         /**
-         * The direct road onward from the leg boundary, when these options are
-         * only the first leg.
+         * The way onward from the leg boundary, for drawing the stretch that has
+         * not been planned yet. Always reaches the destination.
          *
-         * Free — it is a slice of the spine that was planned to choose the cut —
-         * and it lets the map draw the part not yet planned along **roads that
-         * exist** rather than as a straight line across country. Each leg that
-         * lands then replaces a piece of it with the camera-avoiding version.
+         * **Part road, part estimate, and the join is not marked.** As far as
+         * the spine was routed this is real road, sampled at `SPINE_SAMPLE_METERS`
+         * — free, because the spine had to be planned to choose the cut. Beyond
+         * that it is the straight chain through the stops still to come, because
+         * on a long trip the spine deliberately stops just past the leg window
+         * (see `spineProbe`) and there is no road here that anybody has routed.
+         *
+         * The estimate shrinks as the drive goes on: every leg that lands
+         * replaces a piece of this with the real camera-avoiding route.
+         *
+         * Sampling matters if this is ever drawn at close zoom — 5 km between
+         * points cuts corners visibly on a winding road. It is fine for the
+         * whole-trip overview it exists for.
          */
         val directAhead: List<GeoPoint> = emptyList(),
     ) : PlanOutcome {
@@ -350,6 +359,30 @@ class BrouterPlanner(
             legPoints = first
             remaining = rest
             directAhead = spine.subList(cut.index, spine.size)
+            // **Carry it to the destination, because the spine may not reach.**
+            //
+            // On a long trip `spineProbe` deliberately stops the direct road
+            // just past the leg window — the spine only has to choose a cut and
+            // draw this leg's corridor. `directAhead` is a slice of it, so it
+            // stopped wherever the probe did: measured at 1,662 km short of a
+            // 2,000 km destination, and 462 km short of an 800 km one when the
+            // full spine timed out and the probe was used instead.
+            //
+            // That is what made the symptom look inconsistent between trips.
+            // Under `SPINE_FULL_LIMIT_METERS` the spine runs the whole way and
+            // the pending line is complete; over it, or on any trip where the
+            // full spine ran out of time, it stops in open country. The second
+            // of those depends on the *clock*, so one trip could do both.
+            //
+            // Past what was routed there is no road to draw, so it continues as
+            // the straight chain through the stops still to come — sampled at
+            // the same spacing so the line stays uniform rather than ending in
+            // one enormous chord. It is an estimate, and it shrinks: every leg
+            // that lands replaces a piece of it with real road.
+            val unknownTail = listOf(directAhead.last()) + remaining.drop(1)
+            if (straightLength(unknownTail) > SPINE_SAMPLE_METERS) {
+                directAhead = directAhead + sampleSpine(unknownTail).drop(1)
+            }
             spine = spine.subList(0, cut.index + 1)
         }
         // The trip's own length, for the banner. Taken from the spine when it

@@ -278,4 +278,26 @@ class LegPlanningCharacterizationTest {
         assertTrue(outcome.directAhead.isEmpty(), "so there is no pending road")
         assertTrue(outcome.wholeTripMeters == null, "and no separate whole-trip figure")
     }
+
+    @Test
+    fun `the pending line is sampled at the spine's own spacing`() {
+        // Step 3 of the investigation, pinned rather than left to inspection.
+        // directAhead is a slice of the sampled spine, so its resolution is
+        // SPINE_SAMPLE_METERS — 5 km. That is what makes it cut corners across
+        // a winding road, and it is why this is an overview line rather than
+        // something to draw at street zoom.
+        val destination = east(2_000_000.0)
+        val outcome = kotlinx.coroutines.runBlocking { planTo(destination) }
+
+        val gaps = (1 until outcome.directAhead.size)
+            .map { haversineMeters(outcome.directAhead[it - 1], outcome.directAhead[it]) }
+        assertTrue(gaps.isNotEmpty(), "the pending line must have segments to measure")
+        // Generous either side: the sampler emits a final point at whatever is
+        // left over, and the straight tail is sampled the same way.
+        assertTrue(
+            gaps.count { it > 8_000.0 } <= 2,
+            "no leg of the pending line should be far over the 5 km sampling: " +
+                gaps.filter { it > 8_000.0 }.map { it.toInt() },
+        )
+    }
 }
