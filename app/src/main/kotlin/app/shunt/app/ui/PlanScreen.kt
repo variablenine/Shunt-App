@@ -39,6 +39,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -115,6 +116,24 @@ fun PlanScreen(
     /** What Shunt is doing with the car right now, for the driving sheet. */
     driveActivity: app.shunt.app.drive.DriveActivity = app.shunt.app.drive.DriveActivity.Watching,
 ) {
+    // The direct road onward, kept across the tap on Go.
+    //
+    // It is carried on the Solved phase because that is where planning computes
+    // it, and reading it from there alone meant the pending line lost its shape
+    // the instant the driving sheet took over — falling back to a ruled straight
+    // line across country for exactly the part of the trip where later legs are
+    // still landing. The road onward does not stop being true when the car
+    // starts moving; only a new trip invalidates it.
+    var directAhead by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    LaunchedEffect(state.phase) {
+        val phase = state.phase
+        directAhead = when {
+            phase is Phase.Solved -> phase.directAhead
+            phase is Phase.Browsing -> emptyList()
+            else -> directAhead
+        }
+    }
+
     // The chosen leg, plus every later leg that has been planned so far. The
     // line grows toward the destination as they land rather than appearing whole
     // at the end, which is the visible difference between "still working" and
@@ -164,7 +183,7 @@ fun PlanScreen(
             followTo = state.aimedAt.takeIf { state.phase is Phase.Driving },
             // The direct road onward, so the pending stretch follows real roads
             // instead of cutting across country.
-            directAhead = (state.phase as? Phase.Solved)?.directAhead.orEmpty(),
+            directAhead = directAhead,
         )
 
         // Whether the search panel is expanded over the map.

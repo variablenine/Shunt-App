@@ -611,6 +611,64 @@ are very different problems.
 
 ---
 
+### B10 · The line survives switching between the options
+*Fixed 2026-08-19.*
+
+**Setup.** Plan a trip long enough to be cut into legs — over
+`LegSplitter.MAX_LEG_METERS` — and wait for at least two later legs to land.
+Then tap between Fastest and Fewest cameras on the chooser.
+
+**Pass.** The route stays drawn the whole time. The later legs are replaced one
+by one as the new ones arrive; the dashed pending line to the destination keeps
+running throughout, and keeps running after a leg lands.
+
+**Fail (as reported).** The whole line back to the first boundary disappeared on
+the tap, and the pending line disappeared again a while later — the delay being
+how long the abandoned pass took to notice it had been cancelled. See F-41.
+
+**What to watch for that a test cannot see.** The carried legs are the *previous*
+trade-off's until they are replaced, so for a few seconds the line beyond the
+first boundary is the old choice. That is deliberate; a blank map was worse. If
+a leg ever fails to plan after a switch, everything from that point is dropped
+rather than left standing.
+
+---
+
+### B11 · The chooser opens on camera-free, and later legs follow it
+*Fixed 2026-08-19.*
+
+**Setup.** Plan any trip that returns more than one option.
+
+**Pass.** The chooser is already sitting on **Fewest cameras**. On a trip long
+enough to be split, the legs that land afterwards are camera-avoiding without
+anybody having tapped anything.
+
+**Fail (as reported).** It opened on Fastest, and — because the selection is what
+later legs are planned to — every leg after the first was planned as the plain
+fastest road. Reported twice as "the last leg still is taking the fastest route".
+
+**Note.** This changes what Go does by default. Confirm on a real trip that the
+route pushed to the car is the camera-free one and not the fastest, since nobody
+has to touch the chooser for it to be chosen now.
+
+---
+
+### C7 · The pending line marches instead of twitching
+*Fixed 2026-08-19; the cycle itself is held by `PendingDashesTest`.*
+
+**Setup.** Plan a long trip and watch the dashed line running from the end of
+what is planned to the destination pin.
+
+**Pass.** The dashes crawl steadily toward the destination. Nothing resets when
+a leg lands — the line gets shorter, the march does not restart — and tapping Go
+keeps the line following the road onward rather than snapping to a ruled
+diagonal.
+
+**Fail (as reported).** "Jumpy and weird": the pattern snapped backwards several
+times a second, and again whenever a leg landed.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

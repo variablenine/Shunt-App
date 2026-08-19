@@ -59,7 +59,10 @@ contributions on the right side of it.
 Working and reasonably trusted:
 
 - On-device camera-aware route planning (BRouter), with a Fastest → Balanced →
-  Fewest-cameras chooser.
+  Fewest-cameras chooser that **opens on fewest-cameras**. Not cosmetic: the
+  selection is the trade-off every *later* leg is planned to, so opening on
+  Fastest planned the rest of a long trip as the plain fastest road. See §6,
+  "The chooser's selection is the whole trip's".
 - The map: dark basemap, every known camera with its facing cone, tap for
   details, the route, live location, and **place names** — shops, parks,
   amenities. The basemap style draws none of those (it descends from Dark
@@ -889,6 +892,13 @@ them, and add new observations as they come in. Detail lives in
    boundary is chosen for being quiet. See §6, "A watched destination is not a
    reason to give up", and field note F-21.
 
+   **A second, unrelated cause was found for the same report in August 2026**,
+   and it is the one that had been doing most of the damage: the chooser opened
+   on FASTEST, and the selection is what every later leg is planned to. So the
+   last leg was not failing to avoid cameras — it was correctly planning the
+   fastest road, because that is what the untouched chooser was asking for. §6,
+   "The chooser's selection is the whole trip's", and F-41.
+
 12. **The camera-reach setting moved the warnings but not the route.** *Fixed,
    unconfirmed on a drive.* `CameraCluster` read the base range constants
    directly, so the nogo shapes handed to BRouter ignored
@@ -1101,6 +1111,53 @@ correctness point rather than a layout one — the cards are a choice *for this
 leg*, while later legs are planned once and begin at the same boundary whichever
 card is picked, so folding their distance into "Fastest" would describe a trip
 nobody is being offered. See F-25.
+
+### The chooser's selection is the whole trip's
+
+Which makes where it *starts* a routing decision rather than a UI default, and
+that was missed for a long time. `requestLaterLegs` plans every later leg to the
+selected option's `choice`, and the chooser opened on index 0 — FASTEST. So a
+driver who never touched it got a camera-aware first leg and a whole trip after
+it planned as the plain fastest road. Reported twice, both times as "the last leg
+still is taking the fastest route", and both times it looked like a bug in the
+last leg. `PlanViewModel.defaultOption` opens on fewest-cameras, falling back by
+camera count where that option does not exist — which is the app's purpose as
+well as the fix.
+
+**Changing the selection re-plans every later leg, and that must not blank the
+map.** Two things make it safe:
+
+- **The legs already drawn are carried** and replaced one at a time as the new
+  ones land, with leftovers dropped when the run finishes. Only when the
+  remaining trip is *identical*, which is exactly the switch case — a genuinely
+  new plan has different points, and showing it the last trip's legs would draw
+  a road nobody is going to drive.
+- **A cancelled run is not a stopped run.** `legJob?.cancel()` takes effect at a
+  suspension point and **a BRouter pass has none** — it is a tight CPU loop
+  bounded only by its own timeout. The abandoned run finishes the leg it was
+  computing, up to a minute, and everything it writes on the way out lands on
+  top of its replacement: it cleared `planningLaterLegs` (so the pending line
+  vanished mid-plan), appended its leg to the new run's list, and could hand
+  that leg to the drive monitor. `legRun` is a generation counter, and only the
+  current run may write anything. See F-41.
+
+**The line to the destination is drawn before it is planned.** A dashed,
+semitransparent line runs from the end of what is planned to the destination pin
+while later legs are still coming, following the direct road (`directAhead`, a
+slice of the spine already computed to choose the boundary) rather than cutting
+across country. It must never read as a route, which is what the transparency
+and the movement are for.
+
+The movement is worth knowing about, because it looks trivial and is not.
+MapLibre has no dash *offset* to animate, so it is faked by cycling dash patterns
+whose solid run sits half a line-width further along each time — Mapbox's own
+recipe, which is **fourteen** steps, seven walking the dash and seven walking the
+gap. Shipping the first seven alone snapped the pattern backwards several times a
+second. `PENDING_DASHES` carries all fourteen and `PendingDashesTest` holds the
+cycle continuous. Two other rules go with it: the phase is not Compose state and
+does not restart when a leg lands, and the map's render block skips rebuilding
+GeoJSON it has already uploaded — a long route is thousands of points, and the
+animation is the only thing on screen moving fast enough to show a dropped frame.
 
 One thing the tiles make non-negotiable: **the trip's whole bounding box is
 checked for missing tiles up front**, not the first leg's. Later legs are planned
@@ -1604,6 +1661,11 @@ Ordered roughly by what unblocks real use.
   gate, the watched-destination block (§7.11) and the camera-reach setting
   reaching the router (§7.12) were all diagnosed from field reports or the map,
   and none has been seen working in a car.
+- **[high] Confirm the chooser's new default on a real trip.** It opens on
+  fewest-cameras now, and nobody has to touch it for that to be what Go pushes
+  to the car — so the thing to check is that the route the car receives is the
+  camera-free one. §6, "The chooser's selection is the whole trip's", and
+  `docs/verification.md` B11.
 - **Pin refinement, done lazily** — compute the next few pins rather than all of
   them. Not a speed problem any more; a quality one, since a long route's pins
   currently share one budget between them.

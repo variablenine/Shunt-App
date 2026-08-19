@@ -70,6 +70,9 @@ class PlanViewModelTest {
         placeNamer: PlaceNamer? = null,
         rangeReader: VehicleRangeReader? = null,
         chargeStopFinder: ChargeStopFinder? = null,
+        onLaterLegsNeeded: (
+            (List<GeoPoint>, Destination, List<GeoPoint>, List<GeoPoint>, RouteChoice) -> Unit
+        )? = null,
     ) = PlanViewModel(
         search = { _, _ -> suggestions },
         planner = planner,
@@ -81,6 +84,7 @@ class PlanViewModelTest {
         placeNamer = placeNamer,
         rangeReader = rangeReader,
         chargeStopFinder = chargeStopFinder,
+        onLaterLegsNeeded = onLaterLegsNeeded,
         scope = scope,
     )
 
@@ -296,10 +300,66 @@ class PlanViewModelTest {
         model.onQueryChange("X"); advanceUntilIdle()
         model.onSuggestionSelected(0); advanceUntilIdle()
         var solved = assertIs<Phase.Solved>(model.state.value.phase)
-        assertEquals(RouteChoice.FASTEST, solved.chosen.choice)
-        model.onSelectRoute(1)
-        solved = assertIs<Phase.Solved>(model.state.value.phase)
         assertEquals(RouteChoice.FEWEST_CAMERAS, solved.chosen.choice)
+        model.onSelectRoute(0)
+        solved = assertIs<Phase.Solved>(model.state.value.phase)
+        assertEquals(RouteChoice.FASTEST, solved.chosen.choice)
+    }
+
+    @Test
+    fun `the chooser opens on the camera-free option, not the fastest road`() = runTest {
+        // The whole point of the app, and it also governs every later leg: the
+        // selection is the trade-off later legs are planned to, so opening on
+        // FASTEST planned the rest of a long trip as the plain fastest road.
+        val balanced = plannedRoute(RouteChoice.BALANCED, 800, added = 200)
+        val fewest = plannedRoute(RouteChoice.FEWEST_CAMERAS, 1200, added = 600)
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = routes(fastest, balanced, fewest),
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        val solved = assertIs<Phase.Solved>(model.state.value.phase)
+        assertEquals(RouteChoice.FEWEST_CAMERAS, solved.chosen.choice)
+    }
+
+    @Test
+    fun `later legs are asked for against the camera-free option`() = runTest {
+        // What the driver never chose still has to mean something: they are
+        // shown one chooser for the first leg, and every leg after it is planned
+        // to whatever that chooser is sitting on.
+        val balanced = plannedRoute(RouteChoice.BALANCED, 800, added = 200)
+        val fewest = plannedRoute(RouteChoice.FEWEST_CAMERAS, 1200, added = 600)
+        var asked: RouteChoice? = null
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = PlanOutcome.Routes(
+                listOf(fastest, balanced, fewest),
+                remaining = listOf(GeoPoint(39.9, -97.8), dest),
+            ),
+            onLaterLegsNeeded = { _, _, _, _, preference -> asked = preference },
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        assertEquals(RouteChoice.FEWEST_CAMERAS, asked)
+    }
+
+    @Test
+    fun `with nothing named, the chooser opens on whatever passes fewest cameras`() = runTest {
+        // A leg through empty country comes back with one route and nothing to
+        // choose between, so the named option may simply not exist.
+        val clean = plannedRoute(RouteChoice.BALANCED, 900)
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = routes(withCameras, clean),
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        val solved = assertIs<Phase.Solved>(model.state.value.phase)
+        assertEquals(0, solved.chosen.camerasPassed)
     }
 
     @Test

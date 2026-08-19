@@ -138,10 +138,15 @@ private const val PENDING_LAYER = "route-pending-line"
  * The marching-ants cycle for that line, in dash-pattern phases.
  *
  * MapLibre has no dash *offset* to animate, so movement is faked the way
- * Mapbox's own "animate a line" example does it: cycle a set of patterns whose
- * gap walks along the line. Each entry is (dash, gap) in line-widths.
+ * Mapbox's own "animate a line" example does it: cycle patterns whose solid run
+ * sits half a line-width further along each time. Entries alternate dash, gap,
+ * dash, gap … in line-widths, always starting with a dash.
+ *
+ * **All fourteen steps are load-bearing.** The first seven walk the leading
+ * dash and the second seven walk the gap; the cycle is continuous only with
+ * both, and `PendingDashesTest` holds it there.
  */
-private val PENDING_DASHES: List<Array<Float>> = listOf(
+internal val PENDING_DASHES: List<Array<Float>> = listOf(
     arrayOf(0f, 4f, 3f),
     arrayOf(0.5f, 4f, 2.5f),
     arrayOf(1f, 4f, 2f),
@@ -149,6 +154,19 @@ private val PENDING_DASHES: List<Array<Float>> = listOf(
     arrayOf(2f, 4f, 1f),
     arrayOf(2.5f, 4f, 0.5f),
     arrayOf(3f, 4f, 0f),
+    // **The second half, and leaving it out is what made the ants stutter.**
+    //
+    // The first seven walk the leading dash from 0 to 3 line-widths; the cycle
+    // is only continuous if the *gap* then walks the same way, which is what
+    // these do. Stopping at seven and starting over snapped the pattern 3.5
+    // widths backwards every 630 ms — read as a jump, because it was one.
+    arrayOf(0f, 0.5f, 3f, 3.5f),
+    arrayOf(0f, 1f, 3f, 3f),
+    arrayOf(0f, 1.5f, 3f, 2.5f),
+    arrayOf(0f, 2f, 3f, 2f),
+    arrayOf(0f, 2.5f, 3f, 1.5f),
+    arrayOf(0f, 3f, 3f, 1f),
+    arrayOf(0f, 3.5f, 3f, 0.5f),
 )
 
 /** How fast the ants march. Slow enough to read as "working", not as urgent. */
@@ -472,9 +490,9 @@ fun RouteMap(
     // finished plan costs nothing — this is a redraw of a style layer several
     // times a second, and the phone is often planning routes on every other
     // core while it runs.
-    val pendingTail = remember(routeLines, destination, planningAhead) {
-        if (!planningAhead) null else routeLines.lastOrNull { it.size >= 2 }?.lastOrNull()
-    }
+    val pendingTail = if (!planningAhead) null else routeLines.lastOrNull { it.size >= 2 }?.lastOrNull()
+    val pendingLine = pendingLineOf(pendingTail, destination, directAhead)
+
     // **The dash phase is deliberately not Compose state.**
     //
     // It was, and that is what made the animation jump: every frame changed a
@@ -485,16 +503,23 @@ fun RouteMap(
     //
     // Setting one paint property on one layer is all this ever needed, so it is
     // done straight to the style and Compose is not told about it at all.
-    LaunchedEffect(pendingTail, destination, style) {
+    //
+    // **The phase also outlives the line it is drawn on.** Keyed on the tail, the
+    // loop restarted from phase zero every time a leg landed — so the one moment
+    // the driver is actually watching the line was the one moment it snapped
+    // back to the start of the cycle. It is held in a plain array rather than
+    // Compose state for the reason above: mutating it must not recompose.
+    val dashPhase = remember { intArrayOf(0) }
+    val marching = pendingLine != null
+    LaunchedEffect(marching, style) {
         val loaded = style ?: return@LaunchedEffect
-        if (pendingTail == null || destination == null) return@LaunchedEffect
-        var phase = 0
+        if (!marching) return@LaunchedEffect
         while (true) {
             delay(PENDING_FRAME_MILLIS)
-            phase = (phase + 1) % PENDING_DASHES.size
+            dashPhase[0] = (dashPhase[0] + 1) % PENDING_DASHES.size
             runCatching {
                 loaded.getLayerAs<LineLayer>(PENDING_LAYER)
-                    ?.setProperties(PropertyFactory.lineDasharray(PENDING_DASHES[phase]))
+                    ?.setProperties(PropertyFactory.lineDasharray(PENDING_DASHES[dashPhase[0]]))
             }
         }
     }
@@ -543,14 +568,39 @@ fun RouteMap(
         }
     }
 
+    // What was last handed to the map, so an unchanged value is not rebuilt.
+    //
+    // The update block below runs on **every** recomposition, and each run walks
+    // every point of every leg to build GeoJSON and re-uploads it. On a long
+    // trip that is thousands of points, and the marching ants are the thing it
+    // shows up on — the animation is the only thing on the map moving fast
+    // enough for a dropped frame to be visible. Comparing the inputs is far
+    // cheaper than rebuilding them.
+    //
+    // Plain arrays rather than Compose state, for the same reason as the dash
+    // phase above: writing to them must not cause a recomposition. The style is
+    // part of each key, so a style reload re-adds the layers rather than being
+    // skipped as unchanged.
+    val renderedRoute = remember { arrayOfNulls<Any>(1) }
+    val renderedPending = remember { arrayOfNulls<Any>(1) }
+
     Box(modifier = modifier) {
         AndroidView(factory = { mapView }, modifier = Modifier) { view ->
             val loadedStyle = style ?: return@AndroidView
             if (showLocation && hasLocationPermission && !locationActivated.value) {
                 if (activateLocationDot(view, loadedStyle, context)) locationActivated.value = true
             }
-            renderRoute(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
-            renderPending(loadedStyle, pendingTail, destination, directAhead)
+            val routeKey: Any =
+                listOf(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
+            if (renderedRoute[0] != routeKey) {
+                renderRoute(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
+                renderedRoute[0] = routeKey
+            }
+            val pendingKey: Any = listOf(loadedStyle, pendingLine)
+            if (renderedPending[0] != pendingKey) {
+                renderPending(loadedStyle, pendingLine)
+                renderedPending[0] = pendingKey
+            }
             renderChargers(loadedStyle, chargers)
             renderCameras(loadedStyle, viewportCameras)
             view.getMapAsync { map -> fitRouteOnce(map, routePolyline, passedCameras, fitKey, destination) }
@@ -679,41 +729,18 @@ private fun centerOnUserLocation(view: MapView): Boolean {
  * working. This says the difference out loud: a solid line for road that has
  * been planned, a marching dashed one for the part that has not.
  *
- * Deliberately drawn as a straight line rather than the direct road. It is not
- * a route and must not be mistakable for one — it is a statement that something
- * is still coming, and the movement is what carries that.
+ * Semitransparent and dashed so it is never mistakable for a planned route — it
+ * is a statement that something is still coming, and the movement carries that.
+ * The shape is [pendingLineOf]'s.
  *
  * Cleared by setting the source to an empty collection rather than by skipping
  * the update, which is the same trap that once left a cancelled route on the
  * map forever: a source that is only ever *set* keeps its last value.
  */
-private fun renderPending(
-    style: Style,
-    tail: GeoPoint?,
-    destination: GeoPoint?,
-    /**
-     * The direct road onward from the end of what is planned, when it is known.
-     *
-     * The spine is already computed to choose the leg boundary, so following it
-     * costs nothing and says far more than a straight line: the pending stretch
-     * runs along roads that exist, and each leg that lands replaces a piece of
-     * it with the camera-avoiding version. Empty falls back to the straight
-     * line, which is all there is on a trip whose spine could not be routed.
-     */
-    directAhead: List<GeoPoint>,
-) {
-    val show = tail != null && destination != null &&
-        // Nothing to draw once the plan has arrived where it is going. The
-        // threshold is generous: a leg boundary lands on a road near the
-        // destination, not on top of it.
-        app.shunt.solver.geo.haversineMeters(tail, destination) > PENDING_MIN_METERS
-    val features = if (!show) {
+private fun renderPending(style: Style, line: List<GeoPoint>?) {
+    val features = if (line == null || line.size < 2) {
         FeatureCollection.fromFeatures(emptyList())
     } else {
-        // From the end of what is planned, along the direct road where it is
-        // known, and on to the destination.
-        val ahead = directAhead.filter { onwardOf(tail!!, it, destination!!) }
-        val line = listOf(tail!!) + ahead + destination!!
         FeatureCollection.fromFeatures(
             arrayOf(
                 Feature.fromGeometry(
@@ -737,9 +764,44 @@ private fun renderPending(
                 // the route it is waiting for.
                 PropertyFactory.lineOpacity(0.45f),
                 PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                // Dashed from the moment it exists. Without this the line was
+                // drawn solid until the first animation frame landed, which on
+                // a layer created mid-plan is a flash of something that looks
+                // like a planned route.
+                PropertyFactory.lineDasharray(PENDING_DASHES[0]),
             ),
         )
     }
+}
+
+/**
+ * The line to draw from the end of what is planned to where the trip is going,
+ * or null when there is nothing pending.
+ *
+ * [directAhead] is the direct road onward from the end of what is planned, when
+ * it is known. The spine is already computed to choose the leg boundary, so
+ * following it costs nothing and says far more than a straight line: the pending
+ * stretch runs along roads that exist, and each leg that lands replaces a piece
+ * of it with the camera-avoiding version. Empty falls back to the straight line,
+ * which is all there is on a trip whose spine could not be routed.
+ *
+ * Computed in composition rather than inside the render so the caller can tell
+ * an unchanged line from a changed one without rebuilding its GeoJSON.
+ */
+private fun pendingLineOf(
+    tail: GeoPoint?,
+    destination: GeoPoint?,
+    directAhead: List<GeoPoint>,
+): List<GeoPoint>? {
+    if (tail == null || destination == null) return null
+    // Nothing to draw once the plan has arrived where it is going. The threshold
+    // is generous: a leg boundary lands on a road near the destination, not on
+    // top of it.
+    if (app.shunt.solver.geo.haversineMeters(tail, destination) <= PENDING_MIN_METERS) return null
+    // From the end of what is planned, along the direct road where it is known,
+    // and on to the destination.
+    val ahead = directAhead.filter { onwardOf(tail, it, destination) }
+    return listOf(tail) + ahead + destination
 }
 
 /**

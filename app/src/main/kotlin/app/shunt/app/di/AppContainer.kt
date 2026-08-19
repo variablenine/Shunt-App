@@ -360,6 +360,33 @@ class AppContainer(context: Context) {
     private var legJob: Job? = null
 
     /**
+     * Which run of [planRemainingLegs] is the current one.
+     *
+     * **A cancelled job keeps running until it reaches a suspension point, and a
+     * BRouter pass has none** — it is a tight CPU loop bounded only by its own
+     * timeout. So `legJob?.cancel()` does not stop the previous run: it finishes
+     * the leg it was computing, which can be a minute, and only then unwinds.
+     * Everything it wrote on the way out landed on top of the run that replaced
+     * it — its `finally` cleared [planningLaterLegs] while the new run was still
+     * working, so the pending line vanished, and its leg was appended to the new
+     * run's list, which is a leg planned to a trade-off nobody chose.
+     *
+     * Reported as the line disappearing when switching between the options and
+     * again "after calculating a leg" — the delay between the two being exactly
+     * how long the abandoned pass took to notice.
+     */
+    private var legRun = 0
+
+    /**
+     * The remaining trip the current run of [planRemainingLegs] was given.
+     *
+     * How "the same trip again" is recognised, so a re-plan for a different
+     * trade-off can keep the legs already drawn while a genuinely new trip
+     * cannot inherit the last one's.
+     */
+    private var legPoints: List<GeoPoint> = emptyList()
+
+    /**
      * Later legs of the trip, as they are planned, for the map to draw.
      *
      * Held here rather than in the plan screen's state because planning outlives
@@ -424,11 +451,12 @@ class AppContainer(context: Context) {
      * kept a leg in the channel would have handed it to the *next* drive.
      */
     fun cancelRemainingLegs() {
+        legRun++
         legJob?.cancel()
         legJob = null
+        legPoints = emptyList()
         planningLaterLegs.value = false
         trimmedLeadPolyline.value = null
-        trimmedLeadWaypoints.value = null
         trimmedLeadWaypoints.value = null
         laterLegs.value = emptyList()
         // Conflated, so at most one can be waiting — but draining is what makes
@@ -461,20 +489,55 @@ class AppContainer(context: Context) {
          */
         preference: RouteChoice = RouteChoice.FEWEST_CAMERAS,
     ) {
+        val run = ++legRun
         legJob?.cancel()
-        laterLegs.value = emptyList()
+        // **Keep the legs already on the map when this is the same trip again.**
+        //
+        // Switching the chooser from fastest to camera-free re-plans every later
+        // leg, and emptying the list first blanked the whole line back to the
+        // first boundary for as long as the new ones took — which on a
+        // cross-state trip is most of a minute of the map showing a route that
+        // stops in open country. Reported as "the whole line disappears when I
+        // switch between camera free and fastest".
+        //
+        // Carried only when the *remaining trip* is identical, which is exactly
+        // the switch case: a genuinely new plan has different points, and
+        // showing it the last trip's legs would be drawing a road nobody is
+        // going to drive. They are replaced one by one as the new legs land and
+        // any leftovers dropped when the run finishes, so the stale ones are
+        // never the final answer.
+        val carried = if (points == legPoints) laterLegs.value else emptyList()
+        legPoints = points
+        laterLegs.value = carried
         planningLaterLegs.value = false
+        // The trim belongs to the option being replaced, so it cannot be
+        // carried: it is a whole polyline for the lead leg, and keeping it would
+        // draw the previous choice's route under the new one's label.
         trimmedLeadPolyline.value = null
         trimmedLeadWaypoints.value = null
-        if (points.size < 2) return
+        if (points.size < 2) {
+            legPoints = emptyList()
+            return
+        }
         planningLaterLegs.value = true
         legJob = appScope.launch(Dispatchers.Default) {
-            // Every exit from the loop below has to clear this, including
-            // cancellation — a flag left set draws a line to the destination
-            // that nothing is ever going to fill in.
+            // This run's own legs. Kept separately from what the map is shown,
+            // which may still carry the previous run's tail: the seam and trim
+            // below must only ever look at legs this run planned, or a boundary
+            // would be repaired against a road from the other trade-off.
+            val planned = mutableListOf<PlannedRoute>()
+            fun publish() {
+                if (run != legRun) return
+                laterLegs.value = planned + carried.drop(planned.size)
+            }
+            // Every exit from the loop below has to clear planningLaterLegs,
+            // including cancellation — a flag left set draws a line to the
+            // destination that nothing is ever going to fill in. Guarded by
+            // [legRun] so an abandoned run cannot clear it out from under its
+            // replacement.
             try {
             var points = points
-            while (points.size >= 2 && isActive) {
+            while (points.size >= 2 && isActive && run == legRun) {
                 diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
                 val outcome = runCatching {
                     brouterPlanner.plan(
@@ -525,7 +588,7 @@ class AppContainer(context: Context) {
                 // needs to go backwards after it found the way to the next
                 // spot". Both legs are correct routes; the spur is the overlap.
                 var leg = chosen
-                val previousLegs = laterLegs.value
+                val previousLegs = planned.toList()
                 val earlier = previousLegs.lastOrNull()?.polyline
                     ?: trimmedLeadPolyline.value
                     ?: leadPolyline
@@ -563,10 +626,11 @@ class AppContainer(context: Context) {
                         trimmedLeadWaypoints.value = LegJoin.pinsOn(trim.previous, leadWaypoints)
                     } else {
                         val earlierLeg = previousLegs.last()
-                        laterLegs.value = previousLegs.dropLast(1) + earlierLeg.copy(
+                        planned[planned.lastIndex] = earlierLeg.copy(
                             polyline = trim.previous,
                             waypoints = LegJoin.pinsOn(trim.previous, earlierLeg.waypoints),
                         )
+                        publish()
                     }
                 }
 
@@ -582,12 +646,18 @@ class AppContainer(context: Context) {
                     polyline = leg.polyline,
                     remaining = outcome.remaining,
                 )
+                // Not from a run that has been replaced: the drive monitor
+                // appends whatever arrives here, and a leg planned to a
+                // trade-off the driver moved off would be spliced onto the one
+                // they are actually on.
+                if (run != legRun) return@launch
                 legExtensions.trySend(legPlan)
                 // Onto the map as well as into the drive. The line growing
                 // toward the destination is the visible difference between
                 // "still working" and "gave up", and it has to happen from a
                 // standstill as readily as while moving.
-                laterLegs.value = laterLegs.value + leg
+                planned += leg
+                publish()
                 diagnostics.record(
                     DiagnosticLog.Kind.PLAN,
                     "next leg ready: ${chosen.distanceMeters / 1000} km, ${chosen.camerasPassed} cameras",
@@ -596,7 +666,18 @@ class AppContainer(context: Context) {
                 points = outcome.remaining
             }
             } finally {
-                planningLaterLegs.value = false
+                // Only the current run may speak for the trip. An abandoned one
+                // reaches here long after it stopped being the answer — see
+                // [legRun] — and clearing the flag then took the pending line
+                // away while its replacement was still working.
+                if (run == legRun) {
+                    planningLaterLegs.value = false
+                    // Whatever of the previous run's legs is still standing goes
+                    // now: planning has stopped, so anything not planned by this
+                    // run is not going to be replaced, and a leg from the other
+                    // trade-off left on the map would be read as this one's.
+                    laterLegs.value = planned.toList()
+                }
             }
         }
     }

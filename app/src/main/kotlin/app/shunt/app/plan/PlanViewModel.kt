@@ -316,7 +316,8 @@ class PlanViewModel(
                 // are what turn a first-leg route into a whole one — waiting for
                 // Go meant the map showed a line stopping in open country for as
                 // long as somebody took to decide.
-                requestLaterLegs(outcome.remaining, destination, outcome.options, selected = 0)
+                val start = defaultOption(outcome.options)
+                requestLaterLegs(outcome.remaining, destination, outcome.options, selected = start)
                 // Opened before the chooser is shown, and therefore before Go
                 // can be tapped. Doing it inside checkRange() left a window
                 // between the two where the gate did not exist yet, which is the
@@ -328,6 +329,7 @@ class PlanViewModel(
                         phase = Phase.Solved(
                             destination,
                             outcome.options,
+                            selected = start,
                             timings = outcome.timings,
                             remaining = outcome.remaining,
                             wholeTripMeters = outcome.wholeTripMeters,
@@ -393,6 +395,31 @@ class PlanViewModel(
             // only happens on a deliberate tap.
             requestLaterLegs(solved.remaining, solved.destination, solved.options, index)
         }
+    }
+
+    /**
+     * Which option the chooser opens on: the one that passes fewest cameras.
+     *
+     * **It used to be index 0, which is the plain fastest road**, and that was
+     * wrong twice over. The obvious half is that the app exists to avoid
+     * cameras, so opening on the road that avoids none makes the driver opt in
+     * to the whole point of it. The half that actually did damage is that the
+     * selection governs every *later* leg — [requestLaterLegs] plans them to the
+     * chosen trade-off — so a driver who never touched the chooser got a first
+     * leg they could see was camera-aware and a whole trip after it planned as
+     * fastest. Reported twice from real routes: "the last leg still is taking
+     * the fastest route".
+     *
+     * Falls back through fewest-cameras by name, then by count, because a leg
+     * through empty country produces one route and nothing to choose between.
+     */
+    private fun defaultOption(options: List<PlannedRoute>): Int {
+        val named = options.indexOfFirst { it.choice == RouteChoice.FEWEST_CAMERAS }
+        if (named >= 0) return named
+        val best = options.withIndex().minWithOrNull(
+            compareBy({ it.value.camerasPassed }, { it.value.distanceMeters }),
+        )
+        return best?.index ?: 0
     }
 
     /**

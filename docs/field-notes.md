@@ -1986,6 +1986,71 @@ Two details worth keeping:
 
 ---
 
+### F-41 · The pending line stuttered, vanished on a switch, and vanished again a leg later
+*Observed: 2026-08-19, from real use. Fixed; the animation is confirmed by test,
+the rest wants a real long trip.*
+
+> the line animation is still jumpy and weird and the whole line disappears when
+> I switch between camera free and fastest. also it should start calculating
+> camera free by default first. also it seems like the line still disappears
+> after calculating a leg
+
+Four reports and, as it turned out, four separate causes. Worth keeping together
+because the middle two are the same bug seen twice, at two different delays.
+
+**The stutter was half a dash sequence.** MapLibre has no dash *offset* to
+animate, so the marching ants are faked by cycling patterns whose solid run sits
+half a line-width further along each time — Mapbox's own "animate a line"
+recipe, which is **fourteen** steps. Shunt had the first seven. Those walk the
+leading dash from 0 to 3 widths; the other seven walk the *gap* the same way, and
+without them the pattern snapped 3.5 widths backwards every 630 ms. `dashPhase`
+also restarted at zero whenever the tail moved, so the one moment the driver is
+actually watching — a leg landing — was the one moment it jumped. Both fixed;
+`PendingDashesTest` holds the cycle continuous, and it fails on the old sequence
+with a 4.0-width step at the wrap.
+
+**A cancelled leg run does not stop.** `legJob?.cancel()` looks like it ends the
+previous run, and it does not: cancellation only takes effect at a suspension
+point, and **a BRouter pass has none** — it is a tight CPU loop bounded by its
+own timeout. So the abandoned run finished the leg it was computing, which can
+be a minute, and only then unwound. Everything it wrote on the way out landed on
+top of the run that replaced it:
+
+- its `finally` cleared `planningLaterLegs`, which is what draws the pending
+  line — so the line disappeared *while its replacement was still working*;
+- its leg was appended to the new run's list, which is a leg planned to a
+  trade-off nobody chose;
+- and it could hand that leg to the drive monitor.
+
+That is both "the whole line disappears when I switch" and "the line still
+disappears after calculating a leg" — the same write, and the gap between the
+two reports is exactly how long the abandoned pass took to notice. `legRun` is a
+generation counter; only the current run may write anything.
+
+**Switching also blanked the map on purpose, and shouldn't have.** Changing the
+trade-off empties the later legs and re-plans them, which on a cross-state trip
+is most of a minute showing a route that stops in open country. The legs are now
+carried and replaced one at a time as the new ones land, with any leftovers
+dropped when the run finishes. Carried **only when the remaining trip is
+identical** — a genuinely new plan has different points, and showing it the last
+trip's legs would be drawing a road nobody is going to drive.
+
+**And the chooser opened on the fastest road.** `selected = 0`, which is FASTEST.
+Wrong twice: the app exists to avoid cameras, so opening on the road that avoids
+none makes the driver opt in to the point of it — and, far worse, the selection
+*governs every later leg*. A driver who never touched the chooser got a
+camera-aware first leg and a whole trip after it planned as the fastest road.
+That is the "the last leg still is taking the fastest route" report, twice, and
+it had nothing to do with the last leg. `defaultOption` opens on fewest-cameras,
+falling back by camera count where that option does not exist.
+
+One more thing came out of it: the pending line lost its shape the instant Go
+was tapped, because `directAhead` is carried on the Solved phase and nothing read
+it afterwards. The road onward does not stop being true when the car starts
+moving, so `PlanScreen` keeps it until a new trip replaces it.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the
