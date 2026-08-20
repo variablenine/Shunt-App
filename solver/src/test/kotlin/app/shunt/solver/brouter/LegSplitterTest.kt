@@ -152,34 +152,77 @@ class LegSplitterTest {
         }
     }
 
+    /** The [LegSplitter.Cut] a spine vertex at [alongMeters] would produce. */
+    private fun cutAt(line: List<GeoPoint>, alongMeters: Double): LegSplitter.Cut {
+        var along = 0.0
+        for (i in line.indices) {
+            if (i > 0) along += haversineMeters(line[i - 1], line[i])
+            if (along >= alongMeters) return LegSplitter.Cut(line[i], i, along, 0)
+        }
+        return LegSplitter.Cut(line.last(), line.lastIndex, along, 0)
+    }
+
     @Test
     fun `splitting keeps the driver's own stops, in order, on the right side`() {
-        val origin = GeoPoint(39.0, -98.0)
+        val line = spine(600)
+        val origin = line.first()
         val nearStop = GeoPoint(39.0 + 60_000 * metresNorth, -98.0)
         val farStop = GeoPoint(39.0 + 400_000 * metresNorth, -98.0)
-        val destination = GeoPoint(39.0 + 600_000 * metresNorth, -98.0)
-        val cut = GeoPoint(39.0 + 200_000 * metresNorth, -98.0)
+        val destination = line.last()
+        val cut = cutAt(line, 200_000.0)
 
-        val (first, rest) = LegSplitter.split(listOf(origin, nearStop, farStop, destination), cut)
+        val (first, rest) = LegSplitter.split(listOf(origin, nearStop, farStop, destination), line, cut)
 
-        assertEquals(listOf(origin, cut), first, "the first leg runs from the origin to the boundary")
         assertEquals(
-            listOf(cut, farStop, destination),
+            listOf(origin, nearStop, cut.point),
+            first,
+            "a stop before the boundary belongs to the first leg — it used to be dropped from both",
+        )
+        assertEquals(
+            listOf(cut.point, farStop, destination),
             rest,
             "the rest of the trip starts at the boundary and keeps every stop still ahead",
         )
     }
 
     @Test
-    fun `a trip with no stops splits into two plain runs`() {
+    fun `a stop is ordered along the road, not by how far it is from the origin`() {
+        // The straight-line proxy this used to use misorders whenever the road
+        // bends. Here the spine runs north and then turns back south-west, so a
+        // stop late on the return limb is *nearer* the origin as the crow flies
+        // than a boundary early on the outbound one — and was therefore filed as
+        // "before the cut", which deleted it from the trip entirely.
         val origin = GeoPoint(39.0, -98.0)
-        val destination = GeoPoint(39.0 + 600_000 * metresNorth, -98.0)
-        val cut = GeoPoint(39.0 + 200_000 * metresNorth, -98.0)
+        val out = (0..40).map { GeoPoint(39.0 + it * 5_000 * metresNorth, -98.0) }
+        // Back down a parallel road a few kilometres to the west.
+        val back = (1..30).map { GeoPoint(out.last().lat - it * 5_000 * metresNorth, -98.06) }
+        val line = out + back
+        val lateStop = back[25]
+        val destination = line.last()
+        val cut = cutAt(line, 120_000.0)
 
-        val (first, rest) = LegSplitter.split(listOf(origin, destination), cut)
+        assertTrue(
+            haversineMeters(origin, lateStop) < haversineMeters(origin, cut.point),
+            "fixture check: the late stop really is nearer the origin than the cut, in a straight line",
+        )
 
-        assertEquals(listOf(origin, cut), first)
-        assertEquals(listOf(cut, destination), rest)
+        val (first, rest) = LegSplitter.split(listOf(origin, lateStop, destination), line, cut)
+
+        assertTrue(lateStop !in first, "the stop is far past the boundary, not before it")
+        assertTrue(lateStop in rest, "a stop the driver added was deleted from the trip")
+    }
+
+    @Test
+    fun `a trip with no stops splits into two plain runs`() {
+        val line = spine(600)
+        val origin = line.first()
+        val destination = line.last()
+        val cut = cutAt(line, 200_000.0)
+
+        val (first, rest) = LegSplitter.split(listOf(origin, destination), line, cut)
+
+        assertEquals(listOf(origin, cut.point), first)
+        assertEquals(listOf(cut.point, destination), rest)
     }
 
     @Test
@@ -193,21 +236,40 @@ class LegSplitterTest {
     }
 
     @Test
-    fun `a stop the driver added is never cut in front of`() {
-        // Reported from a real plan: a Supercharger added to a long trip showed
-        // on the map but the route did not go there. It had fallen past the leg
-        // boundary, so the chooser's route ignored it entirely.
-        //
-        // A stop is the best boundary available — a point the route must pass
-        // through, chosen by the person driving — so nothing invented may come
-        // before it.
+    fun `a stop inside the leg window is the boundary`() {
+        // A stop is a point the route must pass through whatever happens, so
+        // ending a leg there costs nothing — while an invented cut bends both
+        // legs to reach a place nobody asked to be.
         val line = spine(600)
         val charger = GeoPoint(39.0 + 190_000 * metresNorth, -98.0)
 
-        assertNull(
+        val cut = assertNotNull(
             LegSplitter.cut(line, noCameras(), stops = listOf(charger)),
-            "a leg boundary was placed before somewhere the driver asked to be",
+            "a stop inside the window must produce a cut, not suppress splitting",
         )
+        assertEquals(charger, cut.point, "the leg should end where the driver asked to be")
+    }
+
+    @Test
+    fun `a stop before the leg window does not suppress the split`() {
+        // **The bug this replaces planned the whole trip.** A charger 100 km
+        // into a 900 km run is short of MIN_LEG_METERS, and the old guard read
+        // that as "do not cut at all" — handing back the unsplit plan that
+        // CLAUDE.md §7.10 measures at the fastest road and 43 cameras.
+        val line = spine(900)
+        val charger = GeoPoint(39.0 + 100_000 * metresNorth, -98.0)
+
+        val cut = assertNotNull(
+            LegSplitter.cut(line, noCameras(), stops = listOf(charger)),
+            "a stop short of the leg window must not cost the trip its split",
+        )
+        assertTrue(
+            cut.alongMeters >= LegSplitter.MIN_LEG_METERS,
+            "the boundary still belongs in the window, at ${cut.alongMeters} m",
+        )
+        // And the stop travels in the first leg rather than being cut in front of.
+        val (first, _) = LegSplitter.split(listOf(line.first(), charger, line.last()), line, cut)
+        assertTrue(charger in first, "the stop must be on the leg the chooser shows")
     }
 
     @Test

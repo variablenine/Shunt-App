@@ -5,6 +5,8 @@ import app.shunt.solver.geo.destinationPoint
 import app.shunt.solver.geo.haversineMeters
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -27,6 +29,71 @@ class LegJoinTest {
 
     private fun lengthOf(line: List<GeoPoint>): Double =
         (1 until line.size).sumOf { haversineMeters(line[it - 1], line[it]) }
+
+    // ---- Handing a leg's tail to the next leg ----------------------------
+    //
+    // The alternative to repairing a boundary is not creating one. A leg starts
+    // a little way *inside* the leg before it and that one is cut back to meet
+    // it, so the join is a vertex of both lines by construction — there is
+    // nothing to trim, no proximity threshold and no third routing pass.
+
+    @Test
+    fun `the handover sits a handover's length back from the end`() {
+        val leg = run(origin, 90.0, 1_000.0, 121) // 120 km east, 1 km apart
+        val handover = assertNotNull(LegJoin.handoverInto(leg))
+
+        val fromEnd = lengthOf(leg.subList(handover.index, leg.size))
+        assertTrue(
+            fromEnd >= LegJoin.HANDOVER_METERS && fromEnd < LegJoin.HANDOVER_METERS + 1_500,
+            "the next leg should take over ${LegJoin.HANDOVER_METERS} m back, not $fromEnd m",
+        )
+        assertEquals(leg[handover.index], handover.point, "the handover must be a vertex of the leg")
+    }
+
+    @Test
+    fun `truncating meets the handover exactly, so there is nothing to repair`() {
+        val leg = run(origin, 90.0, 1_000.0, 121)
+        val handover = assertNotNull(LegJoin.handoverInto(leg))
+        val kept = LegJoin.truncateAt(leg, handover)
+
+        assertEquals(
+            handover.point,
+            kept.last(),
+            "the published leg must end exactly where the next one is planned from",
+        )
+        assertTrue(kept.size >= 2, "what is kept must still be a line")
+        assertTrue(
+            kept.all { it in leg },
+            "the kept part must be a prefix of what was planned, not a new route",
+        )
+    }
+
+    @Test
+    fun `the handover carries the bearing the leg arrives on`() {
+        // Due north for the last stretch, so the next leg is planned setting off
+        // northward rather than free to turn back down the road just driven —
+        // which is what produced the loop around a camera at a boundary.
+        val leg = run(origin, 90.0, 1_000.0, 60) + run(destinationPoint(origin, 90.0, 59_000.0), 0.0, 1_000.0, 60)
+        val handover = assertNotNull(LegJoin.handoverInto(leg))
+
+        assertTrue(
+            handover.bearingDegrees < 5.0 || handover.bearingDegrees > 355.0,
+            "expected roughly north, got ${handover.bearingDegrees}",
+        )
+    }
+
+    @Test
+    fun `a leg with nothing to spare hands over nothing`() {
+        // Shorter than the handover plus what must remain: cutting it back would
+        // move the boundary somewhere nobody chose, which is the failure handing
+        // over exists to prevent. Null means this boundary keeps the old
+        // behaviour, and the trim is still there for it.
+        val tooShort = run(origin, 90.0, 1_000.0, 21) // 20 km
+        assertNull(LegJoin.handoverInto(tooShort))
+
+        val barelyLong = run(origin, 90.0, 1_000.0, 31) // 30 km, under 15 + 20
+        assertNull(LegJoin.handoverInto(barelyLong))
+    }
 
     @Test
     fun `a leg that doubles straight back loses the spur from both sides`() {

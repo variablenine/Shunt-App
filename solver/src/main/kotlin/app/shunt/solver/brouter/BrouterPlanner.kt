@@ -355,7 +355,7 @@ class BrouterPlanner(
             legPoints = points
             remaining = emptyList()
         } else {
-            val (first, rest) = LegSplitter.split(points, cut.point)
+            val (first, rest) = LegSplitter.split(points, spine, cut)
             legPoints = first
             remaining = rest
             directAhead = spine.subList(cut.index, spine.size)

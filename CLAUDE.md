@@ -1048,12 +1048,26 @@ rather than announcing arrival. It should be close to unreachable — the bounda
 is at least `MIN_LEG_METERS` of driving away and a leg plans in seconds — but
 announcing arrival in open country is the worse failure.
 
-**A stop the driver added is never cut in front of.** Reported from a real plan:
-a Supercharger added to a long trip appeared on the map but the route did not go
-there — it had fallen past the first leg's boundary, so the chooser's route
-ignored it and only a later leg would have reached it. A stop is the best
-boundary available anyway, better than anything `LegSplitter` can invent: a point
-the route must pass through, chosen by the person driving.
+**A stop inside the leg window is the boundary**, in preference to anything
+`LegSplitter` invents. That is free rather than a tie-break: a stop is a point
+the route must pass through whatever happens, so ending a leg there costs
+nothing, while an invented cut bends both legs to reach somewhere nobody asked
+to be.
+
+A stop *outside* the window changes nothing. Before it, the window floor is
+already past it and it travels in the first leg — `split` carries it. Beyond it,
+the cut lands short and a later leg reaches it, which is right: forcing a first
+leg long enough to include a stop most of a day away hands back the two-minute
+plan splitting exists to prevent.
+
+**Both of those were broken until August 2026, in ways that were silent.** The
+guard meant to keep a cut from landing in front of a stop was implemented as
+*plan the whole trip* — so a 900 km run with a charger 100 km in produced the
+unsplit plan §7.10 measures at the fastest road and 43 cameras. And `split`
+built the first leg as `[origin, cut]` while dropping the leading points of the
+remainder, so a stop before the boundary was in neither list and was **deleted
+from the trip**; it classified them by straight-line distance from the origin,
+which misorders whenever the road bends. See F-43.
 
 **Where the cut goes is otherwise the entire problem, and it is not a distance.** A leg
 boundary is a hard waypoint both legs must touch, so it costs the difference
@@ -1113,8 +1127,39 @@ same zero exposure. That is the real price of the boundaries, and it is worth
 knowing before anyone tunes `MAX_LEG_METERS`: raising it means fewer boundaries
 and less added distance, at the cost of a longer wait before the first leg.
 
-**The boundary can still cost a doubling-back, and that is trimmed rather than
-prevented.** Because the cut is chosen on the *direct* road, the leg after it may
+**A later leg is planned from *inside* the leg before it, not from the boundary.**
+That is the answer to the boundary problem rather than a repair for it. The
+constraint doing the damage is Shunt's own — leg N+1 must start exactly where
+leg N ended — and that point was chosen on the *direct* road before either route
+existed, so leg N optimises arriving there, leg N+1 optimises departing with no
+memory of how it arrived, and two individually optimal routes join badly. The
+spur, the C-shaped detour and the loop around a camera are all that one
+constraint.
+
+`LegJoin.handoverInto` takes a point `HANDOVER_METERS` (15 km) back inside the
+previous leg, with the bearing it arrives there on; the next leg is planned from
+*that*, and the previous leg is published truncated to meet it. The router
+re-decides the handed-over stretch as part of choosing its own first one, and the
+join is a vertex of both lines by construction — nothing to trim, no proximity
+threshold, no third routing pass.
+
+Two conditions, both load-bearing:
+
+- **The truncation happens at the moment the leg is planned**, not when the next
+  one lands. So nothing that has reached the map or the car is ever revised, and
+  §6.1 does not arise — there is no route in progress being changed.
+- **The lead boundary is exempt.** The lead leg is the chooser's: shown, and
+  possibly already pushed to the car. Truncating it *would* change a route in
+  progress, and the car would still hold pins for a stretch the next leg has
+  taken over. That one boundary keeps the trim and the seam re-plan below; every
+  boundary after it is planned right rather than repaired. Finishing the job
+  means giving the drive monitor a way to revise a leg it already has.
+
+`rejoinAtBoundary` is skipped wherever a handover happened, which also saves the
+three or four graph searches per boundary it spent to use one. See F-43.
+
+**The lead boundary can still cost a doubling-back, and that is trimmed rather
+than prevented.** Because the cut is chosen on the *direct* road, the leg after it may
 be planned freely from a point the camera-avoiding route never wanted to visit —
 so the first leg drives out to touch the boundary and the second comes straight
 back the same way. Both legs are correct; the spur is the overlap between them,
@@ -1699,26 +1744,23 @@ Ordered roughly by what unblocks real use.
   to the car — so the thing to check is that the route the car receives is the
   camera-free one. §6, "The chooser's selection is the whole trip's", and
   `docs/verification.md` B11.
-- **[high] The leg boundary, done properly: an overlap handover.** The seam is
-  hard to repair *after* the fact because the constraint that creates it — leg
-  N+1 must start exactly where leg N ended — is Shunt's, not BRouter's, and it
-  is avoidable. Plan leg N+1 from a point **inside** leg N, with leg N's
-  heading, and let the router choose the last 10-15 km of leg N for itself; then
-  publish leg N truncated at that point. The join is a vertex of both lines by
-  construction, so `trimDoubleBack`, `spliceSeam` and every `OVERLAP_/SPUR_/SEAM_`
-  constant become dead code — about 250 lines of the hardest-to-reason-about
-  logic in the module. The one thing to get right is §6.1: if the car is already
-  driving leg N, truncating it is a change to a route in progress, so check the
-  monitor's progress before publishing. From the research brief in F-42, which
-  cites file and line.
-- **[high] `LegSplitter`'s stop handling has two verified bugs.** A stop *inside*
-  the leg window suppresses the cut altogether rather than becoming the boundary
-  — so a long trip with a Supercharger 100 km in is planned whole, which is the
-  case §7.10 says produces the fastest road and 43 cameras. And `isBefore` orders
-  stops by straight-line distance from the origin, while `split` builds the first
-  leg as `[origin, cut]` and `dropWhile`s the rest — so a stop mis-ordered by that
-  proxy is **deleted from the trip**. Both are pure logic, unit-testable with no
-  tiles. See F-42.
+- ~~**[high] The leg boundary, done properly: an overlap handover.**~~ Done for
+  every boundary **except the first**: a later leg is planned from a point inside
+  the leg before it, which is then published truncated to meet it. §6, "A later
+  leg is planned from *inside* the leg before it", and F-43.
+- **[high] Finish the handover at the lead boundary.** The exemption is real
+  work, not an oversight: the lead leg has been shown on the chooser and may
+  already be pushed, so truncating it changes a route in progress *and* leaves
+  the car holding pins for a stretch the next leg has taken over. It needs the
+  drive monitor to be able to revise a leg it already has — a
+  `reviseLastLeg(polyline, chain)` that drops the pins past the handover point
+  without disturbing what the driver has already passed. Until then that one
+  boundary keeps `trimDoubleBack` and `rejoinAtBoundary`, which is also why
+  neither can be deleted yet.
+- ~~**[high] `LegSplitter`'s stop handling has two verified bugs.**~~ Both fixed:
+  a stop inside the leg window is now the boundary, and `split` orders stops
+  along the spine and carries every one into the leg it falls in. §6, "A stop
+  inside the leg window is the boundary", and F-43.
 - **Surface BRouter's own `indexInTrack` and snap distance.** `runRoute` throws
   away `track.matchedWaypoints`, which gives the exact index of each waypoint in
   the returned line, how far it had to snap to reach a road, and whether BRouter

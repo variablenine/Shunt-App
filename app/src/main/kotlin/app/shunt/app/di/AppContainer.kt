@@ -594,12 +594,28 @@ class AppContainer(context: Context) {
             // and the trim and the seam re-plan both stay.
             var arrivalBearing: Double? = leadPolyline.takeIf { it.size >= 2 }
                 ?.let { bearingDegrees(it[it.lastIndex - 1], it[it.lastIndex]) }
+            // Where this leg takes over from inside the leg before it, when the
+            // leg before it was one of ours. See [LegJoin.handoverInto]: rather
+            // than meeting the previous leg at a point chosen on the direct road
+            // before either route existed, a leg starts a little way *inside* it
+            // and re-decides that stretch as part of choosing its own first one.
+            //
+            // Null at the lead boundary, and deliberately. The lead leg is the
+            // chooser's — it has been shown, and by the time this runs it may
+            // have been pushed to the car — so shortening it is a change to a
+            // route in progress, which is §6.1 territory. That one boundary
+            // keeps the repair machinery below; every boundary after it is
+            // planned right rather than repaired.
+            var takeover: LegJoin.Handover? = null
             while (points.size >= 2 && isActive && run == legRun) {
                 diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
+                val tookOver = takeover
+                // The handover point replaces the boundary as this leg's start.
+                val legPoints = tookOver?.let { listOf(it.point) + points.drop(1) } ?: points
                 val outcome = runCatching {
                     brouterPlanner.plan(
-                        points = points,
-                        headingDegrees = arrivalBearing,
+                        points = legPoints,
+                        headingDegrees = tookOver?.bearingDegrees ?: arrivalBearing,
                         maxLegMeters = LegSplitter.MAX_LEG_METERS,
                         // Nobody is watching a spinner for this one. The car has
                         // at least LegSplitter.MIN_LEG_METERS of road left when
@@ -653,14 +669,18 @@ class AppContainer(context: Context) {
                 // Re-plan the neighbourhood of the boundary first, then fall
                 // back to trimming an exact retrace if that finds nothing.
                 //
-                // The boundary is a waypoint nobody asked for, chosen on the
-                // direct road before either leg existed, and both legs get bent
-                // to touch it — which draws a C around the line the trip
-                // actually wanted. A trim cannot help with that because no road
-                // is driven twice. Taking the constraint away and routing the
-                // few kilometres either side again can. See LegJoin.seamOf.
-                val seamed = rejoinAtBoundary(earlier, chosen.polyline)
-                val trim = seamed ?: LegJoin.trimDoubleBack(earlier, chosen.polyline)
+                // **Only where this leg did not take over from the one before
+                // it**, which is the lead boundary alone. Where it did, there is
+                // no boundary to repair: this leg was planned from a point
+                // inside the previous one and that one is cut back to meet it,
+                // so the join is a vertex of both lines by construction. Running
+                // the seam re-plan there would be three or four graph searches
+                // spent proving there is nothing to find.
+                val seamed = if (tookOver != null) null else rejoinAtBoundary(earlier, chosen.polyline)
+                val trim = when {
+                    tookOver != null -> LegJoin.Trimmed(earlier, chosen.polyline, 0.0)
+                    else -> seamed ?: LegJoin.trimDoubleBack(earlier, chosen.polyline)
+                }
                 if (trim.changed) {
                     diagnostics.record(
                         DiagnosticLog.Kind.PLAN,
@@ -692,6 +712,37 @@ class AppContainer(context: Context) {
                     }
                 }
 
+                // **Give the tail of this leg to the next one, before anything
+                // is published.** The stretch handed over is re-decided as part
+                // of planning the leg after this, so nothing that reaches the
+                // map or the car is ever revised — which is what makes handing
+                // over safe rather than another change to a route in progress.
+                //
+                // Only when there *is* a next leg, and only when enough of this
+                // one survives to still be a leg. See [LegJoin.handoverInto].
+                val handover = if (outcome.remaining.size >= 2) {
+                    LegJoin.handoverInto(leg.polyline)
+                } else {
+                    null
+                }
+                // The last stretch of this leg, which the next one replaces —
+                // real road onward from where the drawn line now ends, so the
+                // pending line has something to follow across the join.
+                val handedOver = handover
+                    ?.let { leg.polyline.subList(it.index, leg.polyline.size) }
+                    .orEmpty()
+                if (handover != null) {
+                    leg = leg.copy(
+                        polyline = LegJoin.truncateAt(leg.polyline, handover),
+                        waypoints = LegJoin.pinsOn(LegJoin.truncateAt(leg.polyline, handover), leg.waypoints),
+                    )
+                    diagnostics.record(
+                        DiagnosticLog.Kind.PLAN,
+                        "handing ${(LegJoin.HANDOVER_METERS / 1000).toInt()} km of this leg to the next one",
+                    )
+                }
+                takeover = handover
+
                 val legPlan = DrivePlan(
                     destination = destination,
                     // This leg's own end, not the trip's. `points.last()` is the
@@ -699,10 +750,15 @@ class AppContainer(context: Context) {
                     // put a waypoint hundreds of kilometres past the end of the
                     // leg being appended — the car would have been aimed at the
                     // destination the moment the extension landed.
-                    chain = leg.waypoints + (outcome.remaining.firstOrNull() ?: points.last()),
+                    chain = leg.waypoints +
+                        (handover?.point ?: outcome.remaining.firstOrNull() ?: legPoints.last()),
                     cameras = chosen.passedCameras,
                     polyline = leg.polyline,
-                    remaining = outcome.remaining,
+                    // What is left starts where the next leg starts, which after
+                    // a handover is inside this one rather than at the cut.
+                    remaining = handover
+                        ?.let { listOf(it.point) + outcome.remaining.drop(1) }
+                        ?: outcome.remaining,
                 )
                 // Not from a run that has been replaced: the drive monitor
                 // appends whatever arrives here, and a leg planned to a
@@ -717,11 +773,15 @@ class AppContainer(context: Context) {
                 planned += leg
                 publish()
                 // The road onward from *this* leg's end, replacing whatever the
-                // pending line was drawn along before it.
-                laterLegDirectAhead.value = outcome.directAhead
+                // pending line was drawn along before it. The handed-over tail
+                // comes first: it is road this leg actually routed, and without
+                // it the line would jump the width of the handover in a straight
+                // chord before picking the direct road up again.
+                laterLegDirectAhead.value = handedOver + outcome.directAhead
                 // The way this leg arrives at the next boundary, for the leg
                 // after it. Taken from the trimmed line where a trim fired, so
-                // it describes road that is still in the plan.
+                // it describes road that is still in the plan. A handover
+                // carries its own bearing and takes precedence.
                 arrivalBearing = leg.polyline.takeIf { it.size >= 2 }
                     ?.let { bearingDegrees(it[it.lastIndex - 1], it[it.lastIndex]) }
                 diagnostics.record(

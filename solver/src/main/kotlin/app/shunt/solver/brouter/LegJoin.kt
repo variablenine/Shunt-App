@@ -1,6 +1,7 @@
 package app.shunt.solver.brouter
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.geo.bearingDegrees
 import app.shunt.solver.geo.haversineMeters
 
 /**
@@ -118,6 +119,86 @@ object LegJoin {
      * [from] and [to] are points both legs already drive through, so a path
      * between them can be spliced in without inventing anything.
      */
+    /**
+     * How far back inside a leg the *next* leg takes over.
+     *
+     * ## Why a leg hands over rather than meeting at a point
+     *
+     * Everything else in this file repairs a boundary after the fact, and it is
+     * hard because the constraint that creates the damage is Shunt's own: leg
+     * N+1 must start exactly where leg N ended. That point was chosen on the
+     * *direct* road before either route existed, and both legs are then bent to
+     * touch it — leg N optimises arriving there, leg N+1 optimises departing
+     * with no memory of how it arrived, and the join between two individually
+     * optimal routes is jointly wrong. The spur, the C-shaped detour and the
+     * loop around a camera are all that.
+     *
+     * The constraint is avoidable. Plan leg N+1 from a point **inside** leg N,
+     * carrying leg N's heading there, and publish leg N truncated at that point.
+     * The router re-decides the last stretch of leg N as part of choosing the
+     * first stretch of leg N+1, which is the decision it should have been making
+     * all along. The join is a vertex of leg N and the first vertex of leg N+1
+     * by construction, so there is nothing to repair: no proximity threshold, no
+     * spur cap, no third routing pass.
+     *
+     * ## Sizing it
+     *
+     * Long enough to contain the decision — at least one junction spacing on the
+     * class of road a boundary lands on, which is why [SEAM_BACK_METERS] was
+     * 12 km by the same argument. Short enough that what is left of leg N is
+     * still a leg, which [MIN_KEPT_METERS] enforces rather than assumes.
+     */
+    const val HANDOVER_METERS = 15_000.0
+
+    /**
+     * What must remain of a leg after the next one takes over its tail.
+     *
+     * A leg shorter than this is not worth publishing on its own, and cutting it
+     * back that far would move the boundary somewhere nobody chose — the exact
+     * failure handing over is meant to prevent.
+     */
+    const val MIN_KEPT_METERS = 20_000.0
+
+    /** Where one leg hands over to the next, and the way the car arrives there. */
+    data class Handover(
+        /** A vertex of the previous leg, and the first point of the next one. */
+        val point: GeoPoint,
+        /** Its index in the previous leg, so the truncation is exact. */
+        val index: Int,
+        /** The bearing the previous leg arrives on, to plan the next leg with. */
+        val bearingDegrees: Double,
+    )
+
+    /**
+     * Where the leg after [previous] should take over, or null when [previous]
+     * is too short to give any of itself away.
+     *
+     * Null is not a failure: it means this boundary keeps the old behaviour, and
+     * the trim is still there for it.
+     */
+    fun handoverInto(
+        previous: List<GeoPoint>,
+        metersBack: Double = HANDOVER_METERS,
+        minKeptMeters: Double = MIN_KEPT_METERS,
+    ): Handover? {
+        if (previous.size < 2) return null
+        var walked = 0.0
+        var i = previous.lastIndex
+        while (i > 0 && walked < metersBack) {
+            walked += haversineMeters(previous[i - 1], previous[i])
+            i--
+        }
+        // The whole leg is inside the handover window, so there is nothing left
+        // to publish as a leg of its own.
+        if (i < 1) return null
+        if (lengthOf(previous, 0, i) < minKeptMeters) return null
+        return Handover(previous[i], i, bearingDegrees(previous[i - 1], previous[i]))
+    }
+
+    /** [previous], ending at the point the next leg takes over from. */
+    fun truncateAt(previous: List<GeoPoint>, handover: Handover): List<GeoPoint> =
+        previous.subList(0, handover.index + 1)
+
     data class Seam(
         val fromIndex: Int,
         val toIndex: Int,

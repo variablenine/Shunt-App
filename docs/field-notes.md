@@ -2124,6 +2124,82 @@ worth reading before touching any of it — it cites file and line for each clai
 
 ---
 
+### F-43 · The boundary, done by not creating one
+*Landed 2026-08-20, with the maintainer's go-ahead. Measured only in tests.*
+
+> Line animation is still feeling like it has a low frame rate. Also needs to
+> get rid of the dots that stay there I want just the moving dashes. […] You're
+> green to work on the overlap and the two stop bugs.
+
+**The animation was eleven frames a second, and the dots were the line caps.**
+The dash cycle stepped half a line-width every 90 ms — smooth in principle,
+choppy in fact. It steps a quarter width every 40 ms now, the same pace along
+the line in two and a half times as many frames, and the cycle is *generated*
+from the offset rather than written out, so the step is a dial and the
+missing-half-the-sequence bug of F-41 cannot recur.
+
+The dots were subtler and worth remembering. A pattern that walks its solid run
+along the line must contain zero-length dashes at the ends of the cycle —
+seventeen of the twenty-eight phases have one — and `LINE_CAP_ROUND` draws a
+zero-length dash as a **full circle**. They sit at fixed multiples of the period,
+so they read as stationary dots while the dashes move past them. Butt caps draw
+nothing for a zero-length dash.
+
+**`LegSplitter`'s two stop bugs, both as the research brief described them.**
+
+- A stop inside the leg window did not end the leg, it *suppressed the split
+  altogether* — the KDoc said one thing and the code did another. On a 900 km
+  trip with a charger 100 km in, that returned the unsplit plan CLAUDE.md §7.10
+  measures at the fastest road and 43 cameras. A stop inside the window is now
+  the boundary, which is free: the route must pass through it anyway.
+- `split` built the first leg as `[origin, cut]` and `dropWhile`d the rest, so a
+  stop before the boundary was in **neither** list — deleted from the trip. And
+  it classified stops by straight-line distance from the origin, which misorders
+  whenever the road bends. Both are ordered along the spine now, and every stop
+  lands in the leg it falls in.
+
+The rule that replaces "a cut is never made before the first stop" is narrower
+and stated in the KDoc: a stop *outside* the window changes nothing, because
+before the window it simply travels in the first leg, and beyond it the cut lands
+short of it and a later leg reaches it. Forcing a first leg long enough to
+include a stop most of a day away hands back the two-minute plan splitting exists
+to prevent.
+
+**And the overlap handover.** Everything else in `LegJoin` repairs a boundary
+after the fact, and it is hard because the constraint that creates the damage is
+Shunt's own: leg N+1 must start exactly where leg N ended. That point was chosen
+on the *direct* road before either route existed, so leg N optimises arriving
+there, leg N+1 optimises departing with no memory of how it arrived, and the join
+between two individually optimal routes is jointly wrong. The spur, the C-shaped
+detour and the loop around a camera at Neligh are all that.
+
+So a leg is now planned from a point **inside** the leg before it —
+`HANDOVER_METERS`, 15 km — carrying that leg's heading there, and the leg before
+it is published truncated at that point. The router re-decides the last stretch
+as part of choosing the first one, which is the decision it should have been
+making all along, and the join is a vertex of both lines by construction.
+
+Two things make it safe rather than merely better:
+
+- **The truncation happens before anything is published.** A leg is cut back at
+  the moment it is planned, not when the *next* one lands, so nothing that has
+  reached the map or the car is ever revised. That is what rules out §6.1: there
+  is no route in progress to change.
+- **The lead boundary is exempt, deliberately.** The lead leg is the chooser's —
+  shown, and possibly already pushed — so shortening it *would* be a change to a
+  route in progress, and the car would hold pins for a stretch the next leg has
+  taken over. That one boundary keeps the trim and the seam re-plan; every
+  boundary after it is planned right rather than repaired. Doing it properly
+  needs the monitor to be able to revise a leg it has already been given, which
+  is its own piece of work.
+
+`rejoinAtBoundary` is skipped wherever a handover happened, which also removes
+the three or four graph searches per boundary the brief flagged as wasted. It and
+`trimDoubleBack` stay for the lead boundary and for a leg too short to give any
+of itself away.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

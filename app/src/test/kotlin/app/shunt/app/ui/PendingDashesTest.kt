@@ -60,7 +60,7 @@ class PendingDashesTest {
     }
 
     @Test
-    fun `the solid run advances half a line-width every step, and wraps cleanly`() {
+    fun `the solid run advances one step every frame, and wraps cleanly`() {
         val period = PENDING_DASHES.first().sum().toDouble()
         // Round the trip: comparing each step with the one before it, all the way
         // back to the start. The wrap is the case that was broken.
@@ -69,8 +69,8 @@ class PendingDashesTest {
             val to = solidRun(PENDING_DASHES[(i + 1) % PENDING_DASHES.size]).first
             val step = ((to - from) % period + period) % period
             assertEquals(
-                0.5, step, tolerance,
-                "step ${i + 1} → ${(i + 1) % PENDING_DASHES.size + 1} moves $step, not half a width",
+                PENDING_DASH_STEP.toDouble(), step, tolerance,
+                "step ${i + 1} → ${(i + 1) % PENDING_DASHES.size + 1} moves $step, not $PENDING_DASH_STEP",
             )
         }
     }

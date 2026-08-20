@@ -124,19 +124,28 @@ object LegSplitter {
         maxLegMeters: Double = MAX_LEG_METERS,
         quietRadiusMeters: Double = QUIET_RADIUS_METERS,
         /**
-         * Places the driver asked to visit, in order. **A cut is never made
-         * before the first of them.**
+         * Places the driver asked to visit, in order.
          *
-         * Reported from a real plan: a Supercharger added to the trip appeared
-         * on the map but the route did not go there. It had fallen past the leg
-         * boundary — the first leg was planned to a synthetic cut point that
-         * came earlier, so the route on the chooser ignored the stop entirely
-         * and only a later leg would have reached it.
+         * **A stop inside the leg window is the boundary**, in preference to
+         * anything this can invent. That is not a tie-break, it is free: a stop
+         * is a point the route must pass through whatever happens, so ending a
+         * leg there costs nothing at all, while an invented cut bends both legs
+         * to reach a place nobody asked to be.
          *
-         * A stop is the *best possible* boundary anyway, and better than
-         * anything this can invent: it is a point the route must pass through,
-         * chosen by the person driving. So a stop inside the leg window ends the
-         * leg, and a stop before the window suppresses the cut altogether.
+         * A stop *outside* the window changes nothing. Before it, the window
+         * floor is already past it and it simply travels in the first leg —
+         * [split] carries it. Beyond it, the cut lands short of it and it is
+         * reached on a later leg, which is right: forcing a first leg long
+         * enough to include a stop most of a day away hands back exactly the
+         * two-minute plan splitting exists to prevent.
+         *
+         * **This is narrower than the rule it replaces**, which was "a cut is
+         * never made before the first stop" and was implemented as *plan the
+         * whole trip*. On a 900 km trip with a charger 100 km in, that produced
+         * the unsplit plan CLAUDE.md §7.10 describes: the fastest road and
+         * 43 cameras. The original report — a Supercharger that showed on the
+         * map while the route ignored it — is answered by [split] carrying
+         * stops into the leg they fall in, which it did not do either.
          */
         stops: List<GeoPoint> = emptyList(),
     ): Cut? {
@@ -148,12 +157,22 @@ object LegSplitter {
         // buys nothing and spends a hard waypoint.
         if (total <= maxLegMeters) return null
 
-        // A stop the driver added is where this leg ends, and nothing invented
-        // may come before it. Inside the window it *is* the cut; before the
-        // window there is nothing to cut at all, because any boundary would sit
-        // between the driver and somewhere they asked to be.
-        val firstStop = stops.firstOrNull()?.let { stop -> alongOf(spine, stop) }
-        if (firstStop != null && firstStop <= maxLegMeters) return null
+        // A stop inside the window is the boundary, and the earliest such stop:
+        // a shorter first leg is a faster one to plan, and the boundary is free
+        // either way.
+        stops.map { it to alongOf(spine, it) }
+            .filter { (_, along) -> along in minLegMeters..maxLegMeters }
+            .filter { (_, along) -> total - along >= MIN_TAIL_METERS }
+            .minByOrNull { (_, along) -> along }
+            ?.let { (stop, along) ->
+                // The point is the stop itself, so the leg genuinely ends where
+                // the driver asked to be. The *index* is the nearest spine
+                // vertex, which is all its callers need it for — slicing the
+                // spine for this leg's camera corridor and for the road onward.
+                // Those are kilometre-scale questions and a stop sits within a
+                // sample of the road it is on.
+                return Cut(stop, nearestIndex(spine, stop), along, cameras.countWithin(stop, quietRadiusMeters))
+            }
 
         var best: Cut? = null
         var along = 0.0
@@ -179,26 +198,39 @@ object LegSplitter {
      * [points] split at [cut]: the leg to plan now, and what is left to plan
      * after it.
      *
-     * The cut is inserted rather than replacing anything, so a trip with the
-     * driver's own stops in it needs no special handling — a cut falling inside
-     * the run up to a stop simply produces `[origin, cut]` and
-     * `[cut, stop, …, destination]`, and every stop survives in order.
+     * Every stop lands in the leg it falls in, ordered **along the road** rather
+     * than by how far it is from the origin as the crow flies.
+     *
+     * **Both of those were wrong, and the first one silently deleted stops.**
+     * The first leg was built as `[origin, cut]` and the remainder by dropping
+     * every leading point classed as "before the cut" — so a stop on that side
+     * of the boundary was in neither list. It was classed by straight-line
+     * distance from the origin, which misorders whenever the road bends: a stop
+     * 60 km along a road curving back toward the origin is closer to it than a
+     * cut 200 km along a straight one. That is not a rare shape on a trip long
+     * enough to be split.
      */
-    fun split(points: List<GeoPoint>, cut: GeoPoint): Pair<List<GeoPoint>, List<GeoPoint>> {
-        val ahead = points.drop(1).dropWhile { isBefore(it, points, cut) }
-        return listOf(points.first(), cut) to (listOf(cut) + ahead)
+    fun split(
+        points: List<GeoPoint>,
+        spine: List<GeoPoint>,
+        cut: Cut,
+    ): Pair<List<GeoPoint>, List<GeoPoint>> {
+        val intermediate = points.drop(1).dropLast(1).filter { it != cut.point }
+        val before = intermediate.filter { alongOf(spine, it) < cut.alongMeters }
+        val after = intermediate.filter { alongOf(spine, it) >= cut.alongMeters }
+        return (listOf(points.first()) + before + cut.point) to
+            (listOf(cut.point) + after + points.last())
     }
 
-    /**
-     * Whether [stop] comes before [cut] along [points].
-     *
-     * Compared by distance along the straight chain rather than along the road,
-     * which is coarse but only has to order a handful of points that are tens of
-     * kilometres apart.
-     */
-    private fun isBefore(stop: GeoPoint, points: List<GeoPoint>, cut: GeoPoint): Boolean {
-        val origin = points.first()
-        return haversineMeters(origin, stop) < haversineMeters(origin, cut)
+    /** The index of the vertex of [spine] nearest [p]. */
+    private fun nearestIndex(spine: List<GeoPoint>, p: GeoPoint): Int {
+        var best = 0
+        var bestDistance = Double.MAX_VALUE
+        for (i in spine.indices) {
+            val d = haversineMeters(spine[i], p)
+            if (d < bestDistance) { bestDistance = d; best = i }
+        }
+        return best
     }
 
     /**

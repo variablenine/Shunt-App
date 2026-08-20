@@ -134,43 +134,69 @@ private const val CHARGER_LAYER = "route-charger-dots"
 private const val PENDING_SOURCE = "route-pending"
 private const val PENDING_LAYER = "route-pending-line"
 
+/** The solid run of the pending line's dash, in line-widths. */
+internal const val PENDING_DASH_SOLID = 3f
+
+/** The gap between them, in line-widths. */
+internal const val PENDING_DASH_GAP = 4f
+
 /**
- * The marching-ants cycle for that line, in dash-pattern phases.
+ * How far the pattern walks between frames, in line-widths.
+ *
+ * This is the frame rate of the animation, and it was **half a width at 90 ms**
+ * — eleven steps a second, each moving the dash a width and a half. Reported as
+ * feeling like a low frame rate, which is exactly what it was. A quarter width
+ * at 40 ms is the same speed along the line and two and a half times as many
+ * frames to get there.
+ */
+internal const val PENDING_DASH_STEP = 0.25f
+
+/**
+ * The marching-ants cycle for the pending line, in dash-pattern phases.
  *
  * MapLibre has no dash *offset* to animate, so movement is faked the way
  * Mapbox's own "animate a line" example does it: cycle patterns whose solid run
- * sits half a line-width further along each time. Entries alternate dash, gap,
- * dash, gap … in line-widths, always starting with a dash.
+ * sits a little further along each time. Entries alternate dash, gap, dash, gap
+ * … in line-widths, always starting with a dash.
  *
- * **All fourteen steps are load-bearing.** The first seven walk the leading
- * dash and the second seven walk the gap; the cycle is continuous only with
- * both, and `PendingDashesTest` holds it there.
+ * **Generated rather than written out, and that is the point.** Mapbox publishes
+ * fourteen steps and this shipped with the first seven, which snapped the
+ * pattern backwards 3.5 widths at every wrap — the whole cycle has to be there
+ * or it is not a cycle. Deriving it from the offset removes the possibility, and
+ * makes the step size a dial rather than a rewrite. `PendingDashesTest` holds
+ * the result continuous.
  */
-internal val PENDING_DASHES: List<Array<Float>> = listOf(
-    arrayOf(0f, 4f, 3f),
-    arrayOf(0.5f, 4f, 2.5f),
-    arrayOf(1f, 4f, 2f),
-    arrayOf(1.5f, 4f, 1.5f),
-    arrayOf(2f, 4f, 1f),
-    arrayOf(2.5f, 4f, 0.5f),
-    arrayOf(3f, 4f, 0f),
-    // **The second half, and leaving it out is what made the ants stutter.**
-    //
-    // The first seven walk the leading dash from 0 to 3 line-widths; the cycle
-    // is only continuous if the *gap* then walks the same way, which is what
-    // these do. Stopping at seven and starting over snapped the pattern 3.5
-    // widths backwards every 630 ms — read as a jump, because it was one.
-    arrayOf(0f, 0.5f, 3f, 3.5f),
-    arrayOf(0f, 1f, 3f, 3f),
-    arrayOf(0f, 1.5f, 3f, 2.5f),
-    arrayOf(0f, 2f, 3f, 2f),
-    arrayOf(0f, 2.5f, 3f, 1.5f),
-    arrayOf(0f, 3f, 3f, 1f),
-    arrayOf(0f, 3.5f, 3f, 0.5f),
-)
+internal val PENDING_DASHES: List<Array<Float>> =
+    dashCycle(PENDING_DASH_SOLID, PENDING_DASH_GAP, PENDING_DASH_STEP)
 
-/** How fast the ants march. Slow enough to read as "working", not as urgent. */
-private const val PENDING_FRAME_MILLIS = 90L
+/**
+ * Every dash pattern that puts the solid run at [step]-width intervals along one
+ * period, in order, wrapping exactly once.
+ *
+ * The solid run occupies `[offset, offset + solid)` within a period of
+ * `solid + gap`. Where it fits, that is `gap` before it and the remainder after;
+ * where it runs off the end it wraps, and the pattern starts with the tail.
+ */
+private fun dashCycle(solid: Float, gap: Float, step: Float): List<Array<Float>> {
+    val period = solid + gap
+    val steps = Math.round(period / step)
+    return (0 until steps).map { i ->
+        val offset = i * step
+        if (offset + solid <= period) {
+            arrayOf(0f, offset, solid, period - offset - solid)
+        } else {
+            arrayOf(offset + solid - period, gap, period - offset)
+        }
+    }
+}
+
+/**
+ * How fast the ants march.
+ *
+ * With [PENDING_DASH_STEP] this is about 19 line-widths a second along the line
+ * — the same pace it always ran at, in two and a half times as many frames.
+ */
+private const val PENDING_FRAME_MILLIS = 40L
 
 /**
  * Below this the plan has effectively arrived and there is nothing pending.
@@ -763,7 +789,17 @@ private fun renderPending(style: Style, line: List<GeoPoint>?) {
                 // that is not a road, and it should never read as solidly as
                 // the route it is waiting for.
                 PropertyFactory.lineOpacity(0.45f),
-                PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+                // **Butt, not round — round caps are what put the dots there.**
+                //
+                // A dash pattern that walks its solid run along the line has to
+                // contain zero-length dashes at the ends of the cycle, and a
+                // round cap draws a zero-length dash as a full circle. So every
+                // phase whose leading entry was 0 stamped a dot the width of the
+                // line, and because those sit at fixed multiples of the period
+                // they read as stationary while the dashes moved past them.
+                // Reported as "the dots that stay there — I want just the moving
+                // dashes". With butt caps a zero-length dash draws nothing.
+                PropertyFactory.lineCap(Property.LINE_CAP_BUTT),
                 // Dashed from the moment it exists. Without this the line was
                 // drawn solid until the first animation frame landed, which on
                 // a layer created mid-plan is a flash of something that looks

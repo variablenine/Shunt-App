@@ -743,6 +743,74 @@ underneath it, which reads as a recommendation for the road that avoids nothing.
 
 ---
 
+### B14 · No spur, no C, no loop at a later leg boundary
+*Landed 2026-08-20. Never driven; measured only in tests.*
+
+**Setup.** Plan a trip long enough for four or more legs and look at every
+boundary *after the first* on the map.
+
+**Pass.** The route runs through each of them with no out-and-back, no C around
+a more direct line, and no loop past a camera and back.
+
+**Fail (as reported).** A spur running out to a camera, circling it out of
+range, and returning — screenshotted around 1,000 km into a Denver trip.
+
+**What is exempt, and why.** The **first** boundary — between the leg the
+chooser showed and the one after it — still meets at a point rather than handing
+over, so it keeps the trim and the seam re-plan. Shortening the lead leg would
+change a route the car may already be driving. If a spur appears, note *which*
+boundary: at the first one it is expected and handled by the old machinery; at
+any later one the handover has failed and that is new.
+
+**Also worth checking:** the diagnostic log should say "handing 15 km of this leg
+to the next one" once per later boundary, and should no longer say "re-planned
+the leg boundary" for those.
+
+---
+
+### B15 · A charging stop does not cost the trip its split
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a trip of 900 km or more and add a Supercharger about 100 km in
+(short of `MIN_LEG_METERS`). Then repeat with one about 150 km in (inside the
+window).
+
+**Pass.** Both split. The near stop travels in the first leg — it appears on the
+route the chooser shows. The stop inside the window *is* the boundary, so the
+first leg ends there.
+
+**Fail (as it was).** Either case planned the whole trip in one go, which on a
+trip that long is the case §7.10 measures at the fastest road and 43 cameras
+after 75 s.
+
+---
+
+### B16 · No stop is ever deleted from a trip
+*Fixed 2026-08-20.*
+
+**Setup.** A long trip whose route bends back on itself — a coastline, a
+mountain pass, anything where the road returns toward the origin — with a stop on
+the return limb.
+
+**Pass.** The stop is on the route, in exactly one leg.
+
+**Fail (as it was).** Stops were ordered by straight-line distance from the
+origin, and one filed as "before the boundary" was dropped from the first leg
+and from the remainder both. Silent: nothing said the stop had gone.
+
+---
+
+### C9 · The pending line marches smoothly, with no dots left behind
+*Fixed 2026-08-20.*
+
+**Pass.** The dashes crawl steadily. Nothing stationary sits between them.
+
+**Fail (as reported).** "Still feeling like it has a low frame rate", and dots
+that stayed put while the dashes moved past. Eleven frames a second, and round
+line caps drawing every zero-length dash in the cycle as a circle.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the
