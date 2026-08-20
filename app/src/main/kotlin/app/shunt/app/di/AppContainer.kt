@@ -646,27 +646,63 @@ class AppContainer(context: Context) {
                     )
                     return@launch
                 }
+                // What every pass on this leg came back with, which is the
+                // single most useful line in a report about a leg that took
+                // cameras: it says whether an option to avoid them existed at
+                // all, before anything downstream chose between them. The
+                // chooser has logged this for the lead leg since the beginning
+                // and later legs never did, which is why the leg into a metro
+                // taking cameras took three rounds to pin down.
+                diagnostics.record(
+                    DiagnosticLog.Kind.PLAN,
+                    "leg options: " + outcome.options.joinToString(", ") { o ->
+                        "${o.choice} ${o.distanceMeters / 1000}km/${o.camerasPassed}cam" +
+                            (if (o.unavoidableAtEndpoints > 0) "/${o.unavoidableAtEndpoints}@ends" else "") +
+                            (if (o.hardAvoidanceFailed) "/hard-block-failed" else "")
+                    },
+                )
                 // The trade-off the driver actually picked, carried to every
                 // leg after the first. They only get one chooser, so it has to
                 // mean something for the whole trip.
-                val chosen = outcome.options.firstOrNull { it.choice == preference }
-                    // That option may not exist on this leg — a stretch through
-                    // empty country produces one route and nothing to choose
-                    // between. Fall back toward the preference rather than past
-                    // it: never hand someone more cameras than they asked for.
-                    ?: outcome.options.minByOrNull { it.camerasPassed }
-                    ?: return@launch
+                //
+                // **Fewest cameras means fewest cameras, not the option with
+                // that name on it.** `choice` is the pass that produced the
+                // geometry, and the pass names do not always rank the way they
+                // read: when the hard block fails and the weighted fallback
+                // takes over, the option carrying the FEWEST_CAMERAS label can
+                // pass more cameras than the balanced one beside it. Asking for
+                // the label there would hand the driver the worse route while
+                // reporting it as the best one.
+                val chosen = when (preference) {
+                    RouteChoice.FEWEST_CAMERAS -> outcome.options.minByOrNull { it.camerasPassed }
+                    else -> outcome.options.firstOrNull { it.choice == preference }
+                        // That option may not exist on this leg — a stretch
+                        // through empty country produces one route and nothing
+                        // to choose between. Fall back toward the preference
+                        // rather than past it: never hand someone more cameras
+                        // than they asked for.
+                        ?: outcome.options.minByOrNull { it.camerasPassed }
+                } ?: return@launch
                 // A leg that comes back holding nothing but the fastest road is
                 // not a considered answer — it is every avoidance pass having run
                 // out — and taking it silently is indistinguishable from Shunt
                 // deciding there was no camera-free route. It is still handed
                 // over, because a route is better than a boundary with nothing
                 // past it, but it is said out loud. See CLAUDE.md §7.10.
-                if (outcome.options.none { it.choice != RouteChoice.FASTEST }) {
+                if (outcome.options.none { it.choice != RouteChoice.FASTEST } && chosen.camerasPassed > 0) {
+                    // **Only when it cost something.** A leg through empty
+                    // country also comes back with one option — every pass finds
+                    // the same clean road and they deduplicate — and saying "NO
+                    // avoidance option" about a camera-free leg is noise that
+                    // buries the one time it matters. It fired on six clean legs
+                    // of a real trip and once on the leg that actually took a
+                    // camera, which is the wrong signal-to-noise ratio for the
+                    // line that exists to catch exactly that.
                     diagnostics.record(
                         DiagnosticLog.Kind.PLAN,
-                        "next leg has NO avoidance option — the fastest road is all that came back " +
-                            "(${chosen.camerasPassed} cameras)",
+                        "this leg has NO avoidance option — the fastest road is all that came back, " +
+                            "and it passes ${chosen.camerasPassed} camera(s), " +
+                            "${chosen.unavoidableAtEndpoints} of them watching an endpoint",
                     )
                 }
                 // Cut the out-and-back where this leg meets the one before it.
@@ -768,9 +804,17 @@ class AppContainer(context: Context) {
                     leg = relabel(
                         leg.copy(polyline = kept, waypoints = LegJoin.pinsOn(kept, leg.waypoints)),
                     )
+                    // The handover point goes with it, so a boundary can be
+                    // *found* on the map afterwards. Every artifact reported so
+                    // far — the spur, the C, the loop around a camera, the pair
+                    // of parallel lines — has come down to "is this at a leg
+                    // boundary or not", and a log that cannot answer that turns
+                    // every report into reading pixels. Locations are only
+                    // written when the person exporting turns them on.
                     diagnostics.record(
                         DiagnosticLog.Kind.PLAN,
                         "handing ${(LegJoin.HANDOVER_METERS / 1000).toInt()} km of this leg to the next one",
+                        listOf(handover.point.lat to handover.point.lon),
                     )
                 }
                 takeover = handover

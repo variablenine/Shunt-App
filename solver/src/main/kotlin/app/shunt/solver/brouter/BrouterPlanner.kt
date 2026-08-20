@@ -346,6 +346,11 @@ class BrouterPlanner(
         }
         routingMillis += nowMillis() - startedAt
         routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine)") }
+        // Whether the spine below is a road that was actually routed, or the
+        // straight-line fallback. `directAheadRoadPoints` depends on knowing the
+        // difference: marking a straight fallback as road makes the pending line
+        // follow it *in preference to* road another leg had really routed.
+        val spineIsRoad = direct?.firstOrNull()?.polyline?.let { it.size >= 2 } == true
         var spine = direct?.firstOrNull()?.polyline?.takeIf { it.size >= 2 }?.let { sampleSpine(it) }
             // No direct route is not fatal — fall back to the straight line
             // between the trip's own points.
@@ -415,7 +420,7 @@ class BrouterPlanner(
             // the same spacing so the line stays uniform rather than ending in
             // one enormous chord. It is an estimate, and it shrinks: every leg
             // that lands replaces a piece of it with real road.
-            directAheadRoadPoints = directAhead.size
+            directAheadRoadPoints = if (spineIsRoad) directAhead.size else 0
             val unknownTail = listOf(directAhead.last()) + remaining.drop(1)
             if (straightLength(unknownTail) > SPINE_SAMPLE_METERS) {
                 directAhead = directAhead + sampleSpine(unknownTail).drop(1)

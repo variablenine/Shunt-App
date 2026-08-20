@@ -2346,6 +2346,70 @@ right alone; together they are road as far as anything has routed it.
 
 ---
 
+### F-47 · The preference fix worked; what is left needs the log to say more
+*Observed: 2026-08-20, from a real log after F-46 landed. Partly fixed, partly
+still open — recorded honestly as such.*
+
+**F-46 worked, and the log is how we know.** Same 1,424 km trip to Washington,
+same phone, after the fix:
+
+```
+planned FASTEST 260km/0cam/0pins
+  → legs: 255/0, 140/0, 201/0, 270/0, 234/0, 265/0, 216/1 cameras
+```
+
+Six camera-free legs and a whole trip at 1,362 km camera-free, against the same
+trip's 0/1/**62** before. The single remaining camera is on the last leg into the
+city.
+
+**What is still open, and why it could not be settled from the log as it was.**
+
+- *The last leg's one camera.* The line read "NO avoidance option — the fastest
+  road is all that came back (1 cameras)", which does not say whether an
+  avoidance option **existed**. `unavoidableAtEndpoints` is exactly the number
+  that decides it — a camera pointed at where the driver is going cannot be
+  dodged, because arriving is what triggers it — and nothing was logging it.
+  Later legs now log every option they were offered, with its camera count, its
+  endpoint count and whether the hard block failed, the way the chooser has
+  logged the lead leg since the beginning.
+- *That message fired on six clean legs and once where it mattered.* A leg
+  through empty country also comes back with one option, because every pass finds
+  the same road and they deduplicate — so the warning that exists to catch a leg
+  with no avoidance was mostly announcing legs with nothing to avoid. It is
+  gated on the leg actually passing a camera now.
+- *Where a boundary is.* Every artifact reported in this stretch of work — the
+  spur, the C, the loop around a camera, a pair of parallel lines — has come down
+  to "is this at a leg boundary?", and the log could not say. The handover line
+  carries its point now, so with locations enabled every boundary can be found on
+  the map.
+
+**Two real bugs found while looking.**
+
+`FEWEST_CAMERAS` was being honoured by *name*: `options.firstOrNull { it.choice
+== preference }`. The pass names do not always rank the way they read — when the
+hard block fails and the weighted fallback takes over, the option labelled
+FEWEST_CAMERAS can pass more cameras than the balanced one beside it. Asking for
+the label would hand the driver the worse route and report it as the best. It
+takes the fewest-camera option now, whatever it is called.
+
+And the straight-line fallback spine was being marked as **road**. When a leg's
+spine fails to route entirely, `spine` falls back to the sampled straight line
+between the trip's points — and `directAheadRoadPoints` counted those as routed
+road, so the pending line followed a straight chord *in preference to* road
+another leg had really routed. Reported as the line showing "as a straight line,
+and then fix itself for portions and break again", which is precisely a per-leg
+coin flip on whether that leg's spine routed.
+
+**What remains genuinely unknown, stated plainly.** Past where any spine has been
+routed there is no road data at all, and the pending line is a straight estimate
+by construction — on this trip the chooser's probe reaches about 337 km of 1,424,
+and each later leg adds only its own lookahead. A chord across Lake Erie is
+honest and looks broken. The options are to route more spine (slow, for a line
+nobody drives), to end the line where road knowledge ends (no longer reaches the
+destination), or to leave it. Not a decision to make from a desk.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

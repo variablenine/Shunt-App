@@ -898,6 +898,28 @@ problems wanting three different responses, and no way to tell them apart.
 
 ---
 
+### D15 · A leg that takes cameras says what it was offered
+*Added 2026-08-20 — a diagnostic, not a fix.*
+
+**Setup.** Reproduce a leg that passes a camera, then export the log **with
+locations turned on**.
+
+**What to read.** Each later leg logs `leg options: FASTEST 216km/1cam/1@ends,
+…` before it chooses. That answers the question three rounds of screenshots
+could not:
+
+- More than one option listed → an avoidance route existed and something chose
+  past it. That is a bug in the choosing.
+- One option, `N@ends` equal to its camera count → the cameras watch the start or
+  the destination. Arriving is what triggers them; no route avoids that.
+- One option, `hard-block-failed`, `0@ends` → avoidance was attempted and found
+  nothing. Either genuinely unavoidable, or the pass ran out of time.
+
+**Also.** Every handover line now carries the boundary's coordinates, so an
+artifact on the map can be checked against them rather than guessed at.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the
