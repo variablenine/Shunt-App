@@ -66,6 +66,51 @@ class PinSpacingMatchesMonitorTest {
     }
 
     @Test
+    fun `the lead can never exceed the spacing, whatever the speed`() {
+        // **The two tests above hold under an assumption, and it is false.**
+        // They pair the dense spacing with a 30 mph lead and the open-road
+        // spacing with 70, but spacing tightens on *camera density* while the
+        // lead grows with *speed* — and nothing makes a watched corridor a slow
+        // one. A 55 mph arterial through one gets 250 m pins and a 450 m lead,
+        // so the monitor re-aims two pins ahead at once. Reported from a real
+        // drive as the waypoints being "REALLY sensitive and going way too
+        // early".
+        //
+        // The gap cap makes it structural instead of a coincidence of tuning:
+        // whatever speed the car is doing, the lead is at most a share of the
+        // gap the pins were actually placed at.
+        for (spacing in listOf(
+            WaypointExtractor.DENSE_PIN_SPACING_METERS,
+            WaypointExtractor.MIN_PIN_SPACING_METERS,
+        )) {
+            for (speed in listOf(mph(25.0), mph(45.0), mph(70.0), mph(85.0))) {
+                val capped = minOf(leadMetersAt(speed), spacing * config.waypointLeadGapFraction)
+                    .coerceAtLeast(config.arrivalRadiusMeters)
+                assertTrue(
+                    capped < spacing,
+                    "at ${speed} m/s with $spacing m pins the monitor re-aims $capped m out, " +
+                        "which is past the pin before the car reaches it",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the commit gate can see the turn its pin was placed for`() {
+        // The gate refuses to advance past a pin until the turn it exists to
+        // force is behind the car, and it finds that turn by looking back from
+        // the pin. Looking back less far than the refiner places the pin means
+        // the turn is outside the window and the gate never fires — which is the
+        // exact failure the gate was added to prevent, present in the gate.
+        assertTrue(
+            config.turnCommitLookbackMeters > WaypointRefiner.PAST_FORK_METERS,
+            "the gate looks back ${config.turnCommitLookbackMeters} m for a turn the refiner " +
+                "puts ${WaypointRefiner.PAST_FORK_METERS} m behind the pin",
+        )
+        assertTrue(config.turnCommitLookbackMeters > WaypointRefiner.DENSE_PAST_FORK_METERS)
+    }
+
+    @Test
     fun `the dense end is genuinely tighter than the open-road end`() {
         // Otherwise the density scale is decoration and a city gets highway pins.
         assertTrue(WaypointRefiner.DENSE_PAST_FORK_METERS < WaypointRefiner.PAST_FORK_METERS)

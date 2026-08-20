@@ -920,6 +920,41 @@ artifact on the map can be checked against them rather than guessed at.
 
 ---
 
+### A9 · Waypoints advance one at a time, near the pin
+*Fixed 2026-08-20. Found on a real drive; needs another one to confirm.*
+
+**Setup.** Drive a route through an area with cameras — where pins are placed
+250 m apart — at 45 mph or more.
+
+**Pass.** The "sending waypoint N of M" line steps one at a time, and each one
+fires as the car approaches that pin rather than several pins back. A pin just
+past a turn is still the target when the car reaches the turn.
+
+**Fail (as reported).** "The waypoints are REALLY sensitive and going way too
+early." Spacing tightens on camera density and the lead grows with speed, and
+nothing makes a dense corridor a slow one — so a fast road through one got 250 m
+pins and a 450 m lead, and the monitor re-aimed two and three ahead at once.
+
+**Watch for the opposite too.** The lead is now capped at half the gap, which
+means less warning before each pin. If the car starts *braking* for waypoints it
+is not stopping at, that cap is too tight and the fraction is the dial.
+
+---
+
+### C10 · The pending line never draws a road that was not routed
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a trip over 1,000 km and look at the dashed line past the end of
+the planned route.
+
+**Pass.** It follows roads and then stops. It does not reach the destination pin
+on a long trip, and that is correct — the pin marks the destination.
+
+**Fail (as reported).** A ruled diagonal from the end of the route to the
+destination, across three states and over Lake Erie.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

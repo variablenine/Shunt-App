@@ -241,6 +241,8 @@ sealed interface Phase {
         val carriedForward: Boolean = false,
         /** The direct road onward from the leg boundary, for the pending line. */
         val directAhead: List<GeoPoint> = emptyList(),
+        /** How many leading points of [directAhead] are road rather than estimate. */
+        val directAheadRoadPoints: Int = 0,
     ) : Phase {
         val chosen: PlannedRoute get() = options[selected.coerceIn(options.indices)]
     }

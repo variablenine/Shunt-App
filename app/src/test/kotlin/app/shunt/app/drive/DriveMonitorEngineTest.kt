@@ -23,6 +23,12 @@ class DriveMonitorEngineTest {
         return GeoPoint(p.lat, p.lon - meters * degPerMeterLon)
     }
 
+    /** Where a straight eastbound road starts, for the along-route fixtures. */
+    private val origin = GeoPoint(33.0, -97.10)
+
+    /** A point [meters] east of [p]. */
+    private fun east(p: GeoPoint, meters: Double): GeoPoint = west(p, -meters)
+
     private fun update(p: GeoPoint, speed: Double? = 25.0, bearing: Double? = 90.0) =
         LocationUpdate(p, speed, bearing)
 
@@ -44,6 +50,41 @@ class DriveMonitorEngineTest {
         val s2 = engine.onLocation(update(west(w2, 400.0)))
         val a2 = assertIs<DriveSignal.ApproachingWaypoint>(s2.single())
         assertEquals(listOf(dest), a2.remaining)
+    }
+
+    @Test
+    fun `close-spaced pins on a fast road are not skipped two at a time`() {
+        // **From a real drive: "the waypoints are REALLY sensitive and going way
+        // too early".** Pin spacing tightens on camera density — 250 m where
+        // they are thick — while the lead grows with speed: 450 m at 25 m/s.
+        // A fast road through a watched corridor gets both, so the monitor
+        // re-aimed two and three pins ahead at once and the turns they were
+        // placed for were never forced.
+        val road = (0..30).map { east(origin, it * 100.0) } // 3 km, 100 m apart
+        val pins = listOf(east(origin, 1_000.0), east(origin, 1_250.0), east(origin, 1_500.0))
+        val engine = DriveMonitorEngine(
+            chain = pins + east(origin, 3_000.0),
+            cameras = emptyList(),
+            routePolyline = road,
+        )
+
+        // 100 m short of the first pin, which is a kilometre from the start —
+        // the speed lead applies in full and it advances.
+        val first = engine.onLocation(update(east(origin, 900.0)))
+        assertTrue(first.any { it is DriveSignal.ApproachingWaypoint }, "the first pin should advance")
+
+        // Now aiming at a pin 250 m further on. The speed lead alone is 450 m,
+        // so without the gap cap this fix re-aims past it while the car is still
+        // 300 m short — the pin never constrains anything.
+        val tooEarly = engine.onLocation(update(east(origin, 950.0)))
+        assertTrue(
+            tooEarly.none { it is DriveSignal.ApproachingWaypoint },
+            "re-aimed past a pin 300 m ahead of the car, which is the reported fault",
+        )
+
+        // Genuinely close to it: advance.
+        val onTime = engine.onLocation(update(east(origin, 1_180.0)))
+        assertTrue(onTime.any { it is DriveSignal.ApproachingWaypoint }, "should advance when actually near")
     }
 
     @Test

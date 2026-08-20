@@ -63,6 +63,30 @@ data class DriveMonitorConfig(
     val waypointLeadSeconds: Double = 18.0,
     /** ...but never closer than this, for crawling/stopped traffic. */
     val waypointLeadMinMeters: Double = 150.0,
+    /**
+     * ...and never more than this share of the gap to the previous waypoint.
+     *
+     * **The lead and the pin spacing were set independently, and on a fast road
+     * through a camera-dense area they contradict each other.** Spacing tightens
+     * on *camera density* — 250 m where they are thick — while the lead grows
+     * with *speed*: 450 m at 45 mph, 563 m at 70. A 55 mph arterial through a
+     * watched corridor therefore gets pins 250 m apart and a lead half a
+     * kilometre long, so the monitor re-aims two and three pins ahead at once
+     * and the turns they were placed for are never forced. Reported from a real
+     * drive as the waypoints being "REALLY sensitive and going way too early".
+     *
+     * `PinSpacingMatchesMonitorTest` held the old relationship, and held it
+     * *under an assumption* — dense spacing checked against a 30 mph lead,
+     * open-road spacing against 70. Nothing made a dense stretch a slow one.
+     * Capping against the gap the pins were actually placed at makes it
+     * structural instead: whatever the spacing, the car aims at a pin for the
+     * first part of its approach and re-aims for the last part.
+     *
+     * A half is the natural place to put it: enough warning that the car does
+     * not brake for a waypoint it is not stopping at — ten seconds at motorway
+     * speed on 600 m spacing — and never so much that a pin is skipped.
+     */
+    val waypointLeadGapFraction: Double = 0.5,
     /** Speed assumed when the fix carries none, for the lead computation. */
     val assumedSpeedMetersPerSec: Double = 25.0,
     /** Within this of the destination counts as arrived. */
@@ -73,8 +97,18 @@ data class DriveMonitorConfig(
      * [DriveMonitorEngine.commitPointFor].
      */
     val turnCommitDegrees: Double = 35.0,
-    /** How far back from a waypoint to look for that turn. */
-    val turnCommitLookbackMeters: Double = 500.0,
+    /**
+     * How far back from a waypoint to look for that turn.
+     *
+     * **Must exceed `WaypointRefiner.PAST_FORK_METERS`**, which is where the
+     * refiner puts a pin relative to the fork it is holding. It did not: the
+     * lookback was 500 m against an open-road fork distance of 600 m, so on a
+     * fast road the gate could not see the turn its own pin existed for and
+     * never fired. That is the failure this gate was added to prevent, present
+     * in the gate itself. `PinSpacingMatchesMonitorTest` holds the relationship
+     * now rather than the numbers.
+     */
+    val turnCommitLookbackMeters: Double = 800.0,
     /**
      * Distance either side of a vertex used to measure how sharply the route
      * bends there. Wide enough that the wobble in a dense polyline does not read

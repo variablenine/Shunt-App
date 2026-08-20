@@ -208,6 +208,15 @@ private const val PENDING_FRAME_MILLIS = 40L
 private const val PENDING_MIN_METERS = 1_000.0
 
 /**
+ * How near the destination the known road has to reach before the line is
+ * closed up to the pin.
+ *
+ * One spine sample. Inside that the gap is a rounding artifact of how the road
+ * was sampled; outside it, it is road nobody has routed. See [pendingLineOf].
+ */
+private const val PENDING_JOIN_METERS = 6_000.0
+
+/**
  * How long after the driver last moved the map before it resumes framing the
  * drive itself. See [frameDrive].
  *
@@ -840,10 +849,32 @@ private fun pendingLineOf(
     // is generous: a leg boundary lands on a road near the destination, not on
     // top of it.
     if (app.shunt.solver.geo.haversineMeters(tail, destination) <= PENDING_MIN_METERS) return null
-    // From the end of what is planned, along the direct road where it is known,
-    // and on to the destination.
+    // From the end of what is planned, along the direct road as far as one has
+    // been routed.
     val ahead = directAhead.filter { onwardOf(tail, it, destination) }
-    return listOf(tail) + ahead + destination
+    val end = ahead.lastOrNull() ?: tail
+    // **And then stop, unless the road actually gets there.**
+    //
+    // On a long trip the spine is deliberately bounded just past the leg window
+    // — a couple of hundred kilometres of a two-thousand-kilometre run — and
+    // beyond it nothing has been routed at all. Carrying the line on to the pin
+    // anyway drew a ruled diagonal across three states, over Lake Erie on one
+    // reported trip, which is not a statement that something is coming: it is a
+    // road that does not exist. Reported repeatedly as the line "showing up as
+    // a straight line".
+    //
+    // What is given up is the line touching the destination pin, which the pin
+    // was already saying. What is kept is that every line Shunt draws follows a
+    // road somebody routed.
+    val closesTheGap = app.shunt.solver.geo.haversineMeters(end, destination) <= PENDING_JOIN_METERS
+    // With no road at all there is nothing else to say, and a short straight
+    // line to a destination a few kilometres off is not misleading — the check
+    // above already ruled out the case where it would be.
+    val line = when {
+        closesTheGap || ahead.isEmpty() -> listOf(tail) + ahead + destination
+        else -> listOf(tail) + ahead
+    }
+    return line.takeIf { it.size >= 2 }
 }
 
 /**

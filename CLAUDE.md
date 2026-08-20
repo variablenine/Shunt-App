@@ -409,7 +409,16 @@ current one. So:
 - A spacing floor **wider than the fork distance** throws away the refiner's own
   pins, which sit exactly that far past a fork.
 
-Which brackets everything: `lead ≤ spacing ≤ past-fork`. Both pairs are now the
+Which brackets everything: `lead ≤ spacing ≤ past-fork`. **That was held by
+coincidence and is now held by construction**: the two ends were derived from
+different things — spacing from camera density, the lead from speed — and
+nothing makes a camera-dense corridor a slow one, so a 55 mph arterial through
+one got 250 m pins and a 450 m lead and the monitor re-aimed two and three pins
+ahead at once. The lead is capped at `waypointLeadGapFraction` of the gap the
+pins were actually placed at, so the relationship holds whatever the speed. The
+turn-commit gate's lookback likewise has to *exceed* `PAST_FORK_METERS`, and did
+not — 500 m against 600 — so on a fast road it could not see the turn its own
+pin was guarding. See F-48. Both pairs are now the
 lead distance at the speed that stretch is driven, plus margin — 600 m on open
 road (lead at 70 mph is 563 m) and 250 m where it is dense (lead at 30 mph is
 241 m), sliding between the two on **local camera density** (`CameraIndex.countWithin`

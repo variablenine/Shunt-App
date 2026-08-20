@@ -282,7 +282,7 @@ class DriveMonitorEngine(
         }
 
         val speed = update.speedMetersPerSec ?: config.assumedSpeedMetersPerSec
-        val lead = maxOf(config.waypointLeadMinMeters, speed * config.waypointLeadSeconds)
+        val lead = leadMetersFor(targetIndex, speed)
         // **How far there is left to drive, not how far away it is.**
         //
         // Straight-line distance is the wrong question wherever the route comes
@@ -305,6 +305,50 @@ class DriveMonitorEngine(
         if (!pastCommitPoint(update.point) && distance > config.arrivalRadiusMeters) return null
         targetIndex++
         return DriveSignal.ApproachingWaypoint(chain.subList(targetIndex, chain.size).toList())
+    }
+
+    /**
+     * How far short of the waypoint at [index] the monitor re-aims at the next
+     * one.
+     *
+     * Two limits, and the second is the one that was missing. The **speed**
+     * limit is what the lead is for: the car treats a waypoint as a stop and
+     * will brake for it, so the aim moves on a few seconds out. The **gap**
+     * limit is what keeps that from skipping pins — a lead longer than the
+     * distance between two pins re-aims past the second one before the car has
+     * even reached the first, so the pin never constrains anything and the turn
+     * it was placed for is not forced.
+     *
+     * Those two were set from different things — spacing from camera density,
+     * lead from speed — and a fast road through a watched corridor gets the
+     * tightest spacing and the longest lead at the same time. See
+     * [DriveMonitorConfig.waypointLeadGapFraction].
+     *
+     * Floored at the arrival radius so two nearly coincident pins cannot drive
+     * the lead to nothing, which would leave the car aimed at a waypoint it is
+     * sitting on — and it stops there.
+     */
+    internal fun leadMetersFor(index: Int, speedMetersPerSec: Double): Double {
+        val bySpeed = maxOf(config.waypointLeadMinMeters, speedMetersPerSec * config.waypointLeadSeconds)
+        val gap = gapBefore(index)
+        if (gap == Double.MAX_VALUE) return bySpeed
+        return minOf(bySpeed, gap * config.waypointLeadGapFraction)
+            .coerceAtLeast(config.arrivalRadiusMeters)
+    }
+
+    /**
+     * Along-route distance from the waypoint before [index] to it, or
+     * [Double.MAX_VALUE] when there is no route line to measure along.
+     *
+     * The first waypoint is measured from the start of the route, which is where
+     * the car set off from.
+     */
+    private fun gapBefore(index: Int): Double {
+        val here = pinAlong.getOrNull(index) ?: return Double.MAX_VALUE
+        if (here == Double.MAX_VALUE) return Double.MAX_VALUE
+        val previous = if (index == 0) 0.0 else pinAlong[index - 1]
+        if (previous == Double.MAX_VALUE) return Double.MAX_VALUE
+        return (here - previous).coerceAtLeast(0.0)
     }
 
     /**

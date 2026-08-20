@@ -128,7 +128,11 @@ fun PlanScreen(
     LaunchedEffect(state.phase) {
         val phase = state.phase
         solvedAhead = when {
-            phase is Phase.Solved -> phase.directAhead
+            // **Its road only.** Past what the spine actually routed there is no
+            // road, and the estimate that used to follow drew a ruled diagonal
+            // across three states — over Lake Erie on one reported trip. See
+            // [pendingLineOf].
+            phase is Phase.Solved -> phase.directAhead.take(phase.directAheadRoadPoints)
             phase is Phase.Browsing -> emptyList()
             else -> solvedAhead
         }

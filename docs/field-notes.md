@@ -2410,6 +2410,52 @@ destination), or to leave it. Not a decision to make from a desk.
 
 ---
 
+### F-48 · The waypoints were sensitive because two numbers were set from different things
+*Observed: 2026-08-20, on a real drive. Fixed; unconfirmed on another drive.*
+
+> just tested a drive, the waypoints are REALLY sensitive and going way too early
+
+**Two constants that have to agree were derived from unrelated inputs.**
+
+- Pin spacing tightens on **camera density**: `MIN_PIN_SPACING_METERS` 600 m in
+  open country, `DENSE_PIN_SPACING_METERS` 250 m where cameras are thick.
+- The monitor's lead — how far short of a pin it re-aims at the next one — grows
+  with **speed**: `max(150 m, speed × 18 s)`, so 450 m at 45 mph and 563 m at 70.
+
+Nothing makes a camera-dense corridor a slow one. A 55 mph arterial through a
+watched stretch gets 250 m pins *and* a half-kilometre lead, so the monitor
+re-aims two and three pins ahead at once and the turns they were placed for are
+never forced. That is the whole of the report.
+
+`PinSpacingMatchesMonitorTest` was supposed to catch exactly this and could not,
+because it held the relationship **under an assumption**: dense spacing checked
+against a 30 mph lead, open-road spacing against 70. Both assertions passed and
+the pairing they assumed was never true.
+
+The lead is capped at half the gap the pins were actually placed at now, which
+makes it structural — whatever the speed, the car aims at a pin for the first
+part of its approach and re-aims for the last part. The test asserts that across
+a range of speeds instead of one convenient speed per spacing.
+
+**And the turn-commit gate could not see the turn it was guarding.** It looks
+back `turnCommitLookbackMeters` from a pin for a bend sharp enough to count as a
+turn; that was 500 m, against a refiner that places an open-road pin
+`PAST_FORK_METERS` = **600 m** past the fork. So on a fast road the turn was
+outside the window and the gate never fired — the exact failure the gate was
+added to prevent, present in the gate. It looks back 800 m now, and the test
+holds the relationship rather than the number.
+
+**The pending line stops where the road does.** Past what the spine actually
+routed there is nothing — on a 1,424 km trip the probe reaches about 337 km —
+and carrying the line on to the destination pin anyway drew a ruled diagonal
+across three states, over Lake Erie on one reported trip. That is not a
+statement that something is coming; it is a road that does not exist. The line
+now ends at the last routed point unless the road genuinely reaches the
+destination. What is given up is the line touching the pin, which the pin was
+already saying.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the
