@@ -1156,7 +1156,19 @@ Two conditions, both load-bearing:
   means giving the drive monitor a way to revise a leg it already has.
 
 `rejoinAtBoundary` is skipped wherever a handover happened, which also saves the
-three or four graph searches per boundary it spent to use one. See F-43.
+three or four graph searches per boundary it spent to use one. The geometric
+trim still runs everywhere — it is arithmetic, it finds nothing when the join is
+clean, and a route drawn out and back over the same road is the one artifact a
+driver definitely must not be shown. See F-43.
+
+**Anything that reshapes a leg has to re-label it.** A route is described by what
+it *passes*, measured from its line — and the trim, the handover truncation and
+the seam splice all move that line after the measurement was taken. The first two
+only remove road, so a stale label over-reports and errs safe. The splice adds
+road neither leg drove, and a camera on it was drawn nowhere, counted nowhere and
+announced never, on a leg presented as camera-free. `AppContainer.relabel`
+re-measures whenever the line moved, and `DrivePlan.cameras` comes from the
+reshaped leg rather than the route it was planned from. See F-44.
 
 **The lead boundary can still cost a doubling-back, and that is trimmed rather
 than prevented.** Because the cut is chosen on the *direct* road, the leg after it may

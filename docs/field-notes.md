@@ -2200,6 +2200,48 @@ of itself away.
 
 ---
 
+### F-44 · A leg is labelled before it is reshaped
+*Observed: 2026-08-20, from a real plan. Fixed; unconfirmed on a drive.*
+
+> Also it labeled a route with a camera as camera free again with an avoidable
+> camera
+
+**Every route Shunt shows is labelled by measuring it** — `passedCameras` comes
+from `CameraIndex.seeing(polyline)` — and three things change a leg's line
+*after* that measurement is taken:
+
+| what | effect on the line | effect on a stale label |
+|---|---|---|
+| `trimDoubleBack` | removes a spur | over-reports; safe |
+| the handover truncation | removes the tail | over-reports; safe |
+| `spliceSeam` | **adds road neither leg drove** | under-reports; not safe |
+
+The third is the one that bites, and the research brief had already flagged it:
+`rejoinAtBoundary` guards the *count* — it refuses a replacement that passes more
+cameras than the join it replaces — but never writes the replacement's cameras
+back onto the leg. So a camera on a spliced seam was drawn nowhere, counted
+nowhere, and announced never, on a leg presented as camera-free.
+
+`AppContainer.relabel` re-measures a leg against the line it ends up with,
+whenever any of the three moved it. One cached camera lookup, only on the legs
+that changed. A lookup that fails leaves the old label and *says so in the log*,
+because a count nothing measured is exactly what this exists to stop.
+
+Two things went with it. `DrivePlan.cameras` was `chosen.passedCameras` — the
+route before it was reshaped — so the drive monitor was warning about the line
+that had been planned rather than the one the car was being sent along; it takes
+the reshaped leg's now. And the geometric trim runs again at handover boundaries:
+skipping it there was an optimisation on the assumption the join must be clean,
+and it is pure arithmetic that finds nothing when it is. The expensive
+`rejoinAtBoundary` is still skipped, which is where the three or four saved graph
+searches actually were.
+
+**The pending line is thinner and fainter too.** At the same weight as the route
+a dash running along a real road is impossible to tell from a spur of the route
+itself, which is what it was being read as.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

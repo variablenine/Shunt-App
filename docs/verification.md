@@ -811,6 +811,27 @@ line caps drawing every zero-length dash in the cycle as a circle.
 
 ---
 
+### B17 · A leg's camera count describes the line it ends up with
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a long trip and watch the whole-trip camera total on the chooser
+as later legs land. Then look at the map for orange camera dots sitting *on* a
+leg that reports none.
+
+**Pass.** Every camera drawn on the route is counted. A leg that says
+"camera-free" has no camera dot on its line.
+
+**Fail (as reported).** "It labeled a route with a camera as camera free again
+with an avoidable camera." A leg is labelled when it is planned, and the trim,
+the handover and the seam re-plan all move the line afterwards — the seam by
+*adding* road neither leg drove, which is the direction that hides a camera.
+
+**In the log.** A leg whose recount goes up says so: "reshaping this leg put it
+past N more camera(s)". If the camera lookup fails it says that instead, and the
+count shown is the old one.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

@@ -784,11 +784,17 @@ private fun renderPending(style: Style, line: List<GeoPoint>?) {
         style.addLayer(
             LineLayer(PENDING_LAYER, PENDING_SOURCE).withProperties(
                 PropertyFactory.lineColor("#8ab4f8"),
-                PropertyFactory.lineWidth(3f),
+                // **Thinner and fainter than the route, deliberately.** At the
+                // same weight a dash running along a real road is impossible to
+                // tell from a spur of the route itself, and a driver reported
+                // exactly that confusion. Half the width and a third the opacity
+                // of the planned line: legible at a glance, never mistakable for
+                // somewhere the car is being sent.
+                PropertyFactory.lineWidth(2.5f),
                 // Semitransparent on purpose: this is the one line on the map
                 // that is not a road, and it should never read as solidly as
                 // the route it is waiting for.
-                PropertyFactory.lineOpacity(0.45f),
+                PropertyFactory.lineOpacity(0.35f),
                 // **Butt, not round — round caps are what put the dots there.**
                 //
                 // A dash pattern that walks its solid run along the line has to

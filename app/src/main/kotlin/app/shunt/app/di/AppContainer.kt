@@ -676,11 +676,21 @@ class AppContainer(context: Context) {
                 // so the join is a vertex of both lines by construction. Running
                 // the seam re-plan there would be three or four graph searches
                 // spent proving there is nothing to find.
+                // **The seam re-plan is skipped where this leg took over**, and
+                // it is the only part that is: it costs three or four graph
+                // searches to repair a boundary that no longer exists, because
+                // this leg was planned from a point inside the previous one and
+                // that one is cut back to meet it.
+                //
+                // **The trim still runs, everywhere.** It is pure geometry and
+                // finds nothing when the join is clean, which makes it free
+                // insurance rather than a duplicate — and a handover only makes
+                // a retrace unlikely, it does not make one impossible. A route
+                // out and back over the same road is the one artifact a driver
+                // definitely should not be shown, so it is worth the metres of
+                // arithmetic to be sure.
                 val seamed = if (tookOver != null) null else rejoinAtBoundary(earlier, chosen.polyline)
-                val trim = when {
-                    tookOver != null -> LegJoin.Trimmed(earlier, chosen.polyline, 0.0)
-                    else -> seamed ?: LegJoin.trimDoubleBack(earlier, chosen.polyline)
-                }
+                val trim = seamed ?: LegJoin.trimDoubleBack(earlier, chosen.polyline)
                 if (trim.changed) {
                     diagnostics.record(
                         DiagnosticLog.Kind.PLAN,
@@ -694,9 +704,13 @@ class AppContainer(context: Context) {
                     // out on the removed spur is not untidy, it is a target the
                     // car would be aimed at — steering it back down the very
                     // road the trim deleted. See LegJoin.pinsOn.
-                    leg = chosen.copy(
-                        polyline = trim.next,
-                        waypoints = LegJoin.pinsOn(trim.next, chosen.waypoints),
+                    // Re-measured, because a splice puts road on the route that
+                    // neither leg was labelled against. See [relabel].
+                    leg = relabel(
+                        chosen.copy(
+                            polyline = trim.next,
+                            waypoints = LegJoin.pinsOn(trim.next, chosen.waypoints),
+                        ),
                     )
                     // Shorten the leg before it to match, so the two still meet.
                     if (previousLegs.isEmpty()) {
@@ -704,9 +718,11 @@ class AppContainer(context: Context) {
                         trimmedLeadWaypoints.value = LegJoin.pinsOn(trim.previous, leadWaypoints)
                     } else {
                         val earlierLeg = previousLegs.last()
-                        planned[planned.lastIndex] = earlierLeg.copy(
-                            polyline = trim.previous,
-                            waypoints = LegJoin.pinsOn(trim.previous, earlierLeg.waypoints),
+                        planned[planned.lastIndex] = relabel(
+                            earlierLeg.copy(
+                                polyline = trim.previous,
+                                waypoints = LegJoin.pinsOn(trim.previous, earlierLeg.waypoints),
+                            ),
                         )
                         publish()
                     }
@@ -732,9 +748,9 @@ class AppContainer(context: Context) {
                     ?.let { leg.polyline.subList(it.index, leg.polyline.size) }
                     .orEmpty()
                 if (handover != null) {
-                    leg = leg.copy(
-                        polyline = LegJoin.truncateAt(leg.polyline, handover),
-                        waypoints = LegJoin.pinsOn(LegJoin.truncateAt(leg.polyline, handover), leg.waypoints),
+                    val kept = LegJoin.truncateAt(leg.polyline, handover)
+                    leg = relabel(
+                        leg.copy(polyline = kept, waypoints = LegJoin.pinsOn(kept, leg.waypoints)),
                     )
                     diagnostics.record(
                         DiagnosticLog.Kind.PLAN,
@@ -752,7 +768,12 @@ class AppContainer(context: Context) {
                     // destination the moment the extension landed.
                     chain = leg.waypoints +
                         (handover?.point ?: outcome.remaining.firstOrNull() ?: legPoints.last()),
-                    cameras = chosen.passedCameras,
+                    // **This leg's own cameras, not the ones it was planned
+                    // with.** `chosen` is the route before the trim, the seam
+                    // and the handover reshaped it; `leg` is what the driver is
+                    // actually being sent along, and it is what the monitor has
+                    // to warn about.
+                    cameras = leg.passedCameras,
                     polyline = leg.polyline,
                     // What is left starts where the next leg starts, which after
                     // a handover is inside this one rather than at the cut.
@@ -786,7 +807,7 @@ class AppContainer(context: Context) {
                     ?.let { bearingDegrees(it[it.lastIndex - 1], it[it.lastIndex]) }
                 diagnostics.record(
                     DiagnosticLog.Kind.PLAN,
-                    "next leg ready: ${chosen.distanceMeters / 1000} km, ${chosen.camerasPassed} cameras",
+                    "next leg ready: ${leg.distanceMeters / 1000} km, ${leg.camerasPassed} cameras",
                 )
                 if (outcome.remaining.size < 2) return@launch
                 points = outcome.remaining
@@ -806,6 +827,56 @@ class AppContainer(context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Re-measure which cameras a leg passes, against the line it **ends up
+     * with**.
+     *
+     * **Every route Shunt shows is labelled by measuring it, and three things
+     * here change a leg's line after that measurement was taken**: the trim
+     * cuts a spur off it, the handover cuts its tail off, and the seam re-plan
+     * splices in road that *neither* leg drove. The first two can only remove
+     * road, so a stale label over-reports and errs safe. The third does not:
+     * a camera on a spliced seam was drawn nowhere, counted nowhere and
+     * announced never, on a leg the driver was told is camera-free.
+     *
+     * Reported exactly that way — "it labeled a route with a camera as camera
+     * free again with an avoidable camera" — and this is the one rule the whole
+     * app rests on: **a route is described by what it passes, never by what it
+     * was planned against.** Re-measuring costs one cached camera lookup and
+     * only happens when something actually moved the line.
+     *
+     * A lookup that fails leaves the old label rather than inventing a new one.
+     * That is the status quo, and it is said out loud in the log — silently
+     * showing a count nothing measured is what this exists to stop.
+     */
+    private suspend fun relabel(leg: PlannedRoute): PlannedRoute {
+        if (leg.polyline.size < 2) return leg
+        val bbox = BoundingBox.of(leg.polyline).expand(BrouterPlanner.NEARBY_CAMERA_METERS)
+        val cameras = runCatching { camerasFor(bbox) }.getOrNull()
+        if (cameras == null) {
+            diagnostics.record(
+                DiagnosticLog.Kind.PLAN,
+                "could not re-check cameras after reshaping a leg — its count may be stale",
+            )
+            return leg
+        }
+        val scale = cameraRangePercent / 100.0
+        val byLocation = cameras.associateBy { it.location }
+        val index = CameraIndex(cameras.map { CameraVision(it.location, it.directionDegrees, scale) })
+        val passed = index.seeing(leg.polyline).mapNotNull { byLocation[it.location] }
+        if (passed.size > leg.passedCameras.size) {
+            diagnostics.record(
+                DiagnosticLog.Kind.PLAN,
+                "reshaping this leg put it past ${passed.size - leg.passedCameras.size} more camera(s)",
+            )
+        }
+        return leg.copy(
+            passedCameras = passed,
+            nearbyCameras = index.within(leg.polyline, BrouterPlanner.NEARBY_CAMERA_METERS)
+                .mapNotNull { byLocation[it.location] },
+        )
     }
 
     /**
