@@ -669,6 +669,80 @@ times a second, and again whenever a leg landed.
 
 ---
 
+### B12 · No leg is lost between the chooser and the drive
+*Fixed 2026-08-20. The most consequential fix of that day and the only one
+nobody had reported.*
+
+**Setup.** Plan a trip long enough to take three or more legs. **Sit on the
+chooser for a minute or two** — long enough for at least two later legs to land
+— then tap Go.
+
+**Pass.** The drawn route and the car's chain contain every leg, in order. The
+camera count on the driving sheet accounts for all of them.
+
+**Fail (as it was).** The channel carrying legs to the drive monitor held one
+and dropped the older on each send, so the drive jumped from the end of leg 1 to
+whichever leg happened to be last — skipping the road between it, its pins and
+its cameras. It only bit if legs landed faster than the monitor existed, so it
+depended on how long the driver read the screen.
+
+**How to provoke it deliberately if it ever comes back:** the shorter you leave
+the chooser open, the less likely it is. Wait, don't hurry.
+
+---
+
+### B13 · A later leg sets off the way the car arrived
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a long trip through country with cameras near the direct road,
+and look at each leg boundary on the map.
+
+**Pass.** The route carries on through the boundary. No spur, no loop, no
+out-and-back.
+
+**Fail (as reported).** "A weird detour where the navigation goes away from the
+route, towards a camera, circles around it out of range, and goes back to the
+route." Later legs were planned with no heading, so nothing cost the router
+anything for leaving the boundary back down the road just driven.
+
+**What this does not fix.** The heading biases; it does not forbid. A boundary
+that is genuinely in the wrong place still produces a bend, and the trim and the
+seam re-plan are still what handle that. If a spur survives this, the next step
+is the overlap handover in the research brief (F-42), not a wider repair window.
+
+---
+
+### C8 · The pending line follows a road, from where the route actually ends
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a trip over 1,500 km — long enough that the spine is probed
+rather than routed whole — and watch the dashed line as legs land.
+
+**Pass.** It starts at the tip of the drawn route and follows roads onward.
+Each leg that lands shortens it and the remainder still follows roads.
+
+**Fail (as reported).** It ran straight across country at an angle to the route,
+leaving the route's tip sideways. Both come from the same cause: only the first
+leg's `directAhead` reached the map, and on a trip that long most of the first
+leg's copy is a straight estimate past where the spine probe stopped.
+
+**Note.** Before any later leg lands the line is still mostly that estimate, and
+that is honest — nothing better is known yet. It is dashed and semitransparent
+for exactly this reason.
+
+---
+
+### D12 · Fewest cameras is the first card on the sheet
+*Fixed 2026-08-20.*
+
+**Pass.** Fewest cameras sits at the top, above Fastest, and is the one already
+selected.
+
+**Fail (as reported).** Fastest was on top with the selected camera-free option
+underneath it, which reads as a recommendation for the road that avoids nothing.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

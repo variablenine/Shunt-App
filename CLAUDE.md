@@ -1012,6 +1012,28 @@ instead of minutes. Each leg goes two places at once: onto `laterLegs` for the
 map, so the line visibly grows to the destination from a standstill, and through
 a conflated channel to the drive monitor.
 
+**Every later leg is planned with the heading the leg before it arrives on.** A
+boundary sits on the *direct* road and the camera-avoiding continuation often
+does not, so with no cost attached to leaving the way the car came, the cheapest
+route onto that continuation is frequently back down the road just driven — a
+spur, or a loop around a camera and back. That is a generator of the very
+doubling-back the trim and the seam re-plan exist to undo, and it was free to
+remove. It **biases rather than forbids** (BRouter models `startDirection` as an
+imaginary previous position about a kilometre back, so ordinary turn costs
+apply), so both repairs stay for the boundary that is genuinely in the wrong
+place. See F-42.
+
+**The channel legs travel on is unbounded, and that is load-bearing.** It was
+conflated — capacity one, older value dropped — on the premise that each
+extension carries the whole of what is left. It does not: `extend` *appends*, so
+every leg is a delta and a dropped one is a hole in the route, its pins and its
+cameras. Legs are planned from the moment the chooser appears while the monitor
+that drains them does not exist until Go, so a driver who read the options for a
+minute lost the middle of their trip — and whether it happened at all depended on
+how long they looked at the screen. `legExtensionChannel()` exists so the test
+builds the production channel rather than one of its own; the monitor drains
+every queued leg per fix, not one.
+
 `DriveMonitor.extend` appends it, and the one thing that makes that safe is that
 **the new chain starts from the pin the car is aiming at, not from the
 beginning.** Rebuilding over the whole chain would reset the monitor to the first
@@ -1147,6 +1169,17 @@ while later legs are still coming, following the direct road (`directAhead`, a
 slice of the spine already computed to choose the boundary) rather than cutting
 across country. It must never read as a route, which is what the transparency
 and the movement are for.
+
+**It follows the newest leg's slice, not the chooser's.** Every plan computes its
+own `directAhead` from the boundary it cut at, and for a long time only the first
+leg's reached the map — so the line described the road onward from a boundary the
+driver was hundreds of kilometres past. Two faults came out of that, both
+reported: past `SPINE_FULL_LIMIT_METERS` the first leg's spine is a *probe*, so
+most of its slice is the straight estimate rather than road; and the
+camera-avoiding legs wander off the direct road, so the line left the route
+sideways to rejoin a chord measured from somewhere else. `laterLegDirectAhead`
+carries the newest leg's, which starts exactly where the drawn line ends. See
+F-42.
 
 The movement is worth knowing about, because it looks trivial and is not.
 MapLibre has no dash *offset* to animate, so it is faked by cycling dash patterns
@@ -1666,6 +1699,33 @@ Ordered roughly by what unblocks real use.
   to the car — so the thing to check is that the route the car receives is the
   camera-free one. §6, "The chooser's selection is the whole trip's", and
   `docs/verification.md` B11.
+- **[high] The leg boundary, done properly: an overlap handover.** The seam is
+  hard to repair *after* the fact because the constraint that creates it — leg
+  N+1 must start exactly where leg N ended — is Shunt's, not BRouter's, and it
+  is avoidable. Plan leg N+1 from a point **inside** leg N, with leg N's
+  heading, and let the router choose the last 10-15 km of leg N for itself; then
+  publish leg N truncated at that point. The join is a vertex of both lines by
+  construction, so `trimDoubleBack`, `spliceSeam` and every `OVERLAP_/SPUR_/SEAM_`
+  constant become dead code — about 250 lines of the hardest-to-reason-about
+  logic in the module. The one thing to get right is §6.1: if the car is already
+  driving leg N, truncating it is a change to a route in progress, so check the
+  monitor's progress before publishing. From the research brief in F-42, which
+  cites file and line.
+- **[high] `LegSplitter`'s stop handling has two verified bugs.** A stop *inside*
+  the leg window suppresses the cut altogether rather than becoming the boundary
+  — so a long trip with a Supercharger 100 km in is planned whole, which is the
+  case §7.10 says produces the fastest road and 43 cameras. And `isBefore` orders
+  stops by straight-line distance from the origin, while `split` builds the first
+  leg as `[origin, cut]` and `dropWhile`s the rest — so a stop mis-ordered by that
+  proxy is **deleted from the trip**. Both are pure logic, unit-testable with no
+  tiles. See F-42.
+- **Surface BRouter's own `indexInTrack` and snap distance.** `runRoute` throws
+  away `track.matchedWaypoints`, which gives the exact index of each waypoint in
+  the returned line, how far it had to snap to reach a road, and whether BRouter
+  silently converted it to a beeline. That kills the distance-matching in
+  `LegSplitter`, and the snap distance is a diagnostic the project does not have:
+  a cut or a charger that snapped kilometres to reach a road is not where the map
+  says it is. See F-42.
 - **Pin refinement, done lazily** — compute the next few pins rather than all of
   them. Not a speed problem any more; a quality one, since a long route's pins
   currently share one budget between them.

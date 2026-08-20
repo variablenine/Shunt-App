@@ -2051,6 +2051,79 @@ moving, so `PlanScreen` keeps it until a new trip replaces it.
 
 ---
 
+### F-42 · Three faults from one long trip, and a research brief that found a fourth
+*Observed: 2026-08-20, from a 1,839 km plan. Fixed; none confirmed on a drive.*
+
+> let's have the fewest cameras route show up first on top of the fastest one
+> instead of underneath it. Also the line stays but for some reason doesn't
+> follow the route. Can't have that. Also it has a weird angle to it. Also had a
+> weird detour where the navigation goes away from the route, towards a camera,
+> circles around it out of range, and goes back to the route.
+
+**The card order was pointing the wrong way.** The options come back
+fastest-first because that is the order the passes run in, and the sheet drew
+them in that order — so the road that avoids nothing sat at the top of an app
+whose purpose is avoiding it, with the option actually selected underneath it.
+Reading order is a recommendation whether or not it was meant as one. The cards
+are now sorted by cameras passed; the indices handed to `onSelectRoute` are still
+the original ones, so nothing downstream knows about the display order.
+
+**The pending line was drawn along a road from hundreds of kilometres back.**
+Every plan computes `directAhead` — a slice of the spine it routed to choose its
+own cut — and the planner's own comment says "every leg that lands replaces a
+piece of it with real road". Nothing was doing that: only `Phase.Solved`'s copy,
+from the **first** leg, ever reached the map. Two visible faults, both in the
+screenshots:
+
+- *It did not follow roads.* This trip is over `SPINE_FULL_LIMIT_METERS`, so the
+  first leg's spine is a **probe** — deliberately bounded just past the leg
+  window. Past that, `directAhead` is the straight sampled estimate. At 473 km
+  planned out of 1,839, essentially all of what was being drawn was that
+  estimate.
+- *It left the route at an angle.* The camera-avoiding legs wander off the direct
+  road, so the line ran sideways from the route's tip to rejoin a chord measured
+  from a boundary the driver was two legs past.
+
+`AppContainer.laterLegDirectAhead` now carries the newest leg's own slice, which
+starts exactly where the drawn line ends.
+
+**The detour circling a camera** is the leg boundary again, and the research
+brief named the cause: later legs were planned with **no heading at all**.
+`BrouterRouter` only sets `startDirection` when one is given, so a leg setting off
+from a boundary had no cost attached to leaving the way the car arrived — and
+since the boundary sits on the *direct* road while the camera-avoiding
+continuation often does not, the cheapest way onto that continuation is
+frequently back down the road just driven. Each leg now gets the bearing of the
+previous leg's final segment. It **biases rather than forbids** (BRouter models it
+as an imaginary previous position about a kilometre back), so the trim and the
+seam re-plan both stay.
+
+**And the brief found one nobody had reported, which is the most serious of the
+four.** `legExtensions` was a **conflated** channel — capacity one, older value
+dropped — on the stated premise that each extension carries the whole of what is
+left. It does not: `DriveMonitor.extend` appends, so every leg is a delta.
+Later legs are planned from the moment the chooser appears and each takes
+seconds, while the monitor that drains the channel does not exist until Go is
+tapped. So a driver reading the options for a minute on an eight-leg trip had
+several legs waiting in a channel holding one, and the drive jumped from the end
+of leg 1 to whichever leg happened to be last — skipping the road between, its
+pins, and **its cameras**. Whether it broke at all depended on how long somebody
+looked at the screen, which is why it would have read as "leg splitting is
+unreliable" rather than as a bug with a shape. The channel is unbounded and the
+monitor drains all of it per fix; `legExtensionChannel()` exists so a test can
+build the production channel rather than one of its own choosing.
+
+**Still open from the brief, in its own order of value:** the overlap handover
+(§3 — plan leg N+1 from a point *inside* leg N with leg N's heading, which
+deletes `trimDoubleBack` and `rejoinAtBoundary` rather than debugging them),
+`LegSplitter`'s stop handling (a stop inside the leg window suppresses splitting
+entirely; stop ordering uses straight-line distance and can delete a stop from
+the trip), surfacing BRouter's own `indexInTrack` and snap distance instead of
+matching by proximity, and the `pass1coefficient` sweep. The brief itself is
+worth reading before touching any of it — it cites file and line for each claim.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

@@ -124,15 +124,22 @@ fun PlanScreen(
     // line across country for exactly the part of the trip where later legs are
     // still landing. The road onward does not stop being true when the car
     // starts moving; only a new trip invalidates it.
-    var directAhead by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var solvedAhead by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
     LaunchedEffect(state.phase) {
         val phase = state.phase
-        directAhead = when {
+        solvedAhead = when {
             phase is Phase.Solved -> phase.directAhead
             phase is Phase.Browsing -> emptyList()
-            else -> directAhead
+            else -> solvedAhead
         }
     }
+    // The last leg planned owns it once one has landed. Its slice starts at the
+    // boundary the drawn line now ends at, which the chooser's does not — the
+    // chooser's was measured from the *first* boundary, and on a long trip most
+    // of it is the straight estimate past where the spine probe stopped. Using
+    // it after later legs had landed drew a line that left the route at an angle
+    // and cut across country instead of following a road.
+    val directAhead = state.laterLegDirectAhead.ifEmpty { solvedAhead }
 
     // The chosen leg, plus every later leg that has been planned so far. The
     // line grows toward the destination as they land rather than appearing whole

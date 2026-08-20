@@ -141,6 +141,12 @@ data class PlanUiState(
     /** That leg's pins with any on the trimmed spur removed. See `LegJoin.pinsOn`. */
     val trimmedLeadWaypoints: List<GeoPoint>? = null,
     /**
+     * The direct road onward from the end of the last leg planned, for the
+     * dashed pending line. Empty until a later leg lands, when the chooser's own
+     * `Phase.Solved.directAhead` still describes the same boundary.
+     */
+    val laterLegDirectAhead: List<GeoPoint> = emptyList(),
+    /**
      * The pin the car is aiming at while a drive is running, for the map's
      * follow camera. Null when nothing is being driven.
      */

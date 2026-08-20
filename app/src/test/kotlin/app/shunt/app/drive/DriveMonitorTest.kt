@@ -792,6 +792,73 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `two legs that landed before the drive started are both kept`() = runTest {
+        // **The conflation bug, in the shape it actually happened.** Later legs
+        // are planned from the moment the chooser appears, and each takes
+        // seconds; the monitor that drains them does not exist until Go is
+        // tapped. So a driver reading the options for a minute has several legs
+        // waiting before the first GPS fix. A channel holding one kept the last
+        // and the drive jumped straight to it — skipping a leg's road, its pins
+        // and, worst of all, its cameras.
+        val vehicle = FakeVehicleNavClient()
+        val boundary = GeoPoint(33.0, -96.94)
+        val middle = GeoPoint(33.0, -96.90)
+        val realEnd = GeoPoint(33.0, -96.86)
+        val seenOnLegTwo = Camera(77, GeoPoint(33.0, -96.92))
+        val firstLeg = DrivePlan(
+            destination = Destination("Boundary", dest),
+            chain = chain,
+            cameras = emptyList(),
+            polyline = chain,
+            remaining = listOf(dest, realEnd),
+        )
+        val legTwo = DrivePlan(
+            destination = Destination("Middle", middle),
+            chain = listOf(boundary, middle),
+            cameras = listOf(seenOnLegTwo),
+            polyline = listOf(dest, boundary, middle),
+            remaining = listOf(middle, realEnd),
+        )
+        val legThree = DrivePlan(
+            destination = Destination("Home", realEnd),
+            chain = listOf(realEnd),
+            cameras = emptyList(),
+            polyline = listOf(middle, realEnd),
+        )
+        // **The production channel**, not a channel the test chose. Building it
+        // here is the whole point: with the conflated one this exact fixture
+        // keeps only the last leg.
+        val extensions = legExtensionChannel()
+        // Both land while the chooser is still on screen — before any fix.
+        extensions.trySend(legTwo)
+        extensions.trySend(legThree)
+        val published = mutableListOf<DrivePlan>()
+
+        val monitor = DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            onPlanChanged = { published += it },
+            extensions = extensions,
+        )
+        monitor.run(firstLeg, kotlinx.coroutines.flow.flow { emit(fix(west(w1, 1000.0))) })
+
+        val extended = published.last()
+        assertEquals(
+            Destination("Home", realEnd),
+            extended.destination,
+            "the last leg still names the real destination",
+        )
+        assertTrue(
+            boundary in extended.chain && middle in extended.chain && realEnd in extended.chain,
+            "every leg's chain must survive, in order: ${extended.chain}",
+        )
+        assertTrue(
+            seenOnLegTwo.id in extended.cameras.map { it.id },
+            "a camera on the middle leg was dropped with the leg: ${extended.cameras}",
+        )
+    }
+
+    @Test
     fun `reaching a leg boundary with nothing beyond it is not an arrival`() = runTest {
         // Vanishingly rare by design — the boundary is an hour's driving away and
         // the next leg plans in seconds — but announcing arrival in open country

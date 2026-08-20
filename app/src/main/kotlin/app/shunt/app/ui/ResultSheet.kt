@@ -301,8 +301,19 @@ private fun SolvedContent(
     Spacer(Modifier.height(12.dp))
 
     // Choose a route. With only one option (no cameras nearby) this is a single
-    // card; otherwise it's the fastest → fewest-cameras spectrum.
-    phase.options.forEachIndexed { index, option ->
+    // card; otherwise it is the fewest-cameras → fastest spectrum.
+    //
+    // **Fewest cameras first, which is the reverse of the order they are
+    // planned in.** The options come back fastest-first because that is the
+    // order the passes run, and showing them that way put the road that avoids
+    // nothing at the top of an app whose purpose is avoiding it — with the
+    // option actually selected sitting underneath. Reading order is a
+    // recommendation whether or not it was meant as one, and this one was
+    // pointing the wrong way. The indices handed to [onSelectRoute] are the
+    // original ones, so nothing downstream has to know about the display order.
+    phase.options.withIndex().sortedWith(
+        compareBy({ it.value.camerasPassed }, { it.value.distanceMeters }),
+    ).forEach { (index, option) ->
         RouteOptionCard(
             option,
             selected = index == phase.selected,

@@ -37,6 +37,20 @@ object DriveMonitorBounds {
     const val ABANDONED_SPACING_METERS = 100.0
 }
 
+/**
+ * The channel later legs travel to the drive monitor on.
+ *
+ * **Unbounded, and built here rather than inline so the capacity is testable.**
+ * It was conflated, on the premise that each extension carried the whole of what
+ * is left — it does not. `DriveMonitor.extend` *appends*, so every leg is a
+ * delta and a dropped one is a hole in the route, its pins and its cameras.
+ * Reachable on any long trip: legs are planned from the moment the chooser
+ * appears and the monitor does not exist until Go is tapped, so whether it broke
+ * depended on how long the driver read the screen.
+ */
+fun legExtensionChannel(): kotlinx.coroutines.channels.Channel<DrivePlan> =
+    kotlinx.coroutines.channels.Channel(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
 class DriveMonitor(
     private val vehicle: VehicleNavClient,
     private val alerter: Alerter,
@@ -111,10 +125,20 @@ class DriveMonitor(
                 // Worked out before `previous` moves on, so it compares this fix
                 // with the one before it rather than with itself.
                 val heading = headingOf(previous, update)
-                // Take any leg that landed since the last fix, before deciding
-                // anything from this one — the chain it adds may be what the
-                // current position should be measured against.
-                extensions?.tryReceive()?.getOrNull()?.let { next ->
+                // Take **every** leg that landed since the last fix, before
+                // deciding anything from this one — the chain they add may be
+                // what the current position should be measured against.
+                //
+                // All of them, not one: later legs are planned from the moment
+                // the chooser appears and each takes seconds, so a driver who
+                // reads the options for a minute has several waiting before the
+                // first fix ever arrives. Taking one per fix would have drained
+                // that backlog eventually; the reason to drain it here is that
+                // each leg is a *delta* — [extend] appends — so the order and
+                // the completeness both matter, and leaving legs in the channel
+                // means the plan on screen disagrees with the plan that exists.
+                while (true) {
+                    val next = extensions?.tryReceive()?.getOrNull() ?: break
                     current = extend(current, next, engine)
                     // Inherits what has already been announced: an extension is
                     // the same drive continuing, so a camera warned about on the

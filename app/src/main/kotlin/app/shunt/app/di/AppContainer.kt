@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import app.shunt.BuildConfig
 import app.shunt.app.drive.DriveActivity
 import app.shunt.app.drive.DriveStatus
+import app.shunt.app.drive.legExtensionChannel
 import app.shunt.app.plan.CameraGateway
 import app.shunt.app.plan.DrivePlan
 import app.shunt.app.plan.LocationProvider
@@ -24,6 +25,7 @@ import app.shunt.solver.charging.CHARGER_CORRIDOR_METERS
 import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.solver.geo.bearingDegrees
 import app.shunt.app.diag.DiagnosticLog
 import app.shunt.core.GeoPoint
 import app.shunt.app.plan.Destination
@@ -351,11 +353,23 @@ class AppContainer(context: Context) {
     /**
      * Legs planned after the driver set off, on their way to the drive monitor.
      *
-     * Conflated because only the newest matters: each extension carries the
-     * whole of what is left, not a delta, so a monitor that misses one and takes
-     * the next has lost nothing.
+     * **Unbounded, and it was conflated on a false premise.** The comment here
+     * used to say only the newest mattered because each extension carried the
+     * whole of what is left — it does not. `DriveMonitor.extend` *appends*:
+     * `chain = remainingChain() + next.chain`, `polyline = polyline + next
+     * .polyline`. Every leg is a delta, so a dropped one is a hole.
+     *
+     * That is reachable on any trip long enough to want it. Later legs are
+     * planned **from the moment the chooser appears**, and each takes seconds,
+     * while the monitor that drains this does not exist until Go is tapped. A
+     * driver reading three options for a minute on an eight-leg trip produced
+     * several legs into a channel holding one — and the drive then jumped from
+     * the end of leg 1 to the start of whichever leg happened to be last,
+     * skipping the cameras of everything between. It depended on how long
+     * somebody looked at the screen, which is why it would have read as
+     * "leg splitting is unreliable" rather than as a bug with a shape.
      */
-    val legExtensions = Channel<DrivePlan>(Channel.CONFLATED)
+    val legExtensions = legExtensionChannel()
 
     private var legJob: Job? = null
 
@@ -424,6 +438,25 @@ class AppContainer(context: Context) {
     val trimmedLeadWaypoints = MutableStateFlow<List<GeoPoint>?>(null)
 
     /**
+     * The direct road onward from the end of the **last leg planned**, for the
+     * dashed pending line.
+     *
+     * Every plan already computes this — it is a slice of the spine it routed
+     * to choose its own cut — but only the first leg's ever reached the map, so
+     * the line kept describing the road onward from a boundary the driver was
+     * hundreds of kilometres past. Two visible faults came from that, both
+     * reported: on a trip over `SPINE_FULL_LIMIT_METERS` the first leg's slice
+     * is mostly the *straight* estimate past where the probe stopped, so the
+     * line did not follow roads at all; and the camera-avoiding legs wander off
+     * the direct road, so the line left the route sideways to rejoin a chord
+     * drawn from somewhere else — the "weird angle".
+     *
+     * Each leg replaces it with its own, which is what the planner's own comment
+     * assumed was happening all along.
+     */
+    val laterLegDirectAhead = MutableStateFlow<List<GeoPoint>>(emptyList())
+
+    /**
      * For work that outlives a screen but not the process — planning the later
      * legs of a trip in particular, which must survive the plan screen going
      * away when the driving sheet takes over.
@@ -459,6 +492,7 @@ class AppContainer(context: Context) {
         trimmedLeadPolyline.value = null
         trimmedLeadWaypoints.value = null
         laterLegs.value = emptyList()
+        laterLegDirectAhead.value = emptyList()
         // Conflated, so at most one can be waiting — but draining is what makes
         // this true regardless of the channel's capacity.
         while (legExtensions.tryReceive().isSuccess) Unit
@@ -509,6 +543,10 @@ class AppContainer(context: Context) {
         val carried = if (points == legPoints) laterLegs.value else emptyList()
         legPoints = points
         laterLegs.value = carried
+        // Belongs to the legs being replaced. The chooser's own `directAhead`
+        // takes over until the first new leg lands, which is the same road from
+        // the same boundary — the legs after it are what differ.
+        laterLegDirectAhead.value = emptyList()
         planningLaterLegs.value = false
         // The trim belongs to the option being replaced, so it cannot be
         // carried: it is a whole polyline for the lead leg, and keeping it would
@@ -537,11 +575,31 @@ class AppContainer(context: Context) {
             // replacement.
             try {
             var points = points
+            // The direction the leg before this one arrives at the boundary.
+            //
+            // **A later leg used to be planned with no heading at all**, and
+            // that is a direct generator of the doubling-back this module then
+            // spends two repair passes undoing. A boundary is chosen on the
+            // *direct* road, and the camera-avoiding continuation often is not
+            // on it — so with no cost attached to leaving the way the car
+            // arrived, the cheapest route onto that continuation is frequently
+            // back down the road just driven. Reported from a real plan as the
+            // route leaving the line, going towards a camera, circling it out of
+            // range and coming back.
+            //
+            // It biases rather than forbids: BRouter implements `startDirection`
+            // by putting an imaginary previous position about a kilometre back
+            // along the bearing so ordinary turn costs apply. So it will not on
+            // its own rescue a boundary that is genuinely in the wrong place,
+            // and the trim and the seam re-plan both stay.
+            var arrivalBearing: Double? = leadPolyline.takeIf { it.size >= 2 }
+                ?.let { bearingDegrees(it[it.lastIndex - 1], it[it.lastIndex]) }
             while (points.size >= 2 && isActive && run == legRun) {
                 diagnostics.record(DiagnosticLog.Kind.PLAN, "planning the next leg (${points.size} points left)")
                 val outcome = runCatching {
                     brouterPlanner.plan(
                         points = points,
+                        headingDegrees = arrivalBearing,
                         maxLegMeters = LegSplitter.MAX_LEG_METERS,
                         // Nobody is watching a spinner for this one. The car has
                         // at least LegSplitter.MIN_LEG_METERS of road left when
@@ -658,6 +716,14 @@ class AppContainer(context: Context) {
                 // standstill as readily as while moving.
                 planned += leg
                 publish()
+                // The road onward from *this* leg's end, replacing whatever the
+                // pending line was drawn along before it.
+                laterLegDirectAhead.value = outcome.directAhead
+                // The way this leg arrives at the next boundary, for the leg
+                // after it. Taken from the trimmed line where a trim fired, so
+                // it describes road that is still in the plan.
+                arrivalBearing = leg.polyline.takeIf { it.size >= 2 }
+                    ?.let { bearingDegrees(it[it.lastIndex - 1], it[it.lastIndex]) }
                 diagnostics.record(
                     DiagnosticLog.Kind.PLAN,
                     "next leg ready: ${chosen.distanceMeters / 1000} km, ${chosen.camerasPassed} cameras",

@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
                 val trimmedLead by container.trimmedLeadPolyline.collectAsStateWithLifecycle()
                 val aimedAt by container.aimedAt.collectAsStateWithLifecycle()
                 val trimmedLeadPins by container.trimmedLeadWaypoints.collectAsStateWithLifecycle()
+                val legDirectAhead by container.laterLegDirectAhead.collectAsStateWithLifecycle()
 
                 // Keep the screen on **while actually navigating**, and only
                 // then.
@@ -174,6 +175,7 @@ class MainActivity : ComponentActivity() {
                         trimmedLeadPolyline = trimmedLead,
                         aimedAt = aimedAt,
                         trimmedLeadWaypoints = trimmedLeadPins,
+                        laterLegDirectAhead = legDirectAhead,
                     ),
                     cameraViewportFetcher = container.viewportCameras,
                     chargingVia = (driveStatus as? DriveStatus.Driving)?.chargingVia,
