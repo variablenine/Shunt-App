@@ -48,8 +48,8 @@ fun DiagnosticsSection(
     Spacer(Modifier.height(4.dp))
     Text(
         "Shunt keeps a week of what it did on this phone — nothing is ever sent " +
-            "anywhere on its own. Export it and attach it to an email so the " +
-            "problem can be found.",
+            "anywhere on its own. Saving it puts a file where you choose, to " +
+            "read before you send it anywhere.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -96,7 +96,7 @@ fun DiagnosticsSection(
             enabled = entryCount > 0,
             onClick = { onExport(DiagnosticLog.Export(window = window, includeLocations = includeLocations)) },
         ) {
-            Text(if (entryCount > 0) "Export log ($entryCount entries)" else "Nothing logged yet")
+            Text(if (entryCount > 0) "Save log ($entryCount entries)" else "Nothing logged yet")
         }
         Spacer(Modifier.weight(1f))
         TextButton(onClick = onClear) { Text("Delete log") }

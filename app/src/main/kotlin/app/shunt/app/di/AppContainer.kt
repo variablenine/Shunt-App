@@ -959,6 +959,13 @@ class AppContainer(context: Context) {
                 val cutoff = System.currentTimeMillis() - TILE_TTL_DAYS * 24L * 60 * 60 * 1000
                 tileSource.pruneUnusedSince(cutoff)
             }
+            // Diagnostic exports used to be written into the cache and handed to
+            // a share sheet. They are saved to a file the user picks now, and
+            // any copy left behind is a snapshot of a log that has since
+            // expired — quietly outliving the week the log itself promises.
+            runCatching {
+                File(appContext.cacheDir, "diagnostics").deleteRecursively()
+            }
         }.start()
     }
 

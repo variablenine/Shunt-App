@@ -81,7 +81,7 @@ Working and reasonably trusted:
   matched as you type — which doubles as the answer to a place OSM cannot name:
   pin it once and it is findable by name from then on.
 - A rolling week of diagnostics (`DiagnosticLog`), exportable to a file the user
-  attaches to an email. Never uploaded, never scheduled; coordinates are stripped
+  saves where they choose. Never uploaded, never scheduled; coordinates are stripped
   unless the person exporting turns them on, and the log expires by itself.
 - An adjustable camera reach (`CameraVision.rangeScale`, a slider in settings).
   Nobody publishes an ALPR's read range and it varies with the lens, the height
@@ -294,9 +294,11 @@ Key files, by the question they answer:
   of step), and every camera carries `shunt:practice` so nothing downstream can
   present one as real.
 - *How does a user report a bug?* `app/diag/DiagnosticLog.kt` (pure, tested) and
-  `app/diag/DiagnosticExport.kt` (the Android half: cache file, FileProvider,
-  share sheet). The split is deliberate — the privacy rules are in the part that
-  can be unit-tested.
+  `app/diag/DiagnosticExport.kt` (the Android half: the document picker and the
+  output stream). The split is deliberate — the privacy rules are in the part
+  that can be unit-tested. It **saves** rather than shares: a share sheet asks
+  who to send a week of somebody's driving to before they have read a word of
+  it, which is the wrong order of operations.
 
 ---
 

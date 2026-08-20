@@ -2242,6 +2242,54 @@ itself, which is what it was being read as.
 
 ---
 
+### F-45 · A clean leg with red dots on it, and a spine that gave up
+*Observed: 2026-08-20, from a 1,424 km plan. Fixed; unconfirmed on a drive.*
+
+> Er, something happened. […] Also make the export log download not share
+
+**"Camera-free" and four red camera dots on the same screen, both true.** The
+result sheet's verdict describes the leg on the chooser; the map draws
+`overlay.passedCameras`, which merges *every* leg planned so far. So a clean
+first leg with cameras two hundred kilometres further on showed a green
+"This leg passes no cameras" above a route with red dots on it. Reported twice
+as the app labelling a route camera-free with an avoidable camera on it, and
+that reading is the reasonable one — two true statements that contradict each
+other on a safety surface are worse than one wrong one. The verdict now names
+what the rest of the trip carries: "N cameras later in the trip", in the same
+red the dots are drawn in.
+
+**The spine spent a third of the plan budget failing.** The breakdown read:
+
+```
+fastest (gave up — out of time) (spine, full)   24.7 s
+fastest (spine)                                  2.2 s
+fastest / blocked / balanced             0.2 / 0.4 / 0.5 s
+```
+
+`SPINE_BUDGET_SHARE` is a third of 75 s, and the full-road attempt spent all of
+it and came back with nothing; the probe then did the same job in 2.2 s. That
+share was set when running out of it cost only a cruder corridor — F-39 added
+the retry, and from then on a failure cost the whole share *plus* the probe, out
+of the budget the avoidance passes need. Running out there is how a driver gets
+handed the fastest road (§7.10).
+
+`SPINE_FULL_ATTEMPT_SHARE` puts the full attempt on a third of the spine's share
+— about nine seconds — and leaves the rest for the probe. It is a bound on what
+a failure costs rather than a guess about which trips can finish, which is the
+distinction F-39 says a distance threshold gets wrong. **Reasoned from one
+measurement and wants the benchmark**, per CLAUDE.md §8.
+
+**The diagnostic log saves instead of sharing.** Asked for directly. A share
+sheet asks who to send a file to before the person has read a word of it, and
+hands it straight to whatever they tap — on a log that can contain every road
+they drove, that is the wrong order of operations. It goes through the system
+document picker now, to a file they choose, on their own device. The
+`FileProvider` and its cache directory are gone with it, and anything left in
+that directory by an older build is deleted at startup: it was a copy of a log
+that has since expired, quietly outliving the week the log itself promises.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

@@ -285,9 +285,29 @@ class BrouterPlanner(
         // cross-country trip failing outright. The rest of the road gets planned
         // leg by leg, which was always the plan.
         var spineTarget = spineProbe(points, maxLegMeters)
+        // Whether the first attempt is the whole road or already the probe.
+        val fullRoad = maxLegMeters != null && spineTarget.last() == points.last()
+        val spineBudget = (budgetLeft() * SPINE_BUDGET_SHARE).toLong().coerceAtLeast(1L)
+        // **A full-road attempt is on a short leash, because it may fail and the
+        // probe still has to run after it.**
+        //
+        // Measured on a real 1,424 km trip: the full spine spent its entire
+        // 24.7 s allowance and gave up, the probe then finished the same job in
+        // 2.2 s, and the whole of that 24.7 s came out of a 75 s plan budget
+        // that the avoidance passes were going to need. Running out *there* is
+        // how a driver gets handed the fastest road (§7.10), so a search that
+        // was going to fail should fail cheaply.
+        //
+        // This is a bound on what a failure costs, not a guess about which trips
+        // can finish — a full spine that would have come back inside the leash
+        // still comes back, and the probe picks up the rest of the share.
         var direct = runRoutes(
             spineTarget, emptyList(), headingDegrees, blocked,
-            (budgetLeft() * SPINE_BUDGET_SHARE).toLong().coerceAtLeast(1L),
+            if (fullRoad) {
+                (spineBudget * SPINE_FULL_ATTEMPT_SHARE).toLong().coerceAtLeast(1L)
+            } else {
+                spineBudget
+            },
         )
         // **If the full road ran out of time, ask for less of it rather than
         // giving up on roads altogether.**
@@ -303,7 +323,7 @@ class BrouterPlanner(
         // preferred where it works, because it is a better guide to where the
         // cut belongs, and the probe is what happens when "where it works" turns
         // out to be false for this particular trip.
-        if (direct.isNullOrEmpty() && maxLegMeters != null && spineTarget.last() == points.last()) {
+        if (direct.isNullOrEmpty() && fullRoad) {
             routingPasses += lastPassTimings().map { it.copy(label = "${it.label} (spine, full)") }
             spineTarget = spineProbe(points, maxLegMeters, force = true)
             direct = runRoutes(
@@ -943,6 +963,26 @@ class BrouterPlanner(
          * a cruder shape. Every other pass failing has no fallback at all.
          */
         private const val SPINE_BUDGET_SHARE = 0.33
+
+        /**
+         * How much of that share a **full-road** attempt may spend before the
+         * probe takes over.
+         *
+         * The share above is generous because running out of it used to cost
+         * only a cruder corridor. It costs more than that now: the full attempt
+         * is retried with the probe, so a failure spends its whole allowance and
+         * then the probe's time on top, out of the budget the avoidance passes
+         * need. Measured on a real 1,424 km trip — full spine 24.7 s and no
+         * answer, probe 2.2 s and a good one.
+         *
+         * A third of the share is about nine seconds of a kerbside plan. Long
+         * enough for a full spine that was ever going to finish; short enough
+         * that one that was not costs a tenth of the budget rather than a third.
+         * **Wants confirming against `RealWorldPlanningBenchmark`** — this is
+         * reasoned from one measurement, which is exactly the situation CLAUDE.md
+         * §8 warns about.
+         */
+        private const val SPINE_FULL_ATTEMPT_SHARE = 0.33
 
         /**
          * How far past the leg window the spine probe reaches, as a multiple of

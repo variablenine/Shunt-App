@@ -29,20 +29,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!--
-          Hands the diagnostic log to an email app when the user exports it.
-          Nothing is shared without that explicit action; see DiagnosticLog.
-        -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.diagnostics"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/diagnostic_paths" />
-        </provider>
-
         <service
             android:name="app.shunt.app.drive.DriveMonitorService"
             android:exported="false"

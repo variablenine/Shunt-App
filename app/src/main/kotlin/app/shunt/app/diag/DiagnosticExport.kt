@@ -1,75 +1,55 @@
 package app.shunt.app.diag
 
 import android.content.Context
-import android.content.Intent
-import androidx.core.content.FileProvider
-import java.io.File
+import android.net.Uri
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Turns the rolling log into a file and offers it to whatever the user wants to
- * send it with.
+ * Saves the rolling log to a file the user picks.
  *
  * The separation from [DiagnosticLog] is deliberate: the log itself is pure
  * Kotlin and exhaustively tested, and everything that touches Android — the
- * cache directory, the content URI, the share sheet — lives here where it
+ * document picker, the content URI, the output stream — lives here where it
  * cannot be. Nothing in this file decides *what* is in the export; that is
  * [DiagnosticLog.Export], which the user fills in.
  *
  * **The user is the transport.** No upload, no endpoint, no address baked in.
- * The share sheet hands them a file and they choose where it goes, which is the
- * only arrangement compatible with an app whose purpose is to stop somebody
- * being tracked.
+ *
+ * **A download, not a share**, and that is the point of this file rather than a
+ * detail of it. A share sheet asks *who to send it to* before the person has
+ * read a word of it, and it hands the file straight to whatever they tap — on a
+ * log that can contain every road they drove, that is the wrong order of
+ * operations. Saving it puts the file where they chose, on their own device, to
+ * open and read and then send or not. Asked for in those words: "make the export
+ * log download not share".
+ *
+ * The file says which it is in its own first lines — see [DiagnosticLog.export]
+ * — so it stays self-describing wherever it ends up, with no covering note to
+ * be separated from it.
  */
 object DiagnosticExport {
 
     /**
-     * Write the export and return an intent that offers it for sending.
+     * The name offered to the document picker.
      *
-     * Returns null if the file cannot be written — an export that silently
-     * shares nothing would be worse than one that visibly fails.
+     * Stamped to the minute so exporting twice while chasing one bug produces
+     * two files rather than a silent overwrite of the first.
      */
-    fun shareIntent(context: Context, log: DiagnosticLog, options: DiagnosticLog.Export): Intent? {
-        val text = log.export(options)
-        val file = runCatching {
-            val dir = File(context.cacheDir, "diagnostics").apply { mkdirs() }
-            // Overwritten each time rather than accumulating: old exports in the
-            // cache are copies of a log that has since expired, which quietly
-            // outlives the retention the log itself promises.
-            File(dir, FILE_NAME).apply { writeText(text) }
-        }.getOrNull() ?: return null
+    fun fileName(at: Date = Date()): String =
+        "shunt-diagnostics-${SimpleDateFormat("yyyy-MM-dd-HHmm", Locale.US).format(at)}.txt"
 
-        val uri = runCatching {
-            FileProvider.getUriForFile(context, "${context.packageName}.diagnostics", file)
-        }.getOrNull() ?: return null
-
-        val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        return Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Shunt diagnostic log — $stamp")
-            putExtra(
-                Intent.EXTRA_TEXT,
-                buildString {
-                    appendLine("Shunt diagnostic log attached.")
-                    appendLine()
-                    appendLine("What went wrong, and what you expected instead:")
-                    appendLine()
-                    appendLine()
-                    appendLine(
-                        if (options.includeLocations) {
-                            "This log includes coordinates of where the car went."
-                        } else {
-                            "Locations have been removed from this log."
-                        },
-                    )
-                },
-            )
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-    }
-
-    private const val FILE_NAME = "shunt-diagnostics.txt"
+    /**
+     * Write [text] to the document the user picked.
+     *
+     * Returns false if it could not be written, which the caller must say out
+     * loud: an export that silently produces nothing is worse than one that
+     * visibly fails, because the person goes on believing they have a log.
+     */
+    fun writeTo(context: Context, uri: Uri, text: String): Boolean = runCatching {
+        context.contentResolver.openOutputStream(uri)?.use { out ->
+            out.write(text.toByteArray())
+        } != null
+    }.getOrDefault(false)
 }

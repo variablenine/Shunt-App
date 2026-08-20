@@ -323,7 +323,11 @@ private fun SolvedContent(
     }
 
     Spacer(Modifier.height(4.dp))
-    SelectedRouteDetail(phase.chosen, partial = phase.remaining.isNotEmpty())
+    SelectedRouteDetail(
+        phase.chosen,
+        partial = phase.remaining.isNotEmpty(),
+        laterLegCameras = laterLegs.sumOf { it.camerasPassed },
+    )
 
     phase.timings?.let {
         Spacer(Modifier.height(12.dp))
@@ -629,16 +633,42 @@ private fun CameraBadge(count: Int, cameraFree: Boolean, partial: Boolean = fals
 }
 
 @Composable
-private fun SelectedRouteDetail(option: PlannedRoute, partial: Boolean = false) {
+private fun SelectedRouteDetail(
+    option: PlannedRoute,
+    partial: Boolean = false,
+    /**
+     * What the rest of the trip passes, when this is only its first leg.
+     *
+     * **The map draws the whole trip's cameras, and this line described one
+     * leg.** So a clean first leg with a red camera dot two hundred kilometres
+     * further on read as the app calling a route camera-free while showing a
+     * camera on it — reported twice in those words. Both statements were true
+     * and the pair of them was not, which is the worst kind of wrong for a
+     * safety surface. Naming the rest here is what makes the red dots on the
+     * map explained rather than contradictory.
+     */
+    laterLegCameras: Int = 0,
+) {
     if (option.camerasPassed == 0) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
-            Text(
-                if (partial) "This leg passes no cameras." else "This route passes no cameras.",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Column {
+                Text(
+                    if (partial) "This leg passes no cameras." else "This route passes no cameras.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (laterLegCameras > 0) {
+                    // The number and the noun, per the driving-text rule. The
+                    // red dots on the map beyond this leg belong to these.
+                    Text(
+                        "${cameraCount(laterLegCameras)} later in the trip",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
         return
     }

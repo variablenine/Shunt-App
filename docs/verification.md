@@ -832,6 +832,37 @@ count shown is the old one.
 
 ---
 
+### D13 · A camera on the map is always accounted for on the sheet
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a long trip whose first leg is camera-free and let a few later
+legs land, so red camera dots appear further along the route.
+
+**Pass.** The verdict under the option cards reads "This leg passes no cameras"
+*and* "N cameras later in the trip". Nothing red on the map is unexplained.
+
+**Fail (as reported).** A green "camera-free" verdict above a route with four
+red dots drawn on it. Both statements were true — the verdict was about the leg,
+the dots were the whole trip — and the pair read as the app lying.
+
+---
+
+### E4 · The diagnostic log saves to a file, and shares nothing
+*Changed 2026-08-20, at the maintainer's request.*
+
+**Setup.** Settings → Report a problem → Save log.
+
+**Pass.** The system document picker opens with a dated filename. Choosing a
+location writes the file there and a toast confirms it. Backing out of the picker
+does nothing and says nothing — that is not a failure. No share sheet appears at
+any point, and no app is offered the file.
+
+**Also check:** the file's own first lines say whether coordinates are included.
+That note used to live in the covering email and had to move into the file, or
+it would be separated from the log the moment anyone forwarded it.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

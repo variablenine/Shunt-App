@@ -4,12 +4,13 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -123,6 +124,27 @@ class MainActivity : ComponentActivity() {
                 val trimmedLeadPins by container.trimmedLeadWaypoints.collectAsStateWithLifecycle()
                 val legDirectAhead by container.laterLegDirectAhead.collectAsStateWithLifecycle()
 
+                // The diagnostic log, saved to a file the user picks rather than
+                // handed to a share sheet. See [DiagnosticExport] for why that
+                // distinction is worth the extra machinery on a file that can
+                // contain every road somebody drove.
+                var pendingExport by remember { mutableStateOf<String?>(null) }
+                val saveDiagnostics = rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument("text/plain"),
+                ) { uri ->
+                    val text = pendingExport
+                    pendingExport = null
+                    // A null uri is the person backing out of the picker, which
+                    // is not a failure and must not be reported as one.
+                    if (uri == null || text == null) return@rememberLauncherForActivityResult
+                    val saved = DiagnosticExport.writeTo(this@MainActivity, uri, text)
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (saved) "Diagnostic log saved" else "Couldn't save the diagnostic log",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+
                 // Keep the screen on **while actually navigating**, and only
                 // then.
                 //
@@ -192,10 +214,13 @@ class MainActivity : ComponentActivity() {
                         diagnostics = DiagnosticsUi(
                             entryCount = container.diagnostics.entries().size,
                             onExport = { options ->
-                                // The user is the transport: this opens a share
-                                // sheet with a file. Nothing is sent by Shunt.
-                                DiagnosticExport.shareIntent(this@MainActivity, container.diagnostics, options)
-                                    ?.let { startActivity(Intent.createChooser(it, "Send diagnostic log")) }
+                                // The text is built *now*, not when the picker
+                                // comes back: the log keeps being written to
+                                // while somebody chooses a folder, and the
+                                // export they asked for is the one they were
+                                // looking at.
+                                pendingExport = container.diagnostics.export(options)
+                                saveDiagnostics.launch(DiagnosticExport.fileName())
                             },
                             onClear = { container.diagnostics.clear() },
                         ),
