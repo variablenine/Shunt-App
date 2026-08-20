@@ -627,7 +627,23 @@ class AppContainer(context: Context) {
                     )
                 }.getOrNull()
                 if (outcome !is PlanOutcome.Routes || outcome.options.isEmpty()) {
-                    diagnostics.record(DiagnosticLog.Kind.PLAN, "next leg failed to plan")
+                    // **Say which failure it was.** "Failed to plan" covers a
+                    // routing error, a missing tile and an empty option list,
+                    // and those want completely different responses — the first
+                    // is a bug, the second is a download the driver can do, the
+                    // third is a budget. A log that cannot tell them apart is a
+                    // log that cannot be acted on, which is the whole point of
+                    // keeping one.
+                    diagnostics.record(
+                        DiagnosticLog.Kind.PLAN,
+                        when (outcome) {
+                            null -> "next leg failed to plan: the planner threw"
+                            is PlanOutcome.Failed -> "next leg failed to plan: ${outcome.reason}"
+                            is PlanOutcome.NeedsDownload ->
+                                "next leg failed to plan: ${outcome.tiles.size} map tile(s) missing"
+                            else -> "next leg failed to plan: no options came back"
+                        },
+                    )
                     return@launch
                 }
                 // The trade-off the driver actually picked, carried to every
@@ -798,7 +814,14 @@ class AppContainer(context: Context) {
                 // comes first: it is road this leg actually routed, and without
                 // it the line would jump the width of the handover in a straight
                 // chord before picking the direct road up again.
-                laterLegDirectAhead.value = handedOver + outcome.directAhead
+                // **The road part only.** Every later leg's spine is a probe
+                // bounded just past its own leg window, so most of its
+                // `directAhead` is the straight estimate — and publishing that
+                // replaced the chooser's road, which on a trip whose full spine
+                // ran the whole way reached the destination. The plan screen
+                // fills in beyond this from the chooser's slice. See F-46.
+                laterLegDirectAhead.value =
+                    handedOver + outcome.directAhead.take(outcome.directAheadRoadPoints)
                 // The way this leg arrives at the next boundary, for the leg
                 // after it. Taken from the trimmed line where a trim fired, so
                 // it describes road that is still in the plan. A handover

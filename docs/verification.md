@@ -863,6 +863,41 @@ it would be separated from the log the moment anyone forwarded it.
 
 ---
 
+### B18 · A camera-free first leg does not plan the rest of the trip fastest
+*Fixed 2026-08-20. The most consequential fix of that day.*
+
+**Setup.** Find a trip whose first leg is clean enough that **only one option**
+appears on the chooser — one card, labelled "Fastest", with a green
+"leg is camera-free". Let every later leg land and read the whole-trip camera
+count.
+
+**Pass.** The later legs avoid cameras. The diagnostic log shows each one
+planned with avoidance, and a leg reporting dozens of cameras should be rare and
+explained by a "NO avoidance option" line.
+
+**Fail (as it was).** The single card is labelled `FASTEST` because that is the
+pass that ran first, and that label was passed on as the whole trip's trade-off —
+so every later leg was planned as the plain fastest road. Measured from a real
+log: legs of 0, 1 and **62** cameras, against the same phone's other trip that
+same minute planning seven legs at 0.
+
+**Why it hides.** The lead leg genuinely is camera-free, the sheet genuinely says
+so, and nothing on screen names the trade-off the later legs are being planned
+to. Only the log shows it.
+
+---
+
+### D14 · A leg that fails to plan says why
+*Fixed 2026-08-20.*
+
+**Pass.** The log line reads "next leg failed to plan: …" with the reason — a
+routing error, N map tiles missing, no options came back, or the planner threw.
+
+**Fail (as it was).** "next leg failed to plan", full stop. Three different
+problems wanting three different responses, and no way to tell them apart.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

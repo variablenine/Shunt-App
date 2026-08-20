@@ -1205,6 +1205,15 @@ last leg. `PlanViewModel.defaultOption` opens on fewest-cameras, falling back by
 camera count where that option does not exist — which is the app's purpose as
 well as the fix.
 
+**And the trade-off passed on is not the option's `choice`.** That is the name of
+the pass that produced the geometry, and on a leg where every pass finds the same
+clean road the options deduplicate to one card labelled FASTEST. Passing that
+name on planned every later leg as the plain fastest road: measured from a real
+log, a camera-free lead leg followed by legs of 0, 1 and **62** cameras.
+`preferenceOf` asks whether the driver settled for more cameras than they were
+offered instead — picking the least-watched option available, including when
+there is only one, means fewest cameras for the whole trip. See F-46.
+
 **Changing the selection re-plans every later leg, and that must not blank the
 map.** Two things make it safe:
 

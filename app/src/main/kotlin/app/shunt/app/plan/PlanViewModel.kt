@@ -438,7 +438,39 @@ class PlanViewModel(
     ) {
         if (remaining.isEmpty()) return
         val option = options.getOrNull(selected) ?: options.firstOrNull() ?: return
-        onLaterLegsNeeded?.invoke(remaining, destination, option.polyline, option.waypoints, option.choice)
+        onLaterLegsNeeded?.invoke(remaining, destination, option.polyline, option.waypoints, preferenceOf(option, options))
+    }
+
+    /**
+     * What the driver's pick *means* for the rest of the trip.
+     *
+     * **Not `option.choice`, and that cost a real trip its avoidance.** The
+     * choice is the name of the pass that produced the geometry, and on a leg
+     * where every pass finds the same camera-free road the options collapse to
+     * one card — labelled `FASTEST`, because that is the pass that ran first.
+     * Passing that name on planned **every later leg as the plain fastest
+     * road**, and a leg into a metro then took 62 avoidable cameras.
+     *
+     * Straight out of a real diagnostic log, and the comparison is stark. Two
+     * trips minutes apart:
+     *
+     * ```
+     * planned FASTEST 250km/9cam, FEWEST_CAMERAS 270km/0cam  → legs: 0,0,0,0,0,0 cameras
+     * planned FASTEST 260km/0cam                             → legs: 0,1,62 cameras
+     * ```
+     *
+     * The second trip's lead leg was *camera-free*. It was the label that was
+     * wrong, not the route.
+     *
+     * So the question is not which pass produced this option, it is whether the
+     * driver settled for more cameras than they were offered. Picking the
+     * least-watched option available — which includes the case where there is
+     * only one — means fewest cameras, for the whole trip. Only a deliberate tap
+     * on something worse carries that trade-off forward.
+     */
+    private fun preferenceOf(option: PlannedRoute, options: List<PlannedRoute>): RouteChoice {
+        val fewest = options.minOfOrNull { it.camerasPassed } ?: return option.choice
+        return if (option.camerasPassed <= fewest) RouteChoice.FEWEST_CAMERAS else option.choice
     }
 
     /**

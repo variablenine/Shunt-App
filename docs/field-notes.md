@@ -2290,6 +2290,62 @@ that has since expired, quietly outliving the week the log itself promises.
 
 ---
 
+### F-46 · The label on a single option planned the whole trip fastest
+*Observed: 2026-08-20, from a real diagnostic log. Fixed; unconfirmed on a drive.*
+
+> And yeah it still is hitting avoidable cameras.
+
+**The log settled it in four lines.** Two trips minutes apart, same phone:
+
+```
+planned FASTEST 250km/9cam/0pins, FEWEST_CAMERAS 270km/0cam/34pins
+  → legs: 190/0, 282/0, 255/0, 299/0, 346/0, 251/0, 247/0 cameras
+
+planned FASTEST 260km/0cam/0pins
+  → legs: 255/0, 235/1, 154/62 cameras
+```
+
+The second trip's lead leg was **camera-free**. Every pass found the same clean
+road, so the options deduplicated to one card — and that card is labelled
+`FASTEST`, because that is the pass that ran first. `requestLaterLegs` passed
+`option.choice` on as the trip's trade-off, so every later leg was planned as the
+plain fastest road, and the leg into the metro took **62 cameras it had options
+to avoid**.
+
+It is the same shape as F-41 through a different door. There the selection was
+wrong; here the selection is right and its *name* is wrong. The choice is the
+name of the pass that produced the geometry, not a statement about what the
+driver wants.
+
+`preferenceOf` asks the question that actually matters: did the driver settle
+for more cameras than they were offered? Picking the least-watched option
+available — which includes the case where there is only one — means fewest
+cameras, for the whole trip. Only a deliberate tap on something worse carries
+speed forward.
+
+**Two other things the log showed.**
+
+`next leg failed to plan` ended both runs and said nothing about why. A routing
+error, a missing map tile and an empty option list want completely different
+responses, and the line covered all three. It names the failure now.
+
+And `0pins` on a 260 km lead leg is not a bug: the fastest option is never
+refined, by design, because it is the road the car takes unaided. Worth knowing
+before anyone chases it — it does mean that when the options collapse to one, the
+car is steered by nothing at all.
+
+**The pending line regressed, and the fix from F-42 caused it.** Preferring the
+newest leg's `directAhead` is right near the tail and wrong further out: every
+later leg's spine is a *probe*, bounded just past its own leg window, so most of
+its slice is the straight estimate — while the chooser's, on a trip whose full
+spine ran the whole way, is road to the destination. Preferring the newest one
+blindly therefore replaced road with a ruled line. Reported as "it was better
+before". `directAheadRoadPoints` marks where road ends in each slice, the leg
+publishes only its road, and the chooser's fills in beyond it. Neither source is
+right alone; together they are road as far as anything has routed it.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the

@@ -347,6 +347,54 @@ class PlanViewModelTest {
     }
 
     @Test
+    fun `one option that happens to be labelled FASTEST still means fewest cameras`() = runTest {
+        // **Straight out of a real diagnostic log.** On a leg where every pass
+        // finds the same camera-free road the options collapse to one card, and
+        // it is labelled FASTEST because that is the pass that ran first.
+        // Passing that name on as the trip's trade-off planned every later leg
+        // as the plain fastest road, and a leg into a metro took 62 avoidable
+        // cameras. The lead leg was camera-free; the label was what was wrong.
+        var asked: RouteChoice? = null
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = PlanOutcome.Routes(
+                listOf(fastest),
+                remaining = listOf(GeoPoint(39.9, -97.8), dest),
+            ),
+            onLaterLegsNeeded = { _, _, _, _, preference -> asked = preference },
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        assertEquals(RouteChoice.FEWEST_CAMERAS, asked)
+    }
+
+    @Test
+    fun `deliberately picking a route with more cameras carries that trade-off on`() = runTest {
+        // The other half of the rule: a driver who taps Fastest when a cleaner
+        // option was on offer has said something, and every later leg should
+        // hear it. Only settling for *more* cameras than the chooser offered
+        // counts as choosing speed.
+        val fewest = plannedRoute(RouteChoice.FEWEST_CAMERAS, 1200, added = 600)
+        var asked: RouteChoice? = null
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = PlanOutcome.Routes(
+                listOf(withCameras, fewest),
+                remaining = listOf(GeoPoint(39.9, -97.8), dest),
+            ),
+            onLaterLegsNeeded = { _, _, _, _, preference -> asked = preference },
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        assertEquals(RouteChoice.FEWEST_CAMERAS, asked, "the default pick is the clean one")
+
+        model.onSelectRoute(0)
+        assertEquals(RouteChoice.FASTEST, asked, "tapping the option with cameras on it is a choice")
+    }
+
+    @Test
     fun `with nothing named, the chooser opens on whatever passes fewest cameras`() = runTest {
         // A leg through empty country comes back with one route and nothing to
         // choose between, so the named option may simply not exist.

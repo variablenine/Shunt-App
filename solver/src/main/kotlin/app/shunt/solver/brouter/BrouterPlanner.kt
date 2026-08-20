@@ -104,6 +104,19 @@ sealed interface PlanOutcome {
          * whole-trip overview it exists for.
          */
         val directAhead: List<GeoPoint> = emptyList(),
+        /**
+         * How many leading points of [directAhead] are **road** rather than the
+         * straight estimate past where the spine was routed.
+         *
+         * Marking the join is what lets a caller merge slices from different
+         * legs without turning road into estimate. Every later leg's spine is a
+         * probe bounded just past its own leg window, so its estimate starts
+         * early; the chooser's may have run the whole way. Preferring the newest
+         * leg blindly therefore *replaced* road with a straight line, which is
+         * how a pending line that had been following roads went back to cutting
+         * across country. See F-46.
+         */
+        val directAheadRoadPoints: Int = 0,
     ) : PlanOutcome {
         /** Whether these options stop short of the destination. */
         val isPartial: Boolean get() = remaining.isNotEmpty()
@@ -371,6 +384,9 @@ class BrouterPlanner(
         // Kept before the spine is truncated at the cut: this is the part the
         // legs after this one will cover, and the map draws it while they do.
         var directAhead: List<GeoPoint> = emptyList()
+        // Where [PlanOutcome.Routes.directAheadRoadPoints] comes from: the size
+        // of the road part, taken before the straight estimate is appended.
+        var directAheadRoadPoints = 0
         if (cut == null) {
             legPoints = points
             remaining = emptyList()
@@ -399,6 +415,7 @@ class BrouterPlanner(
             // the same spacing so the line stays uniform rather than ending in
             // one enormous chord. It is an estimate, and it shrinks: every leg
             // that lands replaces a piece of it with real road.
+            directAheadRoadPoints = directAhead.size
             val unknownTail = listOf(directAhead.last()) + remaining.drop(1)
             if (straightLength(unknownTail) > SPINE_SAMPLE_METERS) {
                 directAhead = directAhead + sampleSpine(unknownTail).drop(1)
@@ -585,6 +602,7 @@ class BrouterPlanner(
             wholeTripMeters = wholeTripMeters,
             carriedForward = carriedForward,
             directAhead = directAhead,
+            directAheadRoadPoints = directAheadRoadPoints,
         )
     }
 

@@ -133,13 +133,35 @@ fun PlanScreen(
             else -> solvedAhead
         }
     }
-    // The last leg planned owns it once one has landed. Its slice starts at the
-    // boundary the drawn line now ends at, which the chooser's does not — the
-    // chooser's was measured from the *first* boundary, and on a long trip most
-    // of it is the straight estimate past where the spine probe stopped. Using
-    // it after later legs had landed drew a line that left the route at an angle
-    // and cut across country instead of following a road.
-    val directAhead = state.laterLegDirectAhead.ifEmpty { solvedAhead }
+    // The last leg planned owns the near part; the chooser's slice fills in
+    // beyond it.
+    //
+    // The near part has to come from the newest leg: the chooser's was measured
+    // from the *first* boundary, so after a few legs it described the road
+    // onward from somewhere hundreds of kilometres back, and the line left the
+    // route sideways to reach it (F-42). But the newest leg carries only its own
+    // *road* — its spine is a probe bounded just past its leg window — and using
+    // that alone threw away the chooser's road wherever its spine had run the
+    // whole way, which is the pending line going back to cutting across country
+    // (F-46). Neither source is right on its own; together they are road as far
+    // as anything has routed it.
+    val legAhead = state.laterLegDirectAhead
+    val directAhead = when {
+        legAhead.isEmpty() -> solvedAhead
+        else -> {
+            val from = legAhead.last()
+            val destination = destinationOf(state.phase)
+            legAhead + when (destination) {
+                null -> emptyList()
+                // Only what lies beyond where the newest leg's road ran out —
+                // anything nearer is road it already described, better.
+                else -> solvedAhead.filter {
+                    app.shunt.solver.geo.haversineMeters(it, destination) <
+                        app.shunt.solver.geo.haversineMeters(from, destination)
+                }
+            }
+        }
+    }
 
     // The chosen leg, plus every later leg that has been planned so far. The
     // line grows toward the destination as they land rather than appearing whole
