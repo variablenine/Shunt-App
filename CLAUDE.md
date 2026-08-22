@@ -1033,6 +1033,22 @@ them, and add new observations as they come in. Detail lives in
    driver who covered ground in the dead spot is caught up rather than sent
    back. §6, "A command the car never got", and F-54.
 
+15. **The car was sent to a pin that was not on the route on screen.**
+   *Fixed, unconfirmed on a drive.* Reported mid-drive, with a screenshot: the
+   next waypoint sat beside a camera, well off the drawn line, and the route
+   took a long detour to reach it. Trimming the double-back off the *lead* leg
+   updated the map and not the drive monitor, so the car kept being steered to
+   pins on a spur that had been deleted from the route. §6, "A leg the driver is
+   already on can still be revised", and F-55.
+
+16. **A camera guard pin could settle onto its own camera.** *Fixed the same
+   day it was introduced, unconfirmed on a drive.* `PinSites.settleNear` slid a
+   pin up to 200 m in either direction, and in a dense area the guard distance is
+   250 m — so the pin meant to hold the car on our line *before* a camera could
+   settle to 50 m from it, aiming the car at the thing the route detoured around.
+   Guards now settle only away from their camera, and no pin may sit within
+   `CAMERA_STANDOFF_METERS` of one. F-55.
+
 ### A watched destination is not a reason to give up
 
 BRouter refuses a route that begins or ends inside a zone it has been told is
@@ -1325,6 +1341,43 @@ correctness point rather than a layout one — the cards are a choice *for this
 leg*, while later legs are planned once and begin at the same boundary whichever
 card is picked, so folding their distance into "Fastest" would describe a trip
 nobody is being offered. See F-25.
+
+### A leg the driver is already on can still be revised, and the car must hear it
+
+Planning a later leg can shorten the leg *being driven*: `trimDoubleBack` cuts
+the spur where a camera-avoiding route drives out to touch a boundary chosen on
+the direct road and comes straight back. For later legs that revision is applied
+to the plan itself. For the **lead** leg — the only one that can already be under
+way — it was published to `trimmedLeadPolyline` and `trimmedLeadWaypoints`, which
+only the map reads.
+
+So the line on screen lost the spur while `DriveMonitor` carried on steering the
+chain it was handed at Go, pins on the deleted spur included. The car was sent to
+a point that was not on the route being drawn, and because a pin is a
+destination it drove there — out and back down a road Shunt had decided not to
+use. Reported from a drive as *"the next waypoint my car is being sent to is like
+right on the flock camera… differing from the planned path"*, and then *"after
+taking over to route the correct way it navigated to a previous pin and then to
+the correct one"* — a spur pin the engine could not advance past, because
+along-route progress never reaches a pin that is off the road being driven.
+
+`LegExtension` carries the revision with the leg, so the monitor drops the
+doomed pins from what is still ahead. Three things make it safe:
+
+- **Only what is ahead is touched.** The filter is applied to
+  `remainingChain()`, so nothing the driver has already passed is disturbed.
+- **A revision that removes the current pin re-aims the car.** An ordinary
+  extension is invisible to the vehicle — it appends, and the head of the chain
+  does not move. A revision can take the head away, and then the car is holding
+  a coordinate on a deleted road. Re-aiming is a change to a route in progress,
+  which §6.1 says to be careful with; leaving the car pointed down a spur is the
+  worse of the two.
+- **The line goes with the pins.** Off-route detection and camera warnings are
+  measured against `polyline`, and against an untrimmed one the spur still reads
+  as part of the route.
+
+This is the lead-boundary exemption in the roadmap, done for the trim. The
+handover truncation still does not use it. See F-55.
 
 ### The chooser's selection is the whole trip's
 

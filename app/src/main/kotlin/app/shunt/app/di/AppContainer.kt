@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import app.shunt.BuildConfig
 import app.shunt.app.drive.DriveActivity
 import app.shunt.app.drive.DriveStatus
+import app.shunt.app.drive.LegExtension
 import app.shunt.app.drive.legExtensionChannel
 import app.shunt.app.plan.CameraGateway
 import app.shunt.app.plan.DrivePlan
@@ -776,6 +777,10 @@ class AppContainer(context: Context) {
                 // needs to go backwards after it found the way to the next
                 // spot". Both legs are correct routes; the spur is the overlap.
                 var leg = chosen
+                // Set when the trim below shortens the *lead* leg, and carried
+                // to the drive monitor with this leg's extension.
+                var revisedLeadPolyline: List<GeoPoint>? = null
+                var revisedLeadPins: List<GeoPoint>? = null
                 val previousLegs = planned.toList()
                 val earlier = previousLegs.lastOrNull()?.polyline
                     ?: trimmedLeadPolyline.value
@@ -830,6 +835,14 @@ class AppContainer(context: Context) {
                     if (previousLegs.isEmpty()) {
                         trimmedLeadPolyline.value = trim.previous
                         trimmedLeadWaypoints.value = LegJoin.pinsOn(trim.previous, leadWaypoints)
+                        // **And to the drive, not only to the map.** The lead
+                        // leg is the one that may already be being driven, so
+                        // the monitor is still steering the chain it was handed
+                        // at Go — pins on the spur included. Publishing the trim
+                        // to the map alone left the car aimed at a point that
+                        // was not on the line being drawn. See LegExtension.
+                        revisedLeadPolyline = trim.previous
+                        revisedLeadPins = trimmedLeadWaypoints.value
                     } else {
                         val earlierLeg = previousLegs.last()
                         planned[planned.lastIndex] = relabel(
@@ -908,7 +921,9 @@ class AppContainer(context: Context) {
                 // trade-off the driver moved off would be spliced onto the one
                 // they are actually on.
                 if (run != legRun) return@launch
-                legExtensions.trySend(legPlan)
+                legExtensions.trySend(
+                    LegExtension(legPlan, revisedLeadPolyline, revisedLeadPins),
+                )
                 // Onto the map as well as into the drive. The line growing
                 // toward the destination is the visible difference between
                 // "still working" and "gave up", and it has to happen from a

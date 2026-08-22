@@ -194,12 +194,6 @@ object WaypointRefiner {
     ): List<GeoPoint> {
         if (chosen.size < 2 || avoid.isEmpty()) return pins
 
-        // Where a pin may go on this route. The refiner has no view of the
-        // fastest line, so this catches the junctions and our own line coming
-        // back near itself; the extractor's copy sees more. Built once — it
-        // walks the whole route.
-        val sites = WaypointExtractor.sitesFor(chosen, null)
-
         // Only cameras this route actually avoids are worth spending a pin on.
         // One it drives past anyway is already counted and warned about, and
         // pinning against it would buy nothing.
@@ -207,6 +201,12 @@ object WaypointRefiner {
         val avoided = avoid.filterNot { it in seen }
         if (avoided.isEmpty()) return pins
         val avoidedIndex = CameraIndex(avoided)
+
+        // Where a pin may go on this route. The refiner has no view of the
+        // fastest line, so this catches the junctions, our own line coming back
+        // near itself, and standing off the cameras being avoided; the
+        // extractor's copy sees more. Built once — it walks the whole route.
+        val sites = WaypointExtractor.sitesFor(chosen, null, avoidedIndex)
 
         val current = pins.toMutableList()
         // Legs a pin cannot rescue — the car passes the camera however early we

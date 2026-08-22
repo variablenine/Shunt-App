@@ -207,7 +207,7 @@ object WaypointExtractor {
         // a road the car could snap to instead. Built once and shared by every
         // producer below, because it is a property of the *pin*, not of the
         // reason one was wanted. See PinSites.
-        val sites = sitesFor(chosen, fastestIndex)
+        val sites = sitesFor(chosen, fastestIndex, avoided)
         // Merged in route order — spacing walks the list in order, so an
         // out-of-order pin would be measured against the wrong neighbour.
         val along = DoubleArray(chosen.size)
@@ -278,8 +278,11 @@ object WaypointExtractor {
         }
 
     /** The placement rules for [chosen], with [fastest] as the other road we can see. */
-    internal fun sitesFor(chosen: List<GeoPoint>, fastest: PolylineIndex?): PinSites =
-        PinSites(chosen, listOfNotNull(fastest))
+    internal fun sitesFor(
+        chosen: List<GeoPoint>,
+        fastest: PolylineIndex?,
+        avoided: CameraIndex = CameraIndex(emptyList()),
+    ): PinSites = PinSites(chosen, listOfNotNull(fastest), avoided)
 
     /**
      * A pin either side of every avoided camera the route squeezes past.
@@ -316,20 +319,28 @@ object WaypointExtractor {
         density: CameraIndex,
         fastest: PolylineIndex?,
         thresholdMeters: Double = DIVERGENCE_THRESHOLD_METERS,
-        sites: PinSites = sitesFor(chosen, fastest),
+        sites: PinSites = sitesFor(chosen, fastest, avoided),
     ): List<Double> =
-        avoided.closestApproachAlong(chosen, CAMERA_GUARD_RADIUS_METERS, GUARD_SAMPLE_METERS)
-            .values
+        sites.cameraApproaches
             .flatMap { at ->
                 val p = pointAtAlong(chosen, at) ?: return@flatMap emptyList<Double>()
                 if (fastest != null && fastest.distanceMeters(p) <= thresholdMeters) {
                     return@flatMap emptyList<Double>()
                 }
                 val guard = WaypointRefiner.pastForkAt(p, density)
-                // Settled like every other pin: a bracket dropped onto a
+                // Settled like every other pin — a bracket dropped onto a
                 // junction steers the car into it just as surely as a turn pin
                 // does, and a camera is often exactly where the junctions are.
-                listOfNotNull(sites.settleNear(at - guard), sites.settleNear(at + guard))
+                //
+                // **But only ever away from the camera.** Free to slide either
+                // way, the near pin settles *forward* onto the very thing it
+                // brackets, which is worse than no pin at all: the car is then
+                // aimed at the camera the route detoured to avoid, and it takes
+                // its own road to get there. Reported from a drive.
+                listOfNotNull(
+                    sites.settleClearOf(at - guard, at),
+                    sites.settleClearOf(at + guard, at),
+                )
             }
             .filter { it > 0.0 }
 
@@ -368,7 +379,7 @@ object WaypointExtractor {
         val fastestIndex = if (fastest.size >= 2) PolylineIndex(fastest) else null
         // The same PinSites both producers get in `extract`, or protection
         // would name points that are not the pins actually placed.
-        val sites = sitesFor(chosen, fastestIndex)
+        val sites = sitesFor(chosen, fastestIndex, avoided)
         return (
             turnPins(chosen, index, sites) +
                 cameraGuardPins(chosen, avoided, index, fastestIndex, sites = sites)

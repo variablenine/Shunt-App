@@ -48,8 +48,31 @@ object DriveMonitorBounds {
  * appears and the monitor does not exist until Go is tapped, so whether it broke
  * depended on how long the driver read the screen.
  */
-fun legExtensionChannel(): kotlinx.coroutines.channels.Channel<DrivePlan> =
+fun legExtensionChannel(): kotlinx.coroutines.channels.Channel<LegExtension> =
     kotlinx.coroutines.channels.Channel(kotlinx.coroutines.channels.Channel.UNLIMITED)
+
+/**
+ * A leg that has been planned, plus any revision to the leg already in force.
+ *
+ * **The revision is why this is not just a `DrivePlan`.** Planning a leg can cut
+ * a double-back off the *previous* one — the spur where a camera-avoiding route
+ * drives out to touch a boundary chosen on the direct road and comes straight
+ * back. That trim used to reach the map alone, so the line on screen lost the
+ * spur while the drive monitor carried on steering the chain it was given at Go,
+ * pins on the deleted spur included. The car was then sent to a point that was
+ * not on the route being drawn — reported from a drive as "the next waypoint my
+ * car is being sent to is like right on the flock camera… differing from the
+ * planned path", which is exactly what a spur looks like: out to somewhere the
+ * route does not go, and back.
+ */
+data class LegExtension(
+    /** The leg that has just been planned. */
+    val leg: DrivePlan,
+    /** The previous leg's line, shortened, when planning this one trimmed it. */
+    val revisedPolyline: List<GeoPoint>? = null,
+    /** The pins that survive on that shortened line. See LegJoin.pinsOn. */
+    val revisedPins: List<GeoPoint>? = null,
+)
 
 class DriveMonitor(
     private val vehicle: VehicleNavClient,
@@ -98,7 +121,7 @@ class DriveMonitor(
      * moving. Conflated, because only the newest matters — an extension is
      * always the whole of what is left, not a delta.
      */
-    private val extensions: kotlinx.coroutines.channels.ReceiveChannel<DrivePlan>? = null,
+    private val extensions: kotlinx.coroutines.channels.ReceiveChannel<LegExtension>? = null,
 ) {
     /**
      * Whether the car is being steered pin by pin (see [DrivePlan.steerByWaypoints]).
@@ -157,6 +180,7 @@ class DriveMonitor(
                 // means the plan on screen disagrees with the plan that exists.
                 while (true) {
                     val next = extensions?.tryReceive()?.getOrNull() ?: break
+                    val aimBefore = engine.remainingChain().firstOrNull()
                     current = extend(current, next, engine)
                     // Inherits what has already been announced: an extension is
                     // the same drive continuing, so a camera warned about on the
@@ -164,6 +188,16 @@ class DriveMonitor(
                     engine = newEngine(current, engine)
                     totalPins = (current.chain.size - 1).coerceAtLeast(0)
                     onPlanChanged(current)
+                    // **An extension is normally invisible to the car** — it
+                    // appends, and the pin being aimed at is still the head of
+                    // the chain. A *revision* can take that pin away, and then
+                    // the car is holding a coordinate on a road this app has
+                    // just decided not to use. Re-aiming is a change to a route
+                    // in progress, which §6.1 says to be careful with; leaving
+                    // the car pointed down a deleted spur is the worse of the
+                    // two, and it is the failure that was reported.
+                    val aimNow = engine.remainingChain().firstOrNull()
+                    if (aimNow != null && aimNow != aimBefore) advance(engine.remainingChain())
                 }
                 for (signal in engine.onLocation(update)) {
                     when (signal) {
@@ -475,16 +509,30 @@ class DriveMonitor(
      * it is still the head of the chain — so an extension is invisible to the
      * vehicle, which is exactly what it should be.
      */
-    private fun extend(current: DrivePlan, next: DrivePlan, engine: DriveMonitorEngine): DrivePlan =
-        current.copy(
+    private fun extend(current: DrivePlan, next: LegExtension, engine: DriveMonitorEngine): DrivePlan {
+        val remaining = engine.remainingChain()
+        // **Pins go with the road they were placed on.** Where planning this leg
+        // shortened the one in force, anything left standing on the removed
+        // stretch is not untidy — it is a target the car would be steered to,
+        // down the very road the trim deleted. Only what is still ahead of the
+        // driver is filtered: what they have already passed is not in
+        // `remaining` at all, so nothing behind them is disturbed.
+        val kept = next.revisedPins
+            ?.let { pins -> remaining.filter { it in pins.toSet() } }
+            ?: remaining
+        return current.copy(
             // The real destination, which the first leg only stood in for.
-            destination = next.destination,
-            chain = engine.remainingChain() + next.chain,
-            cameras = (current.cameras + next.cameras).distinctBy { it.id },
-            polyline = current.polyline + next.polyline,
-            stopPoints = current.stopPoints + next.stopPoints,
-            remaining = next.remaining,
+            destination = next.leg.destination,
+            chain = kept + next.leg.chain,
+            cameras = (current.cameras + next.leg.cameras).distinctBy { it.id },
+            // The shortened line too, not just its pins. Off-route detection and
+            // the camera warnings are both measured against this, and against an
+            // untrimmed line the spur still reads as part of the route.
+            polyline = (next.revisedPolyline ?: current.polyline) + next.leg.polyline,
+            stopPoints = current.stopPoints + next.leg.stopPoints,
+            remaining = next.leg.remaining,
         )
+    }
 
     /** Stamp the steering mode on a route that replaces the current one. */
     private fun inForce(plan: DrivePlan): DrivePlan =

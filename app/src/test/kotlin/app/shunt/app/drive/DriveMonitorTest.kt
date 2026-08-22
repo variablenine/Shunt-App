@@ -852,7 +852,7 @@ class DriveMonitorTest {
             cameras = emptyList(),
             polyline = listOf(dest, boundary, realEnd),
         )
-        val extensions = kotlinx.coroutines.channels.Channel<DrivePlan>(kotlinx.coroutines.channels.Channel.CONFLATED)
+        val extensions = kotlinx.coroutines.channels.Channel<LegExtension>(kotlinx.coroutines.channels.Channel.CONFLATED)
         val published = mutableListOf<DrivePlan>()
 
         val monitor = DriveMonitor(
@@ -867,7 +867,7 @@ class DriveMonitorTest {
         val locations = kotlinx.coroutines.flow.flow {
             emit(fix(west(w1, 1000.0)))
             emit(fix(west(w1, 300.0)))
-            extensions.trySend(nextLeg)
+            extensions.trySend(LegExtension(nextLeg))
             emit(fix(west(w2, 300.0)))
             emit(fix(west(dest, 300.0)))
         }
@@ -889,6 +889,106 @@ class DriveMonitorTest {
             "the new leg's chain must be appended in order",
         )
         assertTrue(extended.remaining.isEmpty(), "this extension reaches the destination")
+    }
+
+    @Test
+    fun `a pin left on a trimmed-off spur is dropped and the car re-aimed`() = runTest {
+        // **The reported failure.** Planning a later leg can cut a double-back
+        // off the leg being driven — the spur where a camera-avoiding route
+        // drives out to touch a boundary chosen on the direct road and comes
+        // straight back. That trim reached the map alone, so the drawn line lost
+        // the spur while the monitor kept steering the chain from Go, pins on
+        // the spur included. The car was then sent somewhere not on the route
+        // being drawn: "the next waypoint my car is being sent to is like right
+        // on the flock camera… differing from the planned path."
+        val vehicle = FakeVehicleNavClient()
+        val realEnd = GeoPoint(33.0, -96.90)
+        val firstLeg = DrivePlan(
+            destination = Destination("Boundary", dest),
+            chain = chain,
+            cameras = emptyList(),
+            polyline = chain,
+            steerByWaypoints = true,
+            remaining = listOf(dest, realEnd),
+        )
+        val nextLeg = DrivePlan(
+            destination = Destination("Home", realEnd),
+            chain = listOf(realEnd),
+            cameras = emptyList(),
+            polyline = listOf(w2, realEnd),
+        )
+        val extensions = legExtensionChannel()
+        val published = mutableListOf<DrivePlan>()
+
+        val monitor = DriveMonitor(
+            vehicle = vehicle,
+            alerter = RecordingAlerter(),
+            onPlanChanged = { published += it },
+            extensions = extensions,
+        )
+        val locations = kotlinx.coroutines.flow.flow {
+            emit(fix(west(w1, 1000.0)))
+            // w1 is passed; the car is now aiming at w2.
+            emit(fix(west(w1, 300.0)))
+            // The trim removes the spur w2 sat on. Only w1 survives, and it is
+            // behind the driver.
+            extensions.trySend(
+                LegExtension(nextLeg, revisedPolyline = listOf(w1, dest), revisedPins = listOf(w1)),
+            )
+            emit(fix(west(w2, 1000.0)))
+            emit(fix(west(realEnd, 30.0)))
+        }
+        monitor.run(firstLeg, locations)
+
+        val extended = published.first()
+        assertTrue(
+            w2 !in extended.chain,
+            "a pin on the deleted spur is still being steered to: ${extended.chain}",
+        )
+        // An ordinary extension is invisible to the car — the pin it is aiming
+        // at is still the head of the chain. A revision that takes that pin away
+        // must not be, or the car keeps a coordinate on a road we deleted.
+        val advances = vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+        assertTrue(
+            advances.any { it.waypoints == listOf(realEnd) },
+            "the car was never re-aimed off the spur: ${advances.map { it.waypoints }}",
+        )
+    }
+
+    @Test
+    fun `an extension with nothing revised does not touch the car`() = runTest {
+        // The other half of the rule: appending is invisible to the vehicle, and
+        // must stay that way. Pushing on every leg would be a command every few
+        // minutes for a route change the car cannot see.
+        val vehicle = FakeVehicleNavClient()
+        val realEnd = GeoPoint(33.0, -96.90)
+        val firstLeg = DrivePlan(
+            destination = Destination("Boundary", dest),
+            chain = chain,
+            cameras = emptyList(),
+            polyline = chain,
+            steerByWaypoints = true,
+            remaining = listOf(dest, realEnd),
+        )
+        val nextLeg = DrivePlan(
+            destination = Destination("Home", realEnd),
+            chain = listOf(realEnd),
+            cameras = emptyList(),
+            polyline = listOf(dest, realEnd),
+        )
+        val extensions = legExtensionChannel()
+
+        val monitor = DriveMonitor(vehicle, RecordingAlerter(), extensions = extensions)
+        val locations = kotlinx.coroutines.flow.flow {
+            emit(fix(west(w1, 1000.0)))
+            emit(fix(west(w1, 300.0)))
+            val before = vehicle.calls().size
+            extensions.trySend(LegExtension(nextLeg))
+            emit(fix(west(w2, 1000.0)))
+            assertEquals(before, vehicle.calls().size, "an append must not command the car")
+            emit(fix(west(realEnd, 30.0)))
+        }
+        monitor.run(firstLeg, locations)
     }
 
     @Test
@@ -930,8 +1030,8 @@ class DriveMonitorTest {
         // keeps only the last leg.
         val extensions = legExtensionChannel()
         // Both land while the chooser is still on screen — before any fix.
-        extensions.trySend(legTwo)
-        extensions.trySend(legThree)
+        extensions.trySend(LegExtension(legTwo))
+        extensions.trySend(LegExtension(legThree))
         val published = mutableListOf<DrivePlan>()
 
         val monitor = DriveMonitor(

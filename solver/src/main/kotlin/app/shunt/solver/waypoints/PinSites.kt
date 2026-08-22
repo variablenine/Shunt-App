@@ -1,6 +1,7 @@
 package app.shunt.solver.waypoints
 
 import app.shunt.core.GeoPoint
+import app.shunt.solver.brouter.CameraIndex
 import app.shunt.solver.geo.PolylineIndex
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointAtAlong
@@ -55,6 +56,8 @@ class PinSites(
      * which is a real road running near ours wherever this route has left it.
      */
     private val elsewhere: List<PolylineIndex> = emptyList(),
+    /** The cameras this route avoids, for [cameraApproaches]. */
+    avoided: CameraIndex = CameraIndex(emptyList()),
 ) {
     private val alongAt = DoubleArray(chosen.size)
     private val self = PolylineIndex(chosen)
@@ -79,6 +82,21 @@ class PinSites(
         else turnsAlong(chosen, WaypointExtractor.TURN_DEGREES, WaypointExtractor.TURN_SPAN_METERS)
 
     private val turnArray = turns.toDoubleArray().also { it.sort() }
+
+    /**
+     * Where the route passes closest to each camera it avoids, as a distance
+     * along it. Computed once here and read by everything that needs it, rather
+     * than swept per producer.
+     */
+    val cameraApproaches: List<Double> =
+        if (chosen.size < 2) emptyList()
+        else avoided.closestApproachAlong(
+            chosen,
+            WaypointExtractor.CAMERA_GUARD_RADIUS_METERS,
+            WaypointExtractor.GUARD_SAMPLE_METERS,
+        ).values.sorted()
+
+    private val approachArray = cameraApproaches.toDoubleArray()
 
     /**
      * The stretch a pin for the turn at [turnAlong] may occupy: past that turn,
@@ -125,12 +143,65 @@ class PinSites(
     fun settleNear(desired: Double): Double? =
         settle(desired, desired - SETTLE_REACH_METERS, desired + SETTLE_REACH_METERS)
 
+    /**
+     * [settle] for a pin that brackets something it must stay clear of: it may
+     * slide either way within [SETTLE_REACH_METERS], but never nearer to
+     * [keepClearOf] than [CAMERA_STANDOFF_METERS].
+     *
+     * The camera guards are the case, and the bound has to be expressed against
+     * the *camera* rather than against the wanted position. Allowed to slide
+     * freely, the pin placed a fork distance before a camera settles forward
+     * onto it — which does not merely weaken the guard, it aims the car at the
+     * camera the route detoured to avoid, and the car takes its own road to get
+     * there. Bounded at the wanted position instead, a guard near the start or
+     * end of a leg has nowhere legal to go and is dropped, which loses the
+     * bracket altogether.
+     */
+    fun settleClearOf(desired: Double, keepClearOf: Double): Double? =
+        if (desired <= keepClearOf) {
+            settle(desired, desired - SETTLE_REACH_METERS, keepClearOf - CAMERA_STANDOFF_METERS)
+        } else {
+            settle(desired, keepClearOf + CAMERA_STANDOFF_METERS, desired + SETTLE_REACH_METERS)
+        }
+
     /** Whether a pin at [at] metres along would be a sane thing to send a car to. */
     fun usable(at: Double): Boolean {
         if (at <= 0.0 || at >= length) return false
         if (nearAnyTurn(at)) return false
+        if (nearAvoidedCamera(at)) return false
         val p = pointAt(at) ?: return false
         return unambiguous(at, p)
+    }
+
+    /**
+     * Whether [at] is close enough to an avoided camera to be a bad place to
+     * stop.
+     *
+     * **A pin is where the car arrives**, and the car reaches it by its own
+     * route, not ours. Putting one at the point where our line passes nearest a
+     * camera we deliberately dodged asks the car to drive *to* that spot — and
+     * whatever road it picks to get there, it is heading at the camera rather
+     * than past it at a distance. Every other rule here is about the pin being
+     * on the wrong road; this one is about it being in the wrong place on the
+     * right road.
+     *
+     * The guard pins sit a fork distance out (250 m in a city, 600 m on open
+     * road), so this never removes the pins whose job is to bracket a camera —
+     * only the ones that would land between them.
+     */
+    private fun nearAvoidedCamera(at: Double): Boolean {
+        if (approachArray.isEmpty()) return false
+        var lo = 0
+        var hi = approachArray.size - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) / 2
+            val a = approachArray[mid]
+            if (abs(a - at) < CAMERA_STANDOFF_METERS) return true
+            if (a < at) lo = mid + 1 else hi = mid - 1
+        }
+        if (lo < approachArray.size && abs(approachArray[lo] - at) < CAMERA_STANDOFF_METERS) return true
+        if (lo > 0 && abs(approachArray[lo - 1] - at) < CAMERA_STANDOFF_METERS) return true
+        return false
     }
 
     /**
@@ -243,6 +314,15 @@ class PinSites(
          * point that sits on it.
          */
         const val AMBIGUITY_ALONG_METERS = 400.0
+
+        /**
+         * How far along the route a pin must keep from an avoided camera.
+         *
+         * Comfortably inside the fork distance the guards are placed at, so the
+         * bracket survives and only a pin that would sit *on* the camera is
+         * refused.
+         */
+        const val CAMERA_STANDOFF_METERS = 150.0
 
         /** How far a pin may be slid from where its maker wanted it. */
         const val SETTLE_REACH_METERS = 200.0

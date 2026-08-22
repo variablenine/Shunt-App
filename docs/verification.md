@@ -1089,6 +1089,34 @@ should reach the car once Shunt has handed it back.
 
 ---
 
+### B20 · Every pin the car is sent to is on the line you can see
+
+*Never seen on a drive — 2026-08-22. See F-55.*
+
+**Provoke it.** Drive a trip long enough to be split into legs, and watch as each
+later leg lands. The lead leg's line can shorten when the next one is planned —
+that is the double-back trim doing its job.
+
+**Expect:** the point the car's own screen names is always one of the white pins
+on Shunt's map. If the line visibly shortens, any pin that was on the removed
+stretch disappears with it, and if the car had been aiming at one, it is re-aimed
+within a fix or two.
+
+**The failure to watch for** is a car navigating somewhere that is not on the
+drawn route at all — especially out and back, which is what a spur looks like
+from the driver's seat. Note whether the line on the phone had just changed.
+
+**And the tell from the other side:** if you take over and drive the sensible
+way, the car should not then navigate to a pin *behind* you before picking up the
+right one. A pin off the driven road is one the monitor cannot advance past on
+its own, so that symptom means a stale pin is still in the chain.
+
+**Also check** an ordinary leg landing does *not* command the car. Appending is
+supposed to be invisible to it; only a revision that removes the pin being aimed
+at should produce a push.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

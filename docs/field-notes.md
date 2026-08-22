@@ -2796,3 +2796,74 @@ driver with no way to know it stopped.
 refusing a command it does not support — is dropped rather than carried.
 Retrying it forever costs nothing in traffic terms but leaves "can't reach the
 car" on screen for the rest of the trip, which is a lie about what is wrong.
+
+---
+
+### F-55 · The pin the car was sent to was not on the route on screen
+
+*Reported mid-drive, 2026-08-22, with a screenshot:*
+
+> For some reason the next waypoint my car is being sent to is like right on the
+> flock camera. Massive detour. […] It's sending the pin right next to the orange
+> dot on this screen to my car. […] Differing from the planned path.
+
+And shortly after:
+
+> Also for some reason after taking over to route the correct way it navigated to
+> a previous pin and then to the correct one.
+
+Two causes, found in that order. The second sentence is what identified the
+first: *differing from the planned path* rules out every explanation about where
+a pin is placed **on** the route, because this pin was not on it.
+
+**Cause one, and the one that matters: the lead leg was revised and only the map
+was told.** Planning a later leg can shorten the leg already being driven —
+`trimDoubleBack` cuts the spur where a camera-avoiding route drives out to touch
+a boundary chosen on the direct road and comes straight back. For later legs that
+revision is applied to the plan. For the lead leg it was written to
+`trimmedLeadPolyline` / `trimmedLeadWaypoints`, two state flows that only
+`PlanScreen` reads.
+
+So the drawn line lost the spur and `DriveMonitor` did not. It carried on
+steering the chain it was handed at Go, pins on the deleted spur included, and
+the car — which treats a pin as a destination — drove out to one. That is the
+"massive detour" and the "right next to the camera" in one: a spur is by
+construction an excursion off the route, and the double-back exists most often
+where the route is bending around something.
+
+The follow-up report is the same bug seen from the other end. A pin on a spur the
+driver never drives is a pin the engine cannot advance past, because progress is
+measured *along the route* and the driver never gets near it along the route. So
+after taking over and driving the sensible way, the stale pin was still the head
+of the chain — "navigated to a previous pin and then to the correct one".
+
+The code had the right instinct and applied it in the wrong place. The comment
+above the trim already said it: *"A pin left out on the removed spur is not
+untidy, it is a target the car would be aimed at — steering it back down the very
+road the trim deleted."* It then did that for later legs and for the map, and not
+for the one leg that could already be under way.
+
+`LegExtension` now carries the revision with the leg. The subtlety is that an
+extension had been deliberately invisible to the car — it appends, so the pin
+being aimed at is still the head of the chain and nothing needs pushing. A
+*revision* can take that head away, and then the car is holding a coordinate on a
+road that no longer exists in the plan. So the monitor re-aims when, and only
+when, the head changed.
+
+**Cause two, which was mine, from the same morning.** `PinSites.settleNear`
+slides a pin up to 200 m in *either* direction to find a legal spot. Camera guard
+pins are placed one fork distance either side of a camera, and that distance is
+250 m in a built-up area — so the pin whose job is to hold the car on our line
+*before* the camera could settle forward to 50 m from it. Not a weakened guard: a
+pin aimed at the camera the route detoured to avoid, with the car free to take
+its own road to reach it.
+
+Fixed twice over, because the first attempt was wrong in an instructive way.
+Bounding the near pin at "never later than where it was wanted" is the obvious
+rule and it breaks the guard near the ends of a leg, where the wanted position
+falls off the route and there is nowhere legal *behind* it — so the bracket is
+dropped altogether. The bound has to be expressed against the **camera**, not
+against the wanted position: slide either way, but never nearer than
+`CAMERA_STANDOFF_METERS`. `usable` enforces the same standoff for every pin from
+every producer, because a pin is where the car *arrives*, and arriving at a
+camera is the one thing this app exists to prevent.
