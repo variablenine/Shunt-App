@@ -1015,6 +1015,29 @@ is the count after the corridor filter — not the count fetched for the area.
 
 ---
 
+### A11 · The driving card swipes down, and the map follows it
+
+*Never seen on a drive — 2026-08-22. See F-52.*
+
+**Provoke it.** Start a drive. Drag the handle at the top of the driving card
+downward.
+
+**Expect:** the card shrinks to a single row — destination, what Shunt is doing,
+the camera count — and the map keeps the driver's dot and the next pin framed in
+the strip *above* the card, not behind it. Dragging up restores the full card and
+the frame moves back up with it. Tapping the handle does the same as dragging.
+
+**The thing that will look right and be wrong:** the frame moving only at the
+next follow tick. It is keyed on the card's height, so it should re-frame within
+a moment of the swipe; up to three seconds of the old framing means the inset is
+not reaching the map.
+
+**Also check:** with the card fully open, the driver and the pin are still both
+on screen somewhere. The inset is clamped for exactly this — a frame squeezed
+into what an open card leaves is worse than one partly behind it.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

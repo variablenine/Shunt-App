@@ -233,10 +233,21 @@ private const val FOLLOW_TICK_MILLIS = 3_000L
 /**
  * Padding around the driver-and-next-pin box, as a fraction of the view.
  *
- * Generous at the bottom because the driving sheet covers it, and because what
- * a driver needs to see is the road *ahead* rather than an evenly centred box.
+ * What a driver needs to see is the road *ahead* rather than an evenly centred
+ * box, so this is generous. The part of the view the driving card covers is
+ * handled separately and measured rather than guessed — see [frameDrive].
  */
 private const val FOLLOW_PADDING_FRACTION = 0.22
+
+/**
+ * The most of the view the driving card is allowed to push the frame out of.
+ *
+ * The card can be over half the screen while it is open, and a frame squeezed
+ * into what is left would be a sliver — so past this the map stops honouring
+ * the inset and simply frames what it can. The driver who wants the map back
+ * swipes the card down, which is the whole point of it being swipeable.
+ */
+private const val FOLLOW_MAX_INSET_FRACTION = 0.55
 
 /** Never zoom in past this framing two points that are almost the same place. */
 private const val FOLLOW_MAX_ZOOM = 16.5
@@ -392,6 +403,12 @@ fun RouteMap(
     followTo: GeoPoint? = null,
     /** The direct road onward from what is planned. See [renderPending]. */
     directAhead: List<GeoPoint> = emptyList(),
+    /**
+     * How many pixels at the bottom of the map are covered by the sheet over
+     * it. The follow camera frames the strip above that rather than the whole
+     * view — see [frameDrive].
+     */
+    bottomInsetPx: Int = 0,
 ) {
     val routeLines = listOf(routePolyline) + laterLegLines
     val context = LocalContext.current
@@ -565,13 +582,17 @@ fun RouteMap(
     // automatically adjust the map zoom and position to include the driver
     // marker and the next waypoint, but only if the driver hasn't touched the
     // map positioning or zoom after a certain amount of time."
-    LaunchedEffect(followTo, hasLocationPermission, showLocation) {
+    //
+    // Keyed on the inset as well, so swiping the card down re-frames at once
+    // rather than at the next tick — the swipe is a request to see the map, and
+    // three seconds of the old framing reads as it not having worked.
+    LaunchedEffect(followTo, hasLocationPermission, showLocation, bottomInsetPx) {
         val target = followTo
         if (target == null || !showLocation || !hasLocationPermission) return@LaunchedEffect
         while (true) {
             val idleFor = System.currentTimeMillis() - touchedAt
             if (idleFor >= FOLLOW_RESUME_MILLIS) {
-                frameDrive(mapView, target)
+                frameDrive(mapView, target, bottomInsetPx)
             }
             delay(FOLLOW_TICK_MILLIS)
         }
@@ -664,7 +685,7 @@ fun RouteMap(
  * Silent about failure on purpose: it runs on a timer, and a map that is not
  * laid out yet or has no fix yet is an ordinary state, not an error.
  */
-private fun frameDrive(view: MapView, target: GeoPoint) {
+private fun frameDrive(view: MapView, target: GeoPoint, bottomInsetPx: Int) {
     runCatching {
         view.getMapAsync { map ->
             runCatching {
@@ -675,11 +696,21 @@ private fun frameDrive(view: MapView, target: GeoPoint) {
                     .build()
                 val pad = (minOf(view.width, view.height) * FOLLOW_PADDING_FRACTION).toInt()
                     .coerceAtLeast(1)
-                val update = CameraUpdateFactory.newLatLngBounds(bounds, pad, pad, pad, pad)
+                // **Frame the part of the map the card is not sitting on.**
+                //
+                // Reported from the road: "the pov centering needs to match the
+                // window that the card isn't covering". The map fills the whole
+                // screen and the driving card floats over the bottom of it, so
+                // a box centred in the *view* is centred behind the card. The
+                // inset is the card's measured height, so the fit lands in the
+                // strip that is actually visible and moves as the card is
+                // swiped up and down.
+                val bottom = followBottomPadding(pad, bottomInsetPx, view.height)
+                val update = CameraUpdateFactory.newLatLngBounds(bounds, pad, pad, pad, bottom)
                 // Cap the zoom rather than the padding: two points a hundred
                 // metres apart would otherwise fill the screen with one junction
                 // and no context at all.
-                val camera = map.getCameraForLatLngBounds(bounds, intArrayOf(pad, pad, pad, pad))
+                val camera = map.getCameraForLatLngBounds(bounds, intArrayOf(pad, pad, pad, bottom))
                 if (camera != null && camera.zoom > FOLLOW_MAX_ZOOM) {
                     map.easeCamera(
                         CameraUpdateFactory.newLatLngZoom(camera.target!!, FOLLOW_MAX_ZOOM),
@@ -692,6 +723,20 @@ private fun frameDrive(view: MapView, target: GeoPoint) {
         }
     }
 }
+
+/**
+ * How much padding the follow camera leaves at the bottom of the view.
+ *
+ * The ordinary [FOLLOW_PADDING_FRACTION] padding plus however much of the map
+ * the sheet is covering, clamped so the frame can never be squeezed into a
+ * sliver: past [FOLLOW_MAX_INSET_FRACTION] of the view the inset is ignored and
+ * the box is framed against what is there, because a camera that cannot fit the
+ * driver and the pin is worse than one that puts them behind the card.
+ */
+internal fun followBottomPadding(pad: Int, bottomInsetPx: Int, viewHeight: Int): Int =
+    (pad + bottomInsetPx.coerceAtLeast(0))
+        .coerceAtMost((viewHeight * FOLLOW_MAX_INSET_FRACTION).toInt())
+        .coerceAtLeast(pad)
 
 /** Visible map bounds as our [BoundingBox]; may throw before the map is laid out. */
 private fun MapLibreMap.visibleBounds(): BoundingBox {

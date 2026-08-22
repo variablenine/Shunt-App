@@ -4,7 +4,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,12 +34,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.shunt.app.plan.Destination
@@ -83,17 +90,44 @@ fun ResultSheet(
 ) {
     // Never let the sheet cover the whole screen — keep the route visible above it.
     val maxSheetHeight = (LocalConfiguration.current.screenHeightDp * 0.62f).dp
+
+    // **Swipe it down to get the map back.**
+    //
+    // Reported from the road: "on a drive, the front info card covers
+    // everything". Two thirds of a phone screen is a reasonable share while
+    // somebody is choosing a route and far too much while they are driving one —
+    // and the part it covers is the road *ahead*, which is the part that
+    // matters. Dragging the handle down leaves the top line, which is the whole
+    // of what a driver needs at a glance; dragging up brings the rest back.
+    //
+    // Only while driving. Everywhere else the sheet is the thing being read, and
+    // a chooser that can be swiped away by accident mid-decision is a worse
+    // trade than a big card.
+    val collapsible = phase is Phase.Driving
+    var collapsed by remember(collapsible) { mutableStateOf(false) }
+    val showing = collapsible && collapsed
+
     Surface(
         tonalElevation = 3.dp,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-        modifier = Modifier.fillMaxWidth().heightIn(max = maxSheetHeight),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (showing) Modifier else Modifier.heightIn(max = maxSheetHeight)),
     ) {
-        Column(
+        Column(modifier = Modifier.fillMaxWidth()) {
+            if (collapsible) {
+                DragHandle(
+                    collapsed = collapsed,
+                    onToggle = { collapsed = !collapsed },
+                    onDragged = { down -> collapsed = down },
+                )
+            }
+            Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(20.dp),
+                .then(if (showing) Modifier else Modifier.verticalScroll(rememberScrollState()))
+                .padding(start = 20.dp, end = 20.dp, bottom = if (showing) 12.dp else 20.dp, top = if (collapsible) 0.dp else 20.dp),
         ) {
             when (phase) {
                 is Phase.Solving -> SolvingContent(phase)
@@ -105,14 +139,53 @@ fun ResultSheet(
                     laterLegs, planningLaterLegs,
                 )
                 is Phase.Pushing -> PushingContent(phase.destination)
-                is Phase.Driving -> DrivingContent(phase, chargingVia, driveActivity, onDismiss)
+                is Phase.Driving -> DrivingContent(phase, chargingVia, driveActivity, onDismiss, collapsed)
                 is Phase.PushFailed -> PushFailedContent(phase, onRetryPush, onDismiss)
                 is Phase.Error -> ErrorContent(phase.message, onDismiss)
                 Phase.Browsing -> Unit
             }
+            }
         }
     }
 }
+
+/**
+ * The grab bar at the top of the driving sheet.
+ *
+ * Deliberately a big target with a lot of slop: it is aimed at a thumb in a
+ * moving car, so it takes a tap as well as a drag and treats any downward
+ * movement past a few dozen pixels as "put it away". Getting it wrong costs a
+ * glance, which is the thing this is meant to save.
+ */
+@Composable
+private fun DragHandle(collapsed: Boolean, onToggle: () -> Unit, onDragged: (Boolean) -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .pointerInput(Unit) {
+                detectVerticalDragGestures { _, dragAmount ->
+                    if (dragAmount > DRAG_SLOP_PX) onDragged(true)
+                    if (dragAmount < -DRAG_SLOP_PX) onDragged(false)
+                }
+            }
+            .clickable { onToggle() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(44.dp)
+                .height(5.dp)
+                .background(
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (collapsed) 0.8f else 0.45f),
+                    RoundedCornerShape(3.dp),
+                ),
+        )
+    }
+}
+
+/** How far a drag has to move before it counts as one, in pixels. */
+private const val DRAG_SLOP_PX = 6f
 
 @Composable
 private fun SolvingContent(phase: Phase.Solving) {
@@ -751,15 +824,65 @@ private fun PushingContent(destination: Destination) {
     TeslaWipWarning()
 }
 
+/** What Shunt is doing at this instant, in one line, expanded or collapsed. */
+private fun activityLabel(activity: DriveActivity): String = when (activity) {
+    is DriveActivity.Watching -> "Watching for cameras"
+    is DriveActivity.SendingWaypoint ->
+        "Sending waypoint ${activity.number} of ${activity.total} to the car"
+    is DriveActivity.CheckingCharging -> "Asking your car about charging"
+    is DriveActivity.Replanning -> "Re-planning from here"
+    is DriveActivity.StoodDown -> "Not steering — the car is yours"
+}
+
 @Composable
 private fun DrivingContent(
     phase: Phase.Driving,
     chargingVia: String?,
     activity: DriveActivity,
     onCancel: () -> Unit,
+    collapsed: Boolean,
 ) {
     val destination = phase.destination
     val cameraCount = phase.plan.cameras.size
+    if (collapsed) {
+        // Swiped down. The road ahead is what matters now, so this is the
+        // number and the noun and nothing else: where we are going, what Shunt
+        // is doing about it, and how many cameras are still on the route.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = safeColor(),
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    destination.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    activityLabel(activity),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (cameraCount > 0) {
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    cameraCount(cameraCount),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        return
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = safeColor(), modifier = Modifier.size(28.dp))
         Spacer(Modifier.width(12.dp))
@@ -814,14 +937,7 @@ private fun DrivingContent(
                 Spacer(Modifier.width(10.dp))
             }
             Text(
-                when (activity) {
-                    is DriveActivity.Watching -> "Watching for cameras"
-                    is DriveActivity.SendingWaypoint ->
-                        "Sending waypoint ${activity.number} of ${activity.total} to the car"
-                    is DriveActivity.CheckingCharging -> "Asking your car about charging"
-                    is DriveActivity.Replanning -> "Re-planning from here"
-                    is DriveActivity.StoodDown -> "Not steering — the car is yours"
-                },
+                activityLabel(activity),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -1761,6 +1761,26 @@ The rule, concretely:
   70 mph, and the ones that change what the app believes about the world
   (practice cameras, camera reach) have to explain themselves.
 
+**And the card itself is part of the map, not something on top of it.** Reported
+from the road: *"the front info card covers everything, I need it to swipe down
+most of the way and the pov centering needs to match the window that the card
+isn't covering."* Two things follow, and the second is the one that would have
+been missed:
+
+- **The driving sheet collapses.** A handle drags it down to one row —
+  destination, what Shunt is doing, camera count — and back up for the rest. Only
+  while driving: everywhere else the sheet *is* the thing being read, and a
+  chooser that swipes away by accident mid-decision is the worse trade.
+- **The follow camera frames the strip the card leaves, and that inset is
+  measured rather than guessed.** `frameDrive` padded symmetrically, so the box
+  holding the driver and the next pin was centred in the *view* — behind the
+  card. The sheet's height depends on the phase, its content, the screen and now
+  on whether it has been swiped down, so `PlanScreen` measures it
+  (`onSizeChanged`) and hands the number to `RouteMap`. `followBottomPadding`
+  clamps it to `FOLLOW_MAX_INSET_FRACTION`, because a frame squeezed into what an
+  open card leaves is worse than one partly behind it — and the driver who wants
+  the map has a handle to pull. See F-52.
+
 ## 10. Roadmap
 
 Ordered roughly by what unblocks real use.

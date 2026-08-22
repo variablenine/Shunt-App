@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -188,6 +190,13 @@ fun PlanScreen(
     val scope = rememberCoroutineScope()
     var showVehicleSettings by remember { mutableStateOf(false) }
 
+    // How much of the map the sheet is sitting on, measured rather than
+    // guessed. The sheet's height depends on the phase, the content and the
+    // screen, and while driving it changes as the driver swipes it up and
+    // down — so the follow camera is told the real number and frames the strip
+    // above it. See RouteMap.frameDrive.
+    var sheetHeightPx by remember { mutableIntStateOf(0) }
+
     Box(modifier = modifier.fillMaxSize()) {
         RouteMap(
             // Shortened when the next leg doubled back over this one's tail —
@@ -217,6 +226,10 @@ fun PlanScreen(
             // The direct road onward, so the pending stretch follows real roads
             // instead of cutting across country.
             directAhead = directAhead,
+            // Zero when there is no sheet: the measurement only updates while
+            // one is on screen, so a stale height would keep pushing the frame
+            // up after it had gone.
+            bottomInsetPx = if (state.phase is Phase.Browsing) 0 else sheetHeightPx,
         )
 
         // Whether the search panel is expanded over the map.
@@ -286,7 +299,11 @@ fun PlanScreen(
         }
 
         if (state.phase !is Phase.Browsing) {
-            Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onSizeChanged { sheetHeightPx = it.height },
+            ) {
                 ResultSheet(
                     phase = state.phase,
                     chargingVia = chargingVia,

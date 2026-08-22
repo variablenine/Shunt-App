@@ -2656,3 +2656,40 @@ location."* That is worth having for its own sake and is now on the roadmap.
 
 *(none yet — move entries here with the commit that fixed them and what the
 real cause turned out to be, so the reasoning survives.)*
+
+---
+
+### F-52 · The card covered the road, and the map framed what was behind it
+
+*Reported from the road, 2026-08-22, at the start of a long drive:*
+
+> On a drive, the front info card covers everything, I need it to swipe down
+> most of the way and the pov centering needs to match the window that the card
+> isn't covering.
+
+Two faults that read as one, and the second is the interesting one.
+
+**The card.** The driving sheet was capped at 62% of the screen and had no way
+down. That cap was chosen for the *chooser*, where the sheet is the thing being
+read and a driver is sitting still; while actually driving it is the map that is
+being read, and the part the card covered is the road ahead. It now takes a
+handle: drag it down and the sheet keeps the destination, one line saying what
+Shunt is doing, and the camera count — the number and the noun, per the
+driving-text rule — and drag it up for everything else.
+
+**The framing, which was wrong whatever the card did.** The map fills the whole
+screen and the sheet floats over it, so `frameDrive`'s symmetric padding centred
+the driver-and-next-pin box in the *view* — which is to say, behind the card.
+The 22% bottom padding was written with a comment saying it was "generous at the
+bottom because the driving sheet covers it", which is a guess standing in for a
+measurement: the sheet's height depends on the phase, the content, the screen,
+and now on whether it has been swiped down. So the sheet is measured
+(`onSizeChanged`) and the number is handed to the map, which pads the bottom by
+it. The follow camera re-frames on the inset changing as well as on the tick, so
+swiping the card down puts the map where the driver just asked for it rather
+than up to three seconds later.
+
+`followBottomPadding` clamps the inset to `FOLLOW_MAX_INSET_FRACTION` of the
+view. An open sheet is over half the screen, and honouring that literally would
+frame two points into a sliver — worse than framing them behind the card, and
+the driver who wants the map has a handle to pull.
