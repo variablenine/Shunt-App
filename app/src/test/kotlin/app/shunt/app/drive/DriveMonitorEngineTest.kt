@@ -29,6 +29,7 @@ class DriveMonitorEngineTest {
     /** A point [meters] east of [p]. */
     private fun east(p: GeoPoint, meters: Double): GeoPoint = west(p, -meters)
 
+
     private fun update(p: GeoPoint, speed: Double? = 25.0, bearing: Double? = 90.0) =
         LocationUpdate(p, speed, bearing)
 
@@ -85,6 +86,48 @@ class DriveMonitorEngineTest {
         // Genuinely close to it: advance.
         val onTime = engine.onLocation(update(east(origin, 1_180.0)))
         assertTrue(onTime.any { it is DriveSignal.ApproachingWaypoint }, "should advance when actually near")
+    }
+
+    @Test
+    fun `a route that comes back near itself does not flush the whole chain`() {
+        // **From a real drive: "the first waypoint triggered way too soon and
+        // the rest of them all got sent to my car at once".**
+        //
+        // The route runs east, turns north, and comes back west a short way
+        // above the outbound leg — the shape of the re-planned route in that
+        // log. Sitting at the start, the car is within a hundred metres of the
+        // *return* leg, and the off-route check falls back to a full scan of the
+        // line whenever the window finds nothing close. That scan answers "how
+        // far from the line am I", which is a different question from "how far
+        // along am I", and using its answer for both made the car read as
+        // kilometres further on than it was. Every pin behind that point then
+        // measured zero metres away and advanced, one per fix.
+        val out = (0..20).map { east(origin, it * 100.0) } // 2 km east
+        val up = (1..3).map { north(out.last(), it * 40.0) } // 120 m north
+        val back = (1..20).map { north(east(origin, 2_000.0 - it * 100.0), 120.0) }
+        val road = out + up + back
+        val pins = listOf(east(origin, 700.0), east(origin, 1_400.0), east(origin, 2_000.0))
+        val engine = DriveMonitorEngine(
+            chain = pins + north(origin, 120.0),
+            cameras = emptyList(),
+            routePolyline = road,
+        )
+
+        // Parked a little off the start — enough that the window scan misses and
+        // the full scan runs, which is what put the old code on the return leg.
+        val signals = engine.onLocation(update(north(east(origin, 20.0), 100.0)))
+        assertTrue(
+            signals.none { it is DriveSignal.ApproachingWaypoint },
+            "the car is at the start; nothing on the chain has been reached",
+        )
+        // And it does not unravel over the next few fixes either.
+        repeat(4) { i ->
+            val more = engine.onLocation(update(north(east(origin, 20.0 + i * 5.0), 100.0)))
+            assertTrue(
+                more.none { it is DriveSignal.ApproachingWaypoint },
+                "the chain flushed while the car sat at the start",
+            )
+        }
     }
 
     @Test

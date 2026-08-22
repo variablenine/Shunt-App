@@ -156,6 +156,14 @@ minutes later — *"let's not do the Google API thing I just want something that
 actually works"* — and the reconsideration was right, because measuring properly
 found the fault was ours. See below.
 
+**A hole in the camera data is not a camera set.** `CameraResult.missingTiles`
+counts the tiles nothing could supply — no network, no cache, not in the bundled
+snapshot — and planning refuses rather than treating them as empty. They *were*
+treated as empty: `loadTile` ended `snapshot.tile(key) ?: emptyList()`, so an
+unloadable tile and a tile with genuinely no cameras returned the same value, and
+a route through the hole came back labelled camera-free having never been asked
+to avoid anything. That is the one failure §5 names outright. See F-49.
+
 **On-device and offline-first.** Once a region's map tile is cached, routing and
 the drive monitor need no network at all. No background work, no analytics, no
 telemetry, no account. The diagnostic log is not an exception to this and must

@@ -186,6 +186,8 @@ class DriveMonitorEngine(
     fun onLocation(update: LocationUpdate): List<DriveSignal> {
         if (arrived) return emptyList()
         val signals = mutableListOf<DriveSignal>()
+        // Once per fix, before anything asks how far along the car is.
+        updateProgress(update.point)
         // Route adherence first: leaving the route invalidates the camera
         // promise, and the caller may replace the plan because of it.
         routeAdherence(update)?.let { signals += it }
@@ -379,7 +381,7 @@ class DriveMonitorEngine(
      * polyline's vertices say nothing about the road between them.
      */
     private fun alongOf(p: GeoPoint): Double {
-        val i = nearestSegment.coerceIn(0, routePolyline.size - 2)
+        val i = progressSegment.coerceIn(0, routePolyline.size - 2)
         val a = routePolyline[i]
         val b = routePolyline[i + 1]
         val metersPerLon = METERS_PER_DEGREE_LAT * kotlin.math.cos(Math.toRadians(a.lat))
@@ -391,6 +393,64 @@ class DriveMonitorEngine(
         if (lengthSquared <= 0.0) return alongAt[i]
         val t = ((apEast * abEast + apNorth * abNorth) / lengthSquared).coerceIn(0.0, 1.0)
         return alongAt[i] + t * kotlin.math.sqrt(lengthSquared)
+    }
+
+    /**
+     * Where the car is for the purposes of **progress**, as a segment index that
+     * may only creep forward.
+     *
+     * **Separate from [nearestSegment], and that separation is the fix.** The
+     * two questions look identical and are not: *how far am I from the line* is
+     * honestly answered by the globally nearest segment, while *how far along am
+     * I* must never teleport. [distanceToRoute] falls back to a full scan when
+     * the window finds nothing close — right for the first question — and on a
+     * route that comes back near itself the globally nearest segment can be one
+     * the car has not reached yet.
+     *
+     * When that happened, `alongOf` jumped forward by kilometres, every pin
+     * before the jump measured as zero metres away, and the monitor advanced
+     * through the lot of them one per GPS fix. Reported from a real drive: "the
+     * first waypoint triggered way too soon and the rest of them all got sent to
+     * my car at once". The re-planned route in that log runs east, four
+     * kilometres north-west, then back south-east — the car sitting at the start
+     * is a few hundred metres from a segment most of the way through it.
+     *
+     * A drive is one direction along one line, so the same walk-forward
+     * discipline `pinAlong` already uses when it locates the pins is what this
+     * needs: search forward from where progress had reached, never back and
+     * never past the window. A car that genuinely rejoins far ahead stalls this
+     * instead, which is the safe direction — progress stops rather than
+     * inventing itself, and off-route detection is what handles that case.
+     */
+    private var progressSegment = 0
+
+    /**
+     * Move [progressSegment] to the best match ahead of where it already is,
+     * within [PROGRESS_WINDOW_METERS] of road.
+     *
+     * **A distance window, not a count of vertices.** Polyline density varies by
+     * two orders of magnitude — a re-planned leg is points kilometres apart, a
+     * city street is points every few metres — so a fixed number of segments is
+     * a few hundred metres in one place and tens of kilometres in another. The
+     * window has to be the thing it is actually bounding: how far a car can
+     * plausibly have travelled since the last fix. A kilometre is far more than
+     * that at any speed and any fix rate, and small enough that a road doubling
+     * back a few kilometres later cannot be mistaken for this one.
+     */
+    private fun updateProgress(p: GeoPoint) {
+        val last = routePolyline.size - 2
+        if (last < 0) return
+        val from = progressSegment.coerceIn(0, last)
+        val limit = alongAt[from] + PROGRESS_WINDOW_METERS
+        var best = Double.MAX_VALUE
+        var bestIndex = from
+        var i = from
+        while (i <= last && alongAt[i] <= limit) {
+            val d = pointToSegmentMeters(p, routePolyline[i], routePolyline[i + 1])
+            if (d < best) { best = d; bestIndex = i }
+            i++
+        }
+        progressSegment = bestIndex
     }
 
     /** Whether the car is past the turn that the current waypoint depends on. */
@@ -433,5 +493,13 @@ class DriveMonitorEngine(
         /** Segments to search behind/ahead of the last match on each fix. */
         const val WINDOW_BEHIND = 50
         const val WINDOW_AHEAD = 400
+
+        /**
+         * How far along the road progress may move in a single fix.
+         *
+         * See [updateProgress]. Generous against what a car can cover between
+         * fixes, tight against a route that comes back near itself.
+         */
+        const val PROGRESS_WINDOW_METERS = 1_000.0
     }
 }

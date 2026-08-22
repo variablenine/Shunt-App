@@ -21,11 +21,13 @@ import app.shunt.solver.brouter.BrouterRouter
 import app.shunt.solver.brouter.BrouterTileSource
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.camera.DeFlockCameraSource
+import app.shunt.solver.camera.Freshness
 import app.shunt.solver.charging.CHARGER_CORRIDOR_METERS
 import app.shunt.solver.charging.SuperchargerSource
 import app.shunt.solver.charging.rankChargeStops
 import app.shunt.solver.geo.BoundingBox
 import app.shunt.solver.geo.bearingDegrees
+import app.shunt.solver.geo.haversineMeters
 import app.shunt.app.diag.DiagnosticLog
 import app.shunt.core.GeoPoint
 import app.shunt.app.plan.Destination
@@ -53,6 +55,7 @@ import app.shunt.tesla.TessieAccountClient
 import app.shunt.tesla.TessieVehicleNavClient
 import app.shunt.tesla.VehicleNavClient
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
@@ -134,7 +137,33 @@ class AppContainer(context: Context) {
      * draw.
      */
     private suspend fun camerasFor(bbox: BoundingBox): List<Camera> {
-        val real = cameraSource.camerasIn(bbox).cameras
+        val result = cameraSource.camerasIn(bbox)
+        // **A hole in the camera data is not a camera set.** A tile nothing
+        // could supply used to come back as "no cameras here", and a route
+        // planned through it is labelled camera-free while never having been
+        // asked to avoid anything — the one failure CLAUDE.md §5 names outright.
+        // Throwing puts it on the path the planner already has for this:
+        // `camerasAlong` returns null and the plan says so out loud.
+        if (result.missingTiles > 0) {
+            diagnostics.record(
+                DiagnosticLog.Kind.PLAN,
+                "camera data has ${result.missingTiles} unloadable tile(s) over this area — refusing to " +
+                    "plan against a set with a hole in it",
+            )
+            throw IOException("camera data incomplete: ${result.missingTiles} tile(s) unavailable")
+        }
+        // Loud when the answer looks thin, because "no cameras" and "we could
+        // not see any" are the same shape on screen and only one of them is
+        // safe. Every report of a route taking an avoidable camera has come
+        // down to which of those it was, and the log could not say.
+        if (result.cameras.isEmpty() || result.freshness != Freshness.NETWORK) {
+            diagnostics.record(
+                DiagnosticLog.Kind.PLAN,
+                "cameras over a ${bboxKmLabel(bbox)} area: ${result.cameras.size} " +
+                    "(${result.freshness.name.lowercase()})",
+            )
+        }
+        val real = result.cameras
         if (!practiceCameras) return real
         // Snapped onto real roads using the tiles already on disk for routing,
         // which also thins them out to where the roads are — so a practice field
@@ -142,6 +171,23 @@ class AppContainer(context: Context) {
         return real + PracticeCameras.inBox(bbox) { points, meters ->
             brouterRouter.snapToRoads(points, meters)
         }
+    }
+
+    /**
+     * How big a camera query's area is, in kilometres, without saying *where*.
+     *
+     * The size is the diagnostic — a hundred cameras over a city block and a
+     * hundred over three states are very different answers — and the location is
+     * the thing this log must not leak unless the person exporting asks for it.
+     */
+    private fun bboxKmLabel(bbox: BoundingBox): String {
+        val north = haversineMeters(
+            GeoPoint(bbox.minLat, bbox.minLon), GeoPoint(bbox.maxLat, bbox.minLon),
+        ) / 1000
+        val east = haversineMeters(
+            GeoPoint(bbox.minLat, bbox.minLon), GeoPoint(bbox.minLat, bbox.maxLon),
+        ) / 1000
+        return "${east.toInt()}x${north.toInt()} km"
     }
 
     /** BRouter's offline tiles + profile live under the app's private storage. */

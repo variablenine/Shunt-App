@@ -158,4 +158,42 @@ class DeFlockCameraSourceTest {
         source().camerasIn(BoundingBox(21.0, -159.0, 59.0, -21.0)) // 16 tiles
         assertTrue(peak.get() <= 5, "peak concurrency was ${peak.get()}")
     }
+    @Test
+    fun `a tile nothing can supply is reported missing, not as no cameras`() = runTest {
+        // **The most dangerous shape a bug can take in this app.** A tile with
+        // no network, no cache and no bundled copy used to come back as an empty
+        // list, which is exactly what a tile with genuinely no cameras returns.
+        // A route planned through that hole is labelled camera-free having never
+        // been asked to avoid anything — the one failure CLAUDE.md §5 names.
+        //
+        // The snapshot here is empty, so nothing can supply the tile.
+        val noSnapshot = DeFlockCameraSource(
+            http = OkHttpClient(),
+            cacheDir = cacheDir,
+            indexUrl = server.url("/regions/index.json").toString(),
+            nowEpochSeconds = { now },
+            snapshot = BundledSnapshot("/no-such-snapshot"),
+        )
+        serve(indexExpiration = now + 3600, failTiles = true)
+
+        val result = noSnapshot.camerasIn(bbox)
+
+        assertTrue(result.cameras.isEmpty(), "nothing could be loaded, so there is nothing to report")
+        assertTrue(
+            result.missingTiles > 0,
+            "an unloadable tile must be distinguishable from an empty one",
+        )
+    }
+
+    @Test
+    fun `a tile that loads and is genuinely empty is not reported missing`() = runTest {
+        // The other half: the distinction is only worth anything if an honest
+        // empty answer stays honest. Refusing to plan whenever a region has no
+        // cameras would make the app useless in most of the country.
+        serve(indexExpiration = now + 3600)
+        val result = source().camerasIn(BoundingBox(32.9, -79.1, 33.1, -78.9)) // tile 20/-80, served empty
+
+        assertEquals(0, result.missingTiles, "an empty tile that loaded is not a hole")
+    }
+
 }

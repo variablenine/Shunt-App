@@ -20,6 +20,22 @@ data class CameraResult(
     val cameras: List<Camera>,
     /** Worst freshness across the tiles that served this query. */
     val freshness: Freshness,
+    /**
+     * How many tiles covering the query could not be loaded **at all** — no
+     * network, no cache, and not in the bundled snapshot.
+     *
+     * **An empty tile and an unloadable one used to be the same value**, and on
+     * this app that difference is the whole game. `loadTile` ended
+     * `snapshot.tile(key) ?: emptyList()`, so a tile nothing could supply came
+     * back as *no cameras here* — and a route planned through it is labelled
+     * camera-free while never having been asked to avoid anything. That is the
+     * one failure CLAUDE.md §5 names outright: a route must never be labelled
+     * against cameras the router was not given a chance to avoid.
+     *
+     * Non-zero means the answer has a hole in it, and nothing downstream may
+     * treat it as a camera set.
+     */
+    val missingTiles: Int = 0,
 )
 
 /**
@@ -39,8 +55,10 @@ class DeFlockCameraSource(
     private val snapshot: BundledSnapshot = BundledSnapshot(),
 ) {
     suspend fun camerasIn(bbox: BoundingBox): CameraResult {
+        // No index at all: every tile the query wanted is missing, and saying
+        // "no cameras" would be the same lie one level up.
         val (index, indexFreshness) = loadIndex()
-            ?: return CameraResult(emptyList(), Freshness.BUNDLED)
+            ?: return CameraResult(emptyList(), Freshness.BUNDLED, missingTiles = 1)
         val regionSet = index.regions.toSet()
         val keys = TileKey.covering(bbox, index.tileSizeDegrees)
             .filter { it.toString() in regionSet }
@@ -52,11 +70,12 @@ class DeFlockCameraSource(
             }.awaitAll()
         }
 
-        val cameras = tiles.flatMap { it.first }
+        val loaded = tiles.filterNotNull()
+        val cameras = loaded.flatMap { it.first }
             .map { it.toCamera() }
             .filter { bbox.contains(it.location) }
-        val worst = (tiles.map { it.second } + indexFreshness).maxBy { it.ordinal }
-        return CameraResult(cameras, worst)
+        val worst = (loaded.map { it.second } + indexFreshness).maxBy { it.ordinal }
+        return CameraResult(cameras, worst, missingTiles = tiles.count { it == null })
     }
 
     private suspend fun loadIndex(): Pair<DeFlockIndex, Freshness>? {
@@ -78,7 +97,12 @@ class DeFlockCameraSource(
         return snapshot.index()?.let { it to Freshness.BUNDLED }
     }
 
-    private suspend fun loadTile(index: DeFlockIndex, key: TileKey): Pair<List<DeFlockRecord>, Freshness> {
+    /**
+     * One tile's records, or **null when nothing could supply it** — which is a
+     * different answer from an empty list and must stay that way. See
+     * [CameraResult.missingTiles].
+     */
+    private suspend fun loadTile(index: DeFlockIndex, key: TileKey): Pair<List<DeFlockRecord>, Freshness>? {
         val version = index.version ?: "none"
         val tilesDir = File(cacheDir, "tiles")
         val cacheFile = File(tilesDir, "${key.fileName}_$version.json")
@@ -103,7 +127,11 @@ class DeFlockCameraSource(
             ?.firstOrNull()
         if (stale != null) return stale to Freshness.STALE_CACHE
 
-        return (snapshot.tile(key) ?: emptyList()) to Freshness.BUNDLED
+        // `snapshot.tile` returns null when the snapshot does not carry this
+        // tile at all, which is not the same as carrying it and finding it
+        // empty. Substituting an empty list here is what made a hole in the data
+        // look like clear road.
+        return snapshot.tile(key)?.let { it to Freshness.BUNDLED }
     }
 
     private suspend fun fetchText(url: String): String = withContext(Dispatchers.IO) {

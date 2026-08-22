@@ -955,6 +955,44 @@ destination, across three states and over Lake Erie.
 
 ---
 
+### B19 · Shunt refuses to plan against camera data with a hole in it
+*Fixed 2026-08-20.*
+
+**Setup.** Plan a trip into an area whose camera tiles cannot be loaded — turn
+the network off with a cold cache, on a region the bundled snapshot does not
+carry.
+
+**Pass.** The plan fails and says "Couldn't load camera data for this area". The
+log names how many tiles were unloadable.
+
+**Fail (as it was).** A tile nothing could supply returned an empty list, which
+is the same answer as a tile with genuinely no cameras. The route came back
+camera-free having never been asked to avoid anything.
+
+**Also worth reading in the log.** Whenever a camera answer is empty, or comes
+from anywhere but the network, the log records the count, the size of the area
+and where the data came from: `cameras over a 250x180 km area: 1 (bundled)`. On a
+leg into a metro that reads as obviously wrong; before, nothing said it at all.
+
+---
+
+### A10 · The chain does not flush when the route comes back near itself
+*Fixed 2026-08-20. Found on a real drive.*
+
+**Setup.** Drive a route that loops — out and back on parallel roads, a
+switchback, anything that brings the line within a few hundred metres of itself
+a kilometre or two later. A mid-drive re-plan often produces one.
+
+**Pass.** Waypoints advance one at a time as the car reaches each.
+
+**Fail (as reported).** "The first waypoint triggered way too soon and the rest
+of them all got sent to my car at once." The off-route check falls back to a
+full scan of the line, and its answer was being used for progress as well — so
+the car read as being on the *return* leg, every pin behind that point measured
+as zero metres away, and the chain unravelled one pin per fix.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

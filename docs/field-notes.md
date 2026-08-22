@@ -2456,6 +2456,88 @@ already saying.
 
 ---
 
+### F-49 · A hole in the camera data looked exactly like clear road
+*Observed: 2026-08-20, from a real log. The most serious bug found in this
+stretch of work.*
+
+> we still have the weird routing and hitting an avoidable camera at the end. I
+> know it's avoidable because it's been avoided before.
+
+**The log finally said it.** Every leg of a 1,424 km run to Washington now logs
+what it was offered, and the trip reads:
+
+```
+leg options: FASTEST 184km/16cam, FEWEST_CAMERAS 201km/0cam   → took 0
+leg options: FASTEST 150km/11cam, BALANCED 169km/2cam, FEWEST 270km/0cam → took 0
+leg options: FASTEST 205km/8cam,  FEWEST_CAMERAS 234km/0cam   → took 0
+leg options: FASTEST 216km/1cam
+  this leg has NO avoidance option … it passes 1 camera(s), 0 of them watching an endpoint
+```
+
+The avoidance is working — three legs took the clean option over routes with 8,
+11 and 16 cameras. The last leg is Bedford, Pennsylvania to Washington DC, and
+it came back with **one** camera on 216 km, in nine seconds. DeFlock's own
+bundled snapshot carries 1,256 cameras within half a degree of DC. One is not a
+sparse area; one is a hole.
+
+**`DeFlockCameraSource.loadTile` ended `snapshot.tile(key) ?: emptyList()`.** A
+tile with no network, no cache and no bundled copy returned an empty list —
+byte for byte the same answer as a tile that loaded and genuinely had no
+cameras. Every layer above then treated the hole as clear road, and a route
+planned through it is labelled camera-free having never been asked to avoid
+anything. That is the single failure CLAUDE.md §5 names outright:
+
+> A route must never be labelled against cameras the router was not given a
+> chance to avoid.
+
+`CameraResult.missingTiles` counts the tiles nothing could supply, and
+`AppContainer.camerasFor` refuses to plan when it is non-zero — which lands on
+the path the planner already has, so the driver is told "couldn't load camera
+data for this area" instead of being shown a clean route. A tile that loads and
+is empty stays empty; both halves are held by tests, and the new one fails
+against the old line.
+
+**Whether this is what happened on that leg is not proven.** The snapshot covers
+DC, so a plain fetch failure should have fallen back to 1,256 cameras rather than
+one — which points at a tile that fetched *successfully* and returned nothing
+useful, then got cached under the index version and reused. `camerasFor` now
+logs the count, the area size and the freshness whenever the answer is empty or
+comes from anywhere but the network, so the next occurrence names itself. The
+hole above is real and worth closing either way.
+
+### F-49b · The car read as kilometres further along than it was
+
+> the first waypoint triggered way too soon and the rest of them all got sent to
+> my car at once
+
+Two questions were sharing one answer. `distanceToRoute` finds the nearest
+segment for **off-route** detection, and falls back to a full scan of the line
+when its window finds nothing close — correct for *how far from the line am I*.
+`alongOf` then used that same index for **progress** — *how far along am I* —
+and those are not the same question. On a route that comes back near itself,
+the globally nearest segment can be one the car has not reached yet.
+
+The re-planned route in that log runs east, four kilometres north-west, then
+back south-east. Sitting at the start, the car is within a couple of hundred
+metres of a segment most of the way through it. `alongOf` jumped forward,
+`metersLeftTo` clamped to zero for every pin behind the jump, and the monitor
+advanced through the entire chain one pin per GPS fix.
+
+Progress has its own index now, which may only creep forward and only within
+`PROGRESS_WINDOW_METERS` (1 km) of road per fix — far more than a car can cover
+between fixes, far less than a road doubling back a few kilometres later. It is
+the same walk-forward discipline `pinAlong` already uses to locate the pins, and
+the same trap it was written to avoid. A car that genuinely rejoins far ahead
+stalls progress instead, which is the safe direction: it stops rather than
+inventing itself, and off-route detection covers that case.
+
+**Bounded by distance, not by a count of vertices**, which was the first attempt
+and does not work: polyline density varies by two orders of magnitude between a
+re-planned leg and a city street, so a fixed number of segments is a few hundred
+metres in one place and tens of kilometres in another.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the
