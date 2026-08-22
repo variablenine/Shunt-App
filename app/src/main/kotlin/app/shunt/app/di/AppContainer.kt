@@ -699,6 +699,22 @@ class AppContainer(context: Context) {
                 // chooser has logged this for the lead leg since the beginning
                 // and later legs never did, which is why the leg into a metro
                 // taking cameras took three rounds to pin down.
+                // **How each pass ended, not just what survived.** Three rounds
+                // of screenshots came down to one unanswered question about a
+                // leg into a metro that took a camera: did an avoidance route
+                // exist and get passed over, or did the pass find nothing, or
+                // did it never run? A pass that succeeds and one that times out
+                // both vanish from the option list when their route matches
+                // another's, and only the breakdown tells them apart — which
+                // the chooser has shown for the lead leg since the beginning
+                // and later legs threw away.
+                outcome.timings?.routingPasses?.takeIf { it.isNotEmpty() }?.let { passes ->
+                    diagnostics.record(
+                        DiagnosticLog.Kind.PLAN,
+                        "leg passes (${outcome.camerasConsidered} cameras to avoid): " +
+                            passes.joinToString(", ") { "${it.label} ${it.seconds}s" },
+                    )
+                }
                 diagnostics.record(
                     DiagnosticLog.Kind.PLAN,
                     "leg options: " + outcome.options.joinToString(", ") { o ->

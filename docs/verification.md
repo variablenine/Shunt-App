@@ -993,6 +993,28 @@ as zero metres away, and the chain unravelled one pin per fix.
 
 ---
 
+### D16 · The last leg into a city, planned on its own
+*An experiment, not a fix — 2026-08-21. See F-50.*
+
+**The question.** A trip to Washington ends with a 221 km leg that takes one
+camera and comes back with no avoidance option, while every other leg of the
+same trip avoids cleanly. Is that the leg boundary constraining the approach, or
+is the camera genuinely unavoidable?
+
+**Setup.** Plan the last leg *on its own* — origin at the handover point the log
+names, destination the same. Short enough that it will not be split.
+
+**Read it as:** a camera-free route means the boundary is the cause, and leg
+splitting is costing the approach. The same camera means the leg's own search is
+doing all it can, and the remaining question is whether the nogo set and the
+labelling set agree.
+
+**In the log either way:** `leg passes (N cameras to avoid): fastest 0.2s,
+blocked 0.4s, balanced 0.5s` names what each pass did, and `N cameras to avoid`
+is the count after the corridor filter — not the count fetched for the area.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

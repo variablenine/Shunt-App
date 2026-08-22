@@ -117,6 +117,16 @@ sealed interface PlanOutcome {
          * across country. See F-46.
          */
         val directAheadRoadPoints: Int = 0,
+        /**
+         * How many cameras this plan was actually **given to avoid**, after the
+         * corridor filter — not how many were fetched for the area.
+         *
+         * The two differ by a lot and only one of them means anything. A leg
+         * reporting one camera on two hundred kilometres into a dense metro is
+         * either a leg through empty country or a leg planned against almost
+         * nothing, and the fetched count cannot tell those apart. See F-50.
+         */
+        val camerasConsidered: Int = 0,
     ) : PlanOutcome {
         /** Whether these options stop short of the destination. */
         val isPartial: Boolean get() = remaining.isNotEmpty()
@@ -608,6 +618,7 @@ class BrouterPlanner(
             carriedForward = carriedForward,
             directAhead = directAhead,
             directAheadRoadPoints = directAheadRoadPoints,
+            camerasConsidered = cameras.size,
         )
     }
 

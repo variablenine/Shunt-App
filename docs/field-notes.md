@@ -2538,6 +2538,70 @@ metres in one place and tens of kilometres in another.
 
 ---
 
+### F-50 · The camera data was there all along
+*Observed: 2026-08-21, from a real log. F-49's theory disproved; the cause is
+still open and the next log will name it.*
+
+**The first thing to record is that F-49 was wrong about this trip.** The
+per-fetch logging it added answered its own question immediately:
+
+```
+21:03:04  planning the next leg (2 points left)
+21:03:06  cameras over a 250x247 km area: 1919 (cache)
+...
+21:03:13  leg options: FASTEST 221km/1cam
+21:03:13  this leg has NO avoidance option — … it passes 1 camera(s), 0 of them watching an endpoint
+```
+
+Nineteen hundred cameras were available over the last leg's area. The hole in
+`loadTile` was real and is still worth having closed, but it is not what makes
+this leg take a camera. Worth stating plainly because two rounds of reasoning
+went into that theory.
+
+**What the log does establish**, and it is a lot:
+
+- Avoidance works everywhere else. Three legs of the same trip took the clean
+  option over routes with 8, 11 and 16 cameras: `FASTEST 179km/16cam,
+  FEWEST_CAMERAS 196km/0cam` → took 0.
+- The last leg is Bedford, Pennsylvania to Washington, and it comes back with
+  **one option** in nine seconds.
+- `hardAvoidanceFailed` is **false** — so the hard block did not fail. It ran and
+  produced a route.
+- `unavoidableAtEndpoints` is **zero** — so the camera does not watch the
+  destination.
+
+Those last two together mean the blocked pass succeeded and its route
+**deduplicated with the fastest one**, which is why only `FASTEST` survives.
+A hard-blocked route cannot enter a camera's zone, so a hard-blocked route that
+passes a camera should be impossible — and that contradiction is the thing left
+to explain.
+
+**Two candidates, and the difference is testable in two minutes.**
+
+1. *The boundary constrains the approach.* The leg starts at a handover point
+   221 km out, chosen on the direct road, and a camera-free approach to a city
+   may need to leave the corridor much earlier than that. The maintainer's
+   "it's been avoided before" would then be a trip planned whole rather than in
+   legs — and nothing in the leg's own search is wrong.
+2. *Something in the nogo set differs from the labelling set*, so a road the
+   router was free to take is a road the labeller counts as watched. §7.12 was
+   exactly that once, and the fix was to make the range scale flow through both.
+
+**The experiment**: plan Bedford → Washington on its own, short enough not to
+split. If that finds a camera-free route, it is (1) and the boundary is the
+cause. If it takes the same camera, it is (2) or the camera is genuinely
+unavoidable and the map is telling the truth.
+
+**What this note adds so the next log answers it without another round.** Later
+legs now log the outcome of every pass, the way the chooser has for the lead leg
+all along — `blocked (no route)`, `blocked (gave up — out of time)` and a plain
+`blocked 0.4s` are three different findings that all vanish into the same
+one-option list. And the line carries `camerasConsidered`: how many cameras the
+plan was actually given to avoid after the corridor filter, which is not the
+number fetched for the area and is the one that matters.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the
