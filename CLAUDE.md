@@ -939,8 +939,17 @@ the zone × weight), so a road clipping the edge of a cone is cheap and gets
 taken; only a hard block makes "fewest cameras" mean *none*. One unavoidable
 camera at the kerb was therefore buying a dozen avoidable ones on the approach.
 
-`BrouterRouter.withoutZonesHolding` drops the offending **zones** instead of the
-pass. Everything else stays blocked, so the route is camera-free wherever a
+`BrouterRouter.withoutZonesHolding` keeps the offending **zones** instead of
+skipping the pass — and `splitAtEndpoints` gives them a *weight* rather than
+removing them, which is the difference between "you may end here" and "this
+camera does not exist". Deleting the zone let the route drive through that
+camera anywhere on the leg, on any approach; measured from a real log, a 221 km
+leg into Washington took the plain fastest road through a camera the driver had
+seen avoided before. A price is paid per metre inside, so the route enters at the
+end where it must and not a kilometre earlier where it need not. The split is
+**per camera, before clustering** — a zone is one shape per *site*, so dropping
+it used to drop a junction's worth of cameras for the sake of one near the kerb.
+See F-51. Everything else stays blocked, so the route is camera-free wherever a
 camera-free road exists and passes only the cameras pointed at where the driver
 is going — which no route can avoid, because arriving is what triggers them. The
 result sheet says so in those words rather than leaving one camera on a clean
@@ -1845,5 +1854,11 @@ Ordered roughly by what unblocks real use.
   cover it from the start.
 - ~~Seeded synthetic cameras for testing where the real ones are gone.~~ Done:
   `PracticeCameras`, switched on in vehicle settings.
+- **Let the driver choose where a trip starts.** Everything plans from the
+  current location, which makes a whole class of question unanswerable: the way
+  to tell a leg boundary constraining an approach from a genuinely unavoidable
+  camera is to plan that leg on its own, and there is no way to ask for it.
+  *"I can't choose a starting point yet, it just navigates from my current
+  location."* See `docs/verification.md` D16.
 - **[far future]** Direct Tesla Fleet API integration (connect a Tesla account,
   no Tessie) — only after everything else is fleshed out and tested.

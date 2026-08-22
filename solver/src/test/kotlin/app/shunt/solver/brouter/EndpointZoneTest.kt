@@ -190,4 +190,61 @@ class EndpointZoneTest {
         val kept = router.withoutZonesHolding(nogos, listOf(origin, destination))
         assertEquals(nogos, kept, "a camera looking the other way does not hold the destination")
     }
+    @Test
+    fun `only the camera at the endpoint is priced, not its whole junction`() {
+        // **The bug the previous fix left behind, found in a real log.**
+        //
+        // `buildNogos` groups cameras into one shape per *site*, so a junction's
+        // worth of them share a zone. Dropping that zone for holding an endpoint
+        // therefore dropped every camera in it — a whole junction stopped being
+        // a constraint because one camera sat near the destination. The route
+        // then drove through a *different* camera of that group, and the
+        // labelling reported nought at an endpoint, because the camera it passed
+        // was not the camera that made the zone undroppable.
+        //
+        // Splitting per camera means each half clusters on its own.
+        val atDestination = CameraVision(destinationPoint(destination, 0.0, 40.0), directionDegrees = null)
+        val sameJunction = CameraVision(destinationPoint(destination, 0.0, 130.0), directionDegrees = null)
+        val faraway = CameraVision(destinationPoint(destination, 0.0, 40_000.0), directionDegrees = null)
+
+        val (endpointCameras, blockable) = router.splitAtEndpoints(
+            listOf(atDestination, sameJunction, faraway),
+            listOf(GeoPoint(38.0, -98.0), destination),
+        )
+
+        assertTrue(atDestination in endpointCameras, "the camera at the destination cannot be blocked")
+        assertTrue(
+            faraway in blockable,
+            "a camera 40 km away must stay blocked whatever its neighbours do",
+        )
+        assertEquals(
+            3, endpointCameras.size + blockable.size,
+            "every camera has to land on one side or the other",
+        )
+    }
+
+    @Test
+    fun `a priced endpoint zone survives the drop that a blocked one would not`() {
+        // The two halves of the fix meet here. The endpoint camera is built with
+        // a weight rather than as impassable, and `withoutZonesHolding` only
+        // removes impassable zones — so the zone stays in the list and the route
+        // pays per metre to be inside it. It enters at the end, where it must,
+        // rather than a kilometre earlier where it need not.
+        val atDestination = CameraVision(destinationPoint(destination, 0.0, 40.0), directionDegrees = null)
+        val priced = router.buildNogos(listOf(atDestination), 500.0, RoutingParamCollector())
+            .also { RoutingContext.prepareNogoPoints(it) }
+
+        assertEquals(
+            priced,
+            router.withoutZonesHolding(priced, listOf(GeoPoint(38.0, -98.0), destination)),
+            "a price is not a wall, so nothing needs dropping",
+        )
+        assertTrue(
+            blocked(atDestination).let {
+                router.withoutZonesHolding(it, listOf(GeoPoint(38.0, -98.0), destination)).isEmpty()
+            },
+            "fixture check: as an impassable zone it would have been dropped entirely",
+        )
+    }
+
 }

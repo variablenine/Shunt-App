@@ -464,7 +464,37 @@ class BrouterRouter(
             if (avoidance != Avoidance.None && cameras.isNotEmpty()) {
                 // NaN is BRouter's "impassable"; a finite value is a per-metre penalty.
                 val weight = (avoidance as? Avoidance.Weighted)?.weight ?: Double.NaN
-                nogos += buildNogos(cameras, weight, collector)
+                // **A camera at an endpoint is priced, not deleted.**
+                //
+                // BRouter refuses a route that begins or ends inside an
+                // impassable zone, and in a city the destination is very often
+                // within sight of a camera. The answer used to be to take that
+                // zone out of the list — which does not merely let the route
+                // *end* inside it, it lets the route drive through it for as
+                // long as it likes, on any approach, because the zone no longer
+                // exists. The search then takes the plain fastest road through
+                // the camera even where a road a block over would have stayed
+                // out of its view.
+                //
+                // Straight out of a real log: a leg into Washington came back
+                // `blocked (1 at an endpoint, unblockable)` with the fastest
+                // road and one camera on it, reported by the driver as a camera
+                // that had been avoided before. Everything else on that trip
+                // avoided cleanly — three legs took the clean option over
+                // routes with 8, 11 and 16 cameras — so the search was working
+                // and this one zone had simply stopped being a constraint.
+                //
+                // Weighted, it is a price rather than a wall: the route may
+                // enter it, because it must to arrive, and pays per metre for
+                // every one it spends inside. So it enters at the end, where
+                // there is no choice, and not a kilometre earlier where there
+                // is. See F-51.
+                val (endpointCameras, blockable) =
+                    if (weight.isNaN()) splitAtEndpoints(cameras, points) else emptyList<CameraVision>() to cameras
+                if (blockable.isNotEmpty()) nogos += buildNogos(blockable, weight, collector)
+                if (endpointCameras.isNotEmpty()) {
+                    nogos += buildNogos(endpointCameras, fewestWeight, collector)
+                }
             }
             // Blocked roads apply to every pass, the plain fastest one included:
             // a road the driver has refused is refused on every option offered,
@@ -565,6 +595,27 @@ class BrouterRouter(
             !nogo.nogoWeight.isNaN() || probes.none { holds(nogo, it) }
         }
     }
+
+    /**
+     * [cameras] split into the ones a hard block cannot keep — because their
+     * zone reaches a road BRouter might snap an endpoint onto — and the rest.
+     *
+     * **Split per camera, and that is the point.** [buildNogos] groups cameras
+     * into one shape per *site*, so dropping a zone for holding an endpoint used
+     * to drop every camera in it: a junction's worth of cameras stopped being
+     * constraints because one of them sat near the destination. That is how a
+     * route came back passing a camera while reporting *nought* at an endpoint —
+     * the pass counted the one camera that made the zone undroppable, the
+     * labelling counted the different camera the route actually drove past.
+     *
+     * Splitting first means each half clusters on its own, so only the camera
+     * that genuinely reaches the endpoint is treated differently.
+     */
+    internal fun splitAtEndpoints(
+        cameras: List<CameraVision>,
+        points: List<GeoPoint>,
+    ): Pair<List<CameraVision>, List<CameraVision>> =
+        cameras.partition { camera -> points.any { unblockableAt(camera, it) } }
 
     /**
      * Whether [camera] is one no hard block could keep, because its zone can

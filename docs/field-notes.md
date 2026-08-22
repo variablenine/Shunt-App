@@ -2602,6 +2602,56 @@ number fetched for the area and is the one that matters.
 
 ---
 
+### F-51 · A camera at the destination stopped being a constraint anywhere
+*Observed: 2026-08-21, named by the log in one line. Fixed; unconfirmed on a
+drive.*
+
+The pass breakdown F-50 added answered it immediately:
+
+```
+leg passes (1567 cameras to avoid): fastest (spine) 2.0s, fastest 2.0s,
+  blocked (1 at an endpoint, unblockable) 4.0s, balanced 4.7s
+leg options: FASTEST 221km/1cam
+this leg has NO avoidance option … 1 camera(s), 0 of them watching an endpoint
+```
+
+`blocked` ran, took four seconds, and reported **one camera at an endpoint**.
+Three rounds of guessing ended there.
+
+**A zone that could not be blocked was being deleted, not priced.** BRouter
+refuses a route that begins or ends inside an impassable zone, and in a city the
+destination is very often within sight of a camera. `withoutZonesHolding` took
+that zone out of the list — which does not merely let the route *end* inside it,
+it lets the route drive through it for as long as it likes, on any approach,
+because the zone no longer exists. The search then takes the plain fastest road
+through the camera even where a road a block over would have stayed out of its
+view. The driver's reading was right: it had been avoided before.
+
+Weighted, it is a price rather than a wall. The route may enter — it must, to
+arrive — and pays per metre for every one it spends inside, so it enters at the
+end where there is no choice and not a kilometre earlier where there is.
+
+**And the two numbers that disagreed explain a second half of it.** The pass said
+one camera at an endpoint; the option said nought. Both used the same rule, so
+that should be impossible — until you notice `buildNogos` groups cameras into one
+shape per *site*. Dropping a zone dropped every camera in it, so a junction's
+worth of them stopped being constraints because one sat near the destination, and
+the route then drove past a *different* camera of that group. The pass counted
+the camera that made the zone undroppable; the labelling counted the camera the
+route actually passed. `splitAtEndpoints` partitions per camera before either
+half is clustered, so only the one that genuinely reaches the endpoint is treated
+differently.
+
+**What this does not settle.** Whether the remaining camera on that leg is
+genuinely unavoidable is still unknown — it may be, since it is near the
+destination. What has changed is that the route is no longer free to drive
+through it anywhere else on 221 km of road. The experiment in `docs/verification.md`
+D16 wants an origin the driver can choose, which the app does not offer yet:
+*"I can't choose a starting point yet, it just navigates from my current
+location."* That is worth having for its own sake and is now on the roadmap.
+
+---
+
 ## Resolved
 
 *(none yet — move entries here with the commit that fixed them and what the
