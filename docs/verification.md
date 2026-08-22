@@ -1038,6 +1038,34 @@ into what an open card leaves is worse than one partly behind it.
 
 ---
 
+### A12 · No waypoint sits on a junction or beside a parallel road
+
+*Never seen on a drive — 2026-08-22. See F-53.*
+
+**Provoke it.** Plan a route through a town with junctions close together —
+anywhere the route turns twice within a couple of hundred metres — and look at
+the pins drawn on the map before setting off.
+
+**Expect:** every pin sits mid-block, clear of the junctions either side of it.
+Where two turns are close together, expect **one** pin, past the second — not
+one past each, and not one sitting in the second junction.
+
+**On the drive:** the car should not slow or move toward the kerb as it passes a
+pin. Pulling into a driveway or a side street at a waypoint is this bug.
+
+**The parallel-road half.** Watch the car's own screen where the route runs
+beside a frontage road, a service road, or the opposite carriageway. It should
+name a point on our road. Navigating the parallel road is the bug, and it is the
+half that is only *partly* fixed: Shunt can see the fastest route and its own
+line, so it will refuse a pin beside those, but a frontage road neither route
+uses is invisible to it. If this recurs, note whether the parallel road carries
+either route — that distinguishes a gap in the check from a failure of it.
+
+**What would look like a regression and is not:** fewer pins through a town.
+Dropping the first of a close pair is deliberate, and the second holds both.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

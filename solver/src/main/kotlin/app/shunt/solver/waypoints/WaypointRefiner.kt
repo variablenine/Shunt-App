@@ -194,6 +194,12 @@ object WaypointRefiner {
     ): List<GeoPoint> {
         if (chosen.size < 2 || avoid.isEmpty()) return pins
 
+        // Where a pin may go on this route. The refiner has no view of the
+        // fastest line, so this catches the junctions and our own line coming
+        // back near itself; the extractor's copy sees more. Built once — it
+        // walks the whole route.
+        val sites = WaypointExtractor.sitesFor(chosen, null)
+
         // Only cameras this route actually avoids are worth spending a pin on.
         // One it drives past anyway is already counted and warned about, and
         // pinning against it would buy nothing.
@@ -243,7 +249,7 @@ object WaypointRefiner {
                 // there by a different road. Put one in just past where its path
                 // and ours part company.
                 if (maxPins != WaypointExtractor.NO_LIMIT && current.size >= maxPins) return current
-                val pin = pinPastFork(chosen, carPath, from, to, pastForkAt(from, index))
+                val pin = pinPastFork(chosen, carPath, from, to, pastForkAt(from, index), sites)
                 if (pin == null || pin in current) {
                     // Nowhere left to put one on this stretch.
                     hopeless += from
@@ -344,6 +350,13 @@ object WaypointRefiner {
         from: GeoPoint,
         to: GeoPoint,
         pastForkMeters: Double = PAST_FORK_METERS,
+        /**
+         * Where a pin may actually sit. A fork pin is as capable as any other
+         * of landing in the next junction or beside a parallel road — more so,
+         * because a fork *is* a junction and the road it forks from runs
+         * alongside for a while afterwards. See PinSites.
+         */
+        sites: PinSites? = null,
     ): GeoPoint? {
         if (carPath.size < 2) return null
         val startAlong = pointToPolylineProgress(from, chosen).alongMeters
@@ -366,11 +379,37 @@ object WaypointRefiner {
             }
             // Past the fork: take the first point far enough along the detour
             // that the turn is behind us.
-            if (along - forkAlong >= pastForkMeters) return chosen[i]
+            if (along - forkAlong >= pastForkMeters) {
+                return settled(chosen, sites, along, forkAlong, endAlong) ?: chosen[i]
+            }
         }
         // Diverges but never far enough past it before the next pin: put the
         // pin at the end of the usable stretch rather than nothing at all.
-        return forkAlong?.let { pointAtAlong(chosen, (it + endAlong) / 2) }
+        val fork = forkAlong ?: return null
+        val midway = (fork + endAlong) / 2
+        return settled(chosen, sites, midway, fork, endAlong) ?: pointAtAlong(chosen, midway)
+    }
+
+    /**
+     * [desired] moved to the nearest position a pin may occupy, between the
+     * fork it commits and the next pin along. Null when this route has no
+     * placement rules to apply — the caller then keeps what it had, which is
+     * what this did before there were any.
+     */
+    private fun settled(
+        chosen: List<GeoPoint>,
+        sites: PinSites?,
+        desired: Double,
+        forkAlong: Double,
+        endAlong: Double,
+    ): GeoPoint? {
+        if (sites == null) return null
+        val at = sites.settle(
+            desired,
+            floor = forkAlong + PinSites.CLEARANCE_METERS,
+            ceiling = endAlong,
+        ) ?: return null
+        return pointAtAlong(chosen, at)
     }
 
     /** The point [target] metres along [line]. */

@@ -2693,3 +2693,61 @@ than up to three seconds later.
 view. An open sheet is over half the screen, and honouring that literally would
 frame two points into a sliver — worse than framing them behind the card, and
 the driver who wants the map has a handle to pull.
+
+---
+
+### F-53 · A waypoint is somewhere the car stops, not somewhere it passes
+
+*Reported mid-drive, 2026-08-22:*
+
+> Sometimes it can cause the car to pull into a driveway if a waypoint after a
+> turn ends up too close on the actual Tesla nav. The shunt waypoint was on a
+> turn directly after a turn. Another point had me navigating to a road parallel
+> to the planned route.
+
+Two symptoms, one cause, and the cause is a thing this project had written down
+in §6 and then not applied: **the car treats a waypoint as a destination.** It
+does not drive past one. It arrives — slows, looks for somewhere to stop, and
+pulls in. Every piece of pin machinery here was built around what a pin *means*
+to us (it commits a turn, it brackets a camera, it holds the line past a fork)
+and decided a position by measuring along the route. Nothing asked the other
+question: is this a place a car can sensibly stop?
+
+**The junction case.** `PAST_FORK_METERS` is 600 m on open road. That number
+comes from what commits a turn where the next junction is kilometres away. Put a
+turn at along X and another at X+300, and the pin for the first is placed at
+X+600 — three hundred metres *past* the second turn, on a road it was never
+meant to describe, in the middle of whatever junction happens to be there. The
+driver's phrasing is exact: "the shunt waypoint was on a turn directly after a
+turn". Then the car arrives at a junction and pulls into a driveway.
+
+The fix is a block rather than a distance: a turn pin belongs between its turn
+and the next one, `CLEARANCE_METERS` clear of both. Where two turns are too
+close to fit a pin between them, the first gets none — which is not a loss,
+because a point past the second turn is only reachable by making both, so it
+instructs both. That is strictly better than what was happening: the pin was
+already effectively past the second turn, just placed without knowing it.
+
+**The parallel-road case** is the snap, and it is worth being precise about what
+can and cannot be done. Our pin is a coordinate on our line. The car resolves it
+against *its* map, which has its own geometry, and picks the nearest road. A
+frontage road, a service road, or the far carriageway sits fifteen to thirty
+metres away — well inside the error either map is entitled to. `PinSites` now
+refuses a position with another line running 3–35 m away. The lower bound is not
+a tolerance: two routes over the same OSM way share its nodes, so a shared road
+reads as zero, and anything above a few metres is a genuinely different way.
+
+**What that cannot see is the road neither route uses.** There is no geometry
+for it in anything the planner holds. The honest answer is that this is a proxy
+for the real check — asking BRouter's own graph which ways lie near a point —
+and the proxy covers the cases the geometry does describe: the fastest line
+running alongside ours, which is where a detour around a camera puts us by
+construction, and our own line coming back near itself at a cloverleaf or a
+switchback. The real check is on the roadmap.
+
+**One thing worth noticing about the shape of this bug.** Both halves were
+invisible to every test and every benchmark, because both produce a route that
+is correct, a pin count that is reasonable, and a camera count that is right.
+The pin is *on the planned line* in both cases. Nothing about it is wrong until
+it reaches a car, which is why it took a drive to find, and why the fix is
+tested against geometry rather than against pin counts.

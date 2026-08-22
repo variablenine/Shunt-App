@@ -81,7 +81,7 @@ class PolylineIndex(
      * area searched — only then can nothing closer be hiding in a cell that was
      * not looked at.
      */
-    fun distanceMeters(p: GeoPoint): Double {
+    fun distanceMeters(p: GeoPoint, excluding: IntRange? = null): Double {
         if (line.size < 2 || bounds == null) return capMeters
         // Nowhere near the line at all: no need to walk rings over empty space.
         if (!bounds.expand(capMeters).contains(p)) return capMeters
@@ -91,6 +91,10 @@ class PolylineIndex(
             for (cell in grid.cellsAround(p, radius)) {
                 val segments = buckets[cell] ?: continue
                 for (i in segments) {
+                    // Skipping a run of segments is how "does this route come
+                    // back near itself somewhere else" is asked: without it the
+                    // answer is always zero, because the point is on the line.
+                    if (excluding != null && i in excluding) continue
                     val d = pointToSegmentMeters(p, line[i], line[i + 1])
                     if (d < best) best = d
                 }

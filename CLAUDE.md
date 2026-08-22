@@ -566,6 +566,63 @@ and the real DeFlock set, and cheap:
 | fewest-cameras | 59 pins | 110 |
 | pin phase | 5.6 s | 6.6 s |
 
+### A pin is a coordinate the car snaps, so it must be a sane place to stop
+
+Everything above decides *how far along the route* a pin should go. Nothing
+asked whether the resulting point was a sensible thing to hand a car, and two
+failures from a real drive are the same mistake:
+
+> Sometimes it can cause the car to pull into a driveway if a waypoint after a
+> turn ends up too close on the actual Tesla nav. The shunt waypoint was on a
+> turn directly after a turn. Another point had me navigating to a road parallel
+> to the planned route.
+
+- **On a junction.** The car treats a waypoint as a *destination*, so it
+  arrives: it slows, and it pulls in. Arriving in the middle of a junction means
+  the driveway or the side street. `PAST_FORK_METERS` is 600 m — derived from
+  what commits a turn on open road, where the next junction is kilometres away —
+  so wherever turn B follows turn A closely, the pin for A landed on or past B.
+  It stopped instructing A, started implying B, and sat on a junction.
+- **Beside another road.** A frontage road, a service road or the far
+  carriageway sits tens of metres from ours, and the car snaps our coordinate to
+  whichever *its* map calls nearest.
+
+`PinSites` is the gate every pin now passes, whatever made it — turn pins,
+camera guards, the shape pass, the refiner's forks. It is a property of the pin,
+not of the reason one was wanted, which is why it is one object shared by all of
+them rather than a rule in each.
+
+- **Clear of every turn** by `CLEARANCE_METERS` (60 m, about the monitor's
+  arrival radius — the distance at which the app already calls the pin reached).
+- **A turn pin lives in the block after its turn**, floor to the next turn's
+  ceiling. Where two turns are too close to fit one between them — a jog, a
+  Michigan left, a roundabout exit — **there is no pin for the first**, and that
+  is not a loss: the second turn's pin is only reachable by making both, so it
+  instructs both.
+- **Not beside a road we can see.** Ambiguous if another line runs between
+  `SAME_ROAD_METERS` and `AMBIGUITY_RADIUS_METERS` (3–35 m) away — below 3 m it
+  *is* our road, because two routes over the same OSM way share its nodes and
+  the distance is zero. Checked against the fastest route and against our own
+  line more than `AMBIGUITY_ALONG_METERS` away along it, which is the
+  cloverleaf, the switchback and the frontage road we route onto.
+
+`settle` slides a wanted position to the nearest one that qualifies, searching
+backwards before forwards — earlier is nearer the thing the pin was placed for,
+and a pin that has slid *past* its turn or its camera is no longer doing the job
+it was added for. Nothing in reach means **no pin**, which is the safe failure:
+a route with fewer pins is still the route we planned, still labelled and still
+warned about, while a pin on the wrong road actively steers the car off it.
+
+**This does not weaken the `lead ≤ spacing ≤ past-fork` bracket.** The monitor's
+lead is capped at `waypointLeadGapFraction` of the gap the pins were actually
+placed at, so a shorter block buys a shorter lead rather than a pin abandoned
+before its turn — and the turn-commit gate holds the advance until the bend is
+behind the car regardless.
+
+**What it cannot see is a parallel road neither route uses.** There is no
+geometry for it here. Answering that properly means asking BRouter's graph which
+ways lie near a point, which is engine work — see the roadmap. See F-53.
+
 ### Pins have to earn their place
 
 Pins arrive from two places and only one of them checked its work.
@@ -925,6 +982,15 @@ them, and add new observations as they come in. Detail lives in
    *the identical route it planned at the default* and labelled it with twenty
    cameras — announcing cameras it had made no attempt to dodge, which is worse
    than the setting doing nothing. Field note F-22.
+
+13. **A pin landed on a junction, and another beside a parallel road.**
+   *Fixed, unconfirmed on a drive.* Reported mid-drive: a waypoint just past a
+   turn that had another turn immediately after it made the car pull into a
+   driveway, and a second waypoint had the car navigating a road parallel to the
+   planned route. Both are one mistake — a position chosen for what it means to
+   us, handed to a car that snaps it to its own road graph and then *arrives* at
+   it. `PinSites` gates every pin on being clear of every turn and not beside a
+   road we can see. §6, "A pin is a coordinate the car snaps", and F-53.
 
 ### A watched destination is not a reason to give up
 
@@ -1830,6 +1896,13 @@ Ordered roughly by what unblocks real use.
   a stop inside the leg window is now the boundary, and `split` orders stops
   along the spine and carries every one into the leg it falls in. §6, "A stop
   inside the leg window is the boundary", and F-43.
+- **[high] Ask the road graph what is near a pin.** `PinSites` rejects a pin
+  beside a road it can *see* — the fastest route, or our own line coming back
+  near itself. It cannot see a frontage road neither route uses, which is
+  exactly the case a driver reported. BRouter has the ways in its tiles; what is
+  missing is a "which ways are within N metres of this point" query over
+  `NodesCache`, which would turn the geometric proxy into the real answer. See
+  F-53.
 - **Surface BRouter's own `indexInTrack` and snap distance.** `runRoute` throws
   away `track.matchedWaypoints`, which gives the exact index of each waypoint in
   the returned line, how far it had to snap to reach a road, and whether BRouter
