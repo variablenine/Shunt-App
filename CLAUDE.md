@@ -770,6 +770,39 @@ polyline's vertices say nothing about the road between them.** `alongOf`
 projects; `a sparse route line still measures progress inside a long hop` holds
 it there.
 
+### A command the car never got has to be sent again, from where you are now
+
+Reported from a drive: *"it doesn't try again if it fails to update the next
+waypoint due to no reception. It should try again with the correct next waypoint
+and fix itself if I'm ahead."*
+
+A failed `advanceTo` raised an urgent alert whose text said **"Retrying"** — and
+nothing in the system retried. The car kept the pin the driver was about to
+pass, and because a pin is a destination the car *arrives* at it: it stops
+steering the route and starts arriving at a point behind the driver.
+
+`DriveMonitor.unsent` carries the failure, and `retryUnsent` runs once per fix
+after the signals. Four things make it right rather than merely persistent:
+
+- **It re-asks, it does not replay.** The retry sends
+  `DriveMonitorEngine.remainingChain()` as it stands *now*. The engine advances
+  on GPS alone — it never needed the network — so by the time reception returns
+  the current pin may be two further on, and re-sending the coordinate that
+  failed would aim the car behind the driver. That is §6.1 in miniature.
+- **After the signals, not before.** Retrying first would use the engine's state
+  from before this fix, which is the stale answer again.
+- **Announced once per episode.** The failure is `Severity.URGENT` and
+  interrupts; repeating it every ten seconds for the length of a dead spot
+  teaches the driver to ignore it. The recovery *is* announced
+  (`Alert.AimRestored`), because otherwise the last thing they heard was that
+  route updates are failing.
+- **Only what is worth retrying.** `PushResult.Failed.retryable` decides. A
+  refusal the car will give again is not fixed by asking a fifth time, and
+  carrying it would leave a spinner up for the rest of the drive.
+
+`stoodDown` clears it like every other path to the car. An unsent aim is not a
+reason to re-earn control. See F-54.
+
 ### After touching the car's destination, put the aim back — always
 
 **From a real drive, and the most instructive kind of bug: every piece worked
@@ -991,6 +1024,14 @@ them, and add new observations as they come in. Detail lives in
    us, handed to a car that snaps it to its own road graph and then *arrives* at
    it. `PinSites` gates every pin on being clear of every turn and not beside a
    road we can see. §6, "A pin is a coordinate the car snaps", and F-53.
+
+14. **A waypoint update that failed was never tried again.** *Fixed,
+   unconfirmed on a drive.* Reported mid-drive: with no reception the advance
+   fails, and the car keeps the pin the driver is about to pass — which it then
+   *arrives* at. The alert said "Retrying" and nothing did. Retries now re-ask
+   the engine for the current pin rather than replaying the failed one, so a
+   driver who covered ground in the dead spot is caught up rather than sent
+   back. §6, "A command the car never got", and F-54.
 
 ### A watched destination is not a reason to give up
 

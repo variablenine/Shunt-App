@@ -110,6 +110,24 @@ class DriveMonitor(
     /** Shaping pins in the plan in force, for "waypoint 3 of 12". */
     private var totalPins = 0
 
+    /**
+     * What could not be got to the car, if anything.
+     *
+     * **A failed update used to be announced and then forgotten**, which is the
+     * bug: out of reception the advance fails, the car keeps the pin the driver
+     * is about to pass, and nothing ever tries again. The alert even said
+     * "Retrying" — it was the only part of the system that thought so. Reported
+     * from a drive: "it doesn't try again if it fails to update the next
+     * waypoint due to no reception."
+     */
+    private var unsent: Unsent? = null
+
+    /** When the last attempt to get the aim to the car was made. */
+    private var lastAimAttemptAt = 0L
+
+    /** Which call could not be delivered. Retried with fresh points, not replayed. */
+    private enum class Unsent { ADVANCE, PUSH }
+
     suspend fun run(plan: DrivePlan, locations: Flow<LocationUpdate>) {
         steering = plan.steerByWaypoints
         totalPins = (plan.chain.size - 1).coerceAtLeast(0)
@@ -213,6 +231,14 @@ class DriveMonitor(
                         }
                     }
                 }
+                // Anything that could not be got to the car earlier, tried again
+                // — **after** the signals, so it retries against where the
+                // driver is now rather than where they were when it failed. The
+                // engine advances on GPS alone and never needed the network to
+                // do it, so by the time reception returns the current pin may be
+                // two further on. A retry that succeeded here has already
+                // cleared itself, so this is a no-op on an ordinary fix.
+                retryUnsent(engine)
                 // Standing down has to cover the charging probe too. It re-asserts
                 // the destination to ask its question, which is exactly the kind
                 // of push the driver was fighting.
@@ -468,10 +494,13 @@ class DriveMonitor(
     private suspend fun push(chain: List<GeoPoint>) {
         if (stoodDown) return
         val sending = aim(chain)
+        lastAimAttemptAt = nowMillis()
         val pushed = runCatching { vehicle.pushRoute(sending) }
             .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
         if (pushed is PushResult.Failed) {
-            alerter.alert(Alert.AdvanceFailed(sending, pushed.reason, pushed.retryable))
+            reportUnsent(Unsent.PUSH, sending, pushed)
+        } else {
+            reportSent()
         }
     }
 
@@ -509,10 +538,13 @@ class DriveMonitor(
     private suspend fun reaim(remaining: List<GeoPoint>) {
         if (!steering || stoodDown || remaining.isEmpty()) return
         val sending = aim(remaining)
+        lastAimAttemptAt = nowMillis()
         val result = runCatching { vehicle.advanceTo(sending) }
             .getOrElse { e -> PushResult.Failed("re-aim threw: ${e.message}", retryable = true) }
         if (result is PushResult.Failed) {
-            alerter.alert(Alert.AdvanceFailed(sending, result.reason, result.retryable))
+            reportUnsent(Unsent.ADVANCE, sending, result)
+        } else {
+            reportSent()
         }
     }
 
@@ -521,14 +553,92 @@ class DriveMonitor(
         val sending = aim(remaining)
         // Numbered from the driver's point of view: how many of this plan's pins
         // are behind them, out of how many there were.
-        onActivity(DriveActivity.SendingWaypoint(totalPins - remaining.size + 1, totalPins))
+        val number = totalPins - remaining.size + 1
+        onActivity(DriveActivity.SendingWaypoint(number, totalPins))
+        lastAimAttemptAt = nowMillis()
         val result = runCatching { vehicle.advanceTo(sending) }
             .getOrElse { e -> PushResult.Failed("advance threw: ${e.message}", retryable = true) }
-        onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
         if (result is PushResult.Failed) {
-            // Loud: the car may still stop at the waypoint we failed to drop.
+            reportUnsent(Unsent.ADVANCE, sending, result)
+            onActivity(idleActivity(number))
+        } else {
+            reportSent()
+            onActivity(idleActivity(number))
+        }
+    }
+
+    /**
+     * Try again to get the car onto the pin it should be aiming at.
+     *
+     * **The point is that it re-asks rather than replays.** By the time
+     * reception comes back the driver may be two pins further on — the engine
+     * advances on GPS alone and never needed the network to do it — so
+     * retrying the coordinate that failed would aim the car at somewhere behind
+     * them, which is the §6.1 failure in miniature. [DriveMonitorEngine.remainingChain]
+     * is asked fresh every time, so a retry is always the *current* pin. That is
+     * also why the retry is silent about which attempt it is: from the car's
+     * point of view there is only ever one aim, and this is it.
+     *
+     * Rationed to [AIM_RETRY_INTERVAL_MILLIS], because with no reception this
+     * would otherwise run at the GPS fix rate for as long as the dead spot
+     * lasts. Not so slow that recovery is late: at highway speed the interval is
+     * well inside the gap between pins.
+     */
+    private suspend fun retryUnsent(engine: DriveMonitorEngine) {
+        val pending = unsent ?: return
+        // §6.1 covers this path like every other. A monitor that kept trying to
+        // command the car after standing down would be back to fighting it, and
+        // an unsent aim is not a reason to re-earn control.
+        if (stoodDown) {
+            unsent = null
+            return
+        }
+        if (nowMillis() - lastAimAttemptAt < AIM_RETRY_INTERVAL_MILLIS) return
+        val remaining = engine.remainingChain()
+        if (remaining.isEmpty()) {
+            // Nothing left to steer to. The drive is at its end and the car has
+            // the destination; there is no aim left to be wrong about.
+            unsent = null
+            return
+        }
+        val number = totalPins - remaining.size + 1
+        onActivity(DriveActivity.RetryingWaypoint(number, totalPins))
+        when (pending) {
+            Unsent.ADVANCE -> advance(remaining)
+            // A route the car never received. Sending what is *left* of it
+            // rather than the whole thing is both correct and necessary: a
+            // single-destination car collapses a chain to its last point, and
+            // the points already driven are not part of the trip any more.
+            Unsent.PUSH -> push(remaining)
+        }
+    }
+
+    private fun reportUnsent(kind: Unsent, sending: List<GeoPoint>, result: PushResult.Failed) {
+        // Announced once per episode, not once per attempt. The failure is
+        // urgent and interrupts; repeating it every retry for the length of a
+        // dead spot would teach the driver to ignore it.
+        if (unsent == null) {
             alerter.alert(Alert.AdvanceFailed(sending, result.reason, result.retryable))
         }
+        // Only a retryable failure is worth carrying. A refusal the car will
+        // give again is not going to be fixed by asking a fifth time, and
+        // pretending otherwise leaves a spinner up for the rest of the drive.
+        unsent = if (result.retryable) kind else null
+    }
+
+    private fun reportSent() {
+        if (unsent == null) return
+        unsent = null
+        // The failure was announced urgently and promised a retry, so the
+        // recovery is announced too — otherwise the last thing the driver heard
+        // was that route updates are failing.
+        alerter.alert(Alert.AimRestored)
+    }
+
+    private fun idleActivity(number: Int): DriveActivity = when {
+        stoodDown -> DriveActivity.StoodDown
+        unsent != null -> DriveActivity.RetryingWaypoint(number, totalPins)
+        else -> DriveActivity.Watching
     }
 
     private companion object {
@@ -541,6 +651,16 @@ class DriveMonitor(
         /** See [DriveMonitorBounds]. */
         const val ABANDONED_STRETCH_METERS = DriveMonitorBounds.ABANDONED_STRETCH_METERS
         const val ABANDONED_SPACING_METERS = DriveMonitorBounds.ABANDONED_SPACING_METERS
+
+        /**
+         * How long to leave it before trying the car again after a failure.
+         *
+         * With no reception the alternative is one attempt per GPS fix for as
+         * long as the dead spot lasts. Ten seconds is a few hundred metres at
+         * highway speed — well inside the gap between pins, so a recovery is
+         * never more than a fraction of a leg late.
+         */
+        const val AIM_RETRY_INTERVAL_MILLIS = 10_000L
 
         const val MAX_REPLANS_IN_WINDOW = 3
         const val REPLAN_WINDOW_MILLIS = 5 * 60_000L

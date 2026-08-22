@@ -244,6 +244,17 @@ sealed interface Alert {
         override val severity get() = Severity.URGENT
     }
 
+    /**
+     * The car is aimed at the right waypoint again after a failed update.
+     *
+     * The failure is announced urgently and promises a retry, so the recovery
+     * has to be announced too — otherwise the last thing the driver was told is
+     * that route updates are failing, and they have no way to know it stopped.
+     */
+    data object AimRestored : Alert {
+        override val severity get() = Severity.INFO
+    }
+
     data object Arrived : Alert {
         override val severity get() = Severity.INFO
     }
@@ -288,6 +299,15 @@ sealed interface DriveActivity {
 
     /** Moving the car's aim on to the next shaping pin. */
     data class SendingWaypoint(val number: Int, val total: Int) : DriveActivity
+
+    /**
+     * The car could not be reached, and Shunt is still trying.
+     *
+     * Distinct from [SendingWaypoint] because it means something different to a
+     * driver: not "a command is in flight" but "the car does not have the right
+     * waypoint yet". Out of reception that state can last minutes.
+     */
+    data class RetryingWaypoint(val number: Int, val total: Int) : DriveActivity
 
     /** Asking the car whether it has inserted a charging stop. */
     data object CheckingCharging : DriveActivity

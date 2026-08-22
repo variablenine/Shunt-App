@@ -84,6 +84,106 @@ class DriveMonitorTest {
     }
 
     @Test
+    fun `a waypoint the car never received is sent again`() = runTest {
+        // Reported from a drive: "it doesn't try again if it fails to update the
+        // next waypoint due to no reception." The alert even promised a retry.
+        val fake = FakeVehicleNavClient(
+            FakeVehicleNavClient.Behavior(
+                failOnCalls = setOf(1),
+                failure = PushResult.Failed("vehicle offline", retryable = true),
+            ),
+        )
+        val alerter = RecordingAlerter()
+        var now = 0L
+        val monitor = DriveMonitor(fake, alerter, nowMillis = { now })
+
+        monitor.run(
+            plan(),
+            ticking(
+                { now += 15_000 },
+                west(w1, 1000.0), west(w1, 300.0), west(w2, 1000.0), west(w2, 300.0), west(dest, 30.0),
+            ),
+        )
+
+        val advances = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+        assertEquals(
+            listOf(listOf(w2, dest), listOf(w2, dest), listOf(dest)),
+            advances.map { it.waypoints },
+            "the failed drop should have been sent again",
+        )
+        assertEquals(1, alerter.alerts.filterIsInstance<Alert.AdvanceFailed>().size)
+        assertEquals(1, alerter.alerts.count { it == Alert.AimRestored })
+    }
+
+    @Test
+    fun `the retry sends the pin the driver is on now, not the one that failed`() = runTest {
+        // The whole point. The engine advances on GPS alone — it never needed
+        // the network — so by the time reception comes back the car should be
+        // aimed at where the driver *is*, not at a pin they drove past in the
+        // dead spot. Replaying the failed coordinate would aim the car behind
+        // them, which is the §6.1 failure in miniature.
+        val fake = FakeVehicleNavClient(
+            FakeVehicleNavClient.Behavior(
+                failOnCalls = setOf(1, 2),
+                failure = PushResult.Failed("vehicle offline", retryable = true),
+            ),
+        )
+        val alerter = RecordingAlerter()
+        var now = 0L
+        val monitor = DriveMonitor(fake, alerter, nowMillis = { now })
+
+        monitor.run(
+            plan(),
+            ticking(
+                { now += 15_000 },
+                west(w1, 1000.0), west(w1, 300.0), west(w2, 300.0), west(dest, 500.0), west(dest, 30.0),
+            ),
+        )
+
+        val advances = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+        assertEquals(3, advances.size, "two failures and one retry: ${advances.map { it.waypoints }}")
+        assertEquals(listOf(dest), advances.last().waypoints, "the retry must use the current pin")
+        // One announcement per episode, not one per attempt: repeating an urgent
+        // alert for the length of a dead spot teaches the driver to ignore it.
+        assertEquals(1, alerter.alerts.filterIsInstance<Alert.AdvanceFailed>().size)
+    }
+
+    @Test
+    fun `a failure the car will give again is not retried forever`() = runTest {
+        val fake = FakeVehicleNavClient(
+            FakeVehicleNavClient.Behavior(
+                failOnCalls = setOf(1),
+                failure = PushResult.Failed("unsupported", retryable = false),
+            ),
+        )
+        var now = 0L
+        val monitor = DriveMonitor(fake, RecordingAlerter(), nowMillis = { now })
+
+        monitor.run(
+            plan(),
+            ticking(
+                { now += 15_000 },
+                west(w1, 1000.0), west(w1, 300.0), west(w2, 1000.0), west(w2, 300.0), west(dest, 30.0),
+            ),
+        )
+
+        val advances = fake.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+        assertEquals(
+            listOf(listOf(w2, dest), listOf(dest)),
+            advances.map { it.waypoints },
+            "asking a fifth time will not change a refusal",
+        )
+    }
+
+    /** The fixes, with [tick] run before each — a clock that moves as the car does. */
+    private fun ticking(tick: () -> Unit, vararg points: GeoPoint) = kotlinx.coroutines.flow.flow {
+        for (p in points) {
+            tick()
+            emit(fix(p))
+        }
+    }
+
+    @Test
     fun `camera warnings fire from the cached set with no vehicle interaction`() = runTest {
         val cam = Camera(9, GeoPoint(33.0, -96.985), mapOf("manufacturer" to "Flock Safety"))
         val fake = FakeVehicleNavClient()

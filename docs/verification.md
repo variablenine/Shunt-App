@@ -1066,6 +1066,29 @@ Dropping the first of a close pair is deliberate, and the second holds both.
 
 ---
 
+### A13 · A waypoint that fails to send is sent again, from where you are
+
+*Never seen on a drive — 2026-08-22. See F-54.*
+
+**Provoke it.** Drive a pinned route into a dead spot, or turn the phone's data
+off for a minute while a pin is due to advance.
+
+**Expect:** the urgent "Route update failed" alert **once**, not once every ten
+seconds. The driving card shows "Can't reach the car — retrying waypoint N".
+When signal returns, "Waypoint sent. Back in step." and the card goes back to
+watching.
+
+**The thing that matters most.** If you covered ground during the outage —
+passed one or more pins — the waypoint the car ends up aiming at must be the one
+**ahead** of you, not the one that failed. Check the car's own screen names a
+point you have not yet reached. Aiming the car at a pin behind you is the
+failure this was written to prevent, and under FSD it is a real one.
+
+**Also check:** after standing down (§6.1), a pending retry stops. Nothing
+should reach the car once Shunt has handed it back.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

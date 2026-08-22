@@ -2751,3 +2751,48 @@ is correct, a pin count that is reasonable, and a camera count that is right.
 The pin is *on the planned line* in both cases. Nothing about it is wrong until
 it reaches a car, which is why it took a drive to find, and why the fix is
 tested against geometry rather than against pin counts.
+
+---
+
+### F-54 · The alert said "Retrying" and nothing retried
+
+*Reported mid-drive, 2026-08-22:*
+
+> It doesn't try again if it fails to update the next waypoint due to no
+> reception. It should try again with the correct next waypoint and fix itself
+> if I'm ahead.
+
+`advance` caught the failure, raised `Alert.AdvanceFailed`, and returned. The
+alert's own spoken text was *"Route update failed. Retrying."* — the only part
+of the system that believed a retry existed. Nothing did.
+
+**Why this is worse than it sounds.** The car does not hold a route, it holds a
+*destination*. So a failed advance does not mean "the car is slightly behind"; it
+means the car is still aiming at a point the driver is about to pass, and when it
+reaches that point it will do what it does at a destination — stop steering the
+route and arrive. Every consequence downstream follows from that: the driver
+leaves the shaped route, which reads as off-route, which re-plans.
+
+**The interesting half is the driver's second sentence.** "The correct next
+waypoint" and "fix itself if I'm ahead" are the requirement, and they rule out
+the obvious implementation. Queue the failed call and send it when the network
+returns, and after two minutes in a dead spot you aim the car at a pin a mile
+behind — actively steering it backwards, at a junction, under driver assistance.
+The retry has to ask *the engine* what the current pin is, not remember what it
+was trying to send. The engine advances from GPS alone and never needed the
+network, so its answer is already correct; nothing has to be reconstructed.
+
+That is also why the retry runs after the fix's signals rather than before.
+Before, and it reads the engine's state from the previous fix — the stale answer
+by one step, which is the same bug with a smaller number.
+
+**Two things that are about the driver rather than the car.** The failure alert
+fires once per episode, not once per attempt: an urgent interruption every ten
+seconds for the length of a dead spot is one people learn to talk over. And the
+recovery is announced, because an urgent alert that promises a retry leaves the
+driver with no way to know it stopped.
+
+**And one thing deliberately not retried.** A non-retryable failure — the car
+refusing a command it does not support — is dropped rather than carried.
+Retrying it forever costs nothing in traffic terms but leaves "can't reach the
+car" on screen for the rest of the trip, which is a lie about what is wrong.

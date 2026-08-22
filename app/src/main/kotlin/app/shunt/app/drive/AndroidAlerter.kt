@@ -73,6 +73,7 @@ class AndroidAlerter(
         }
         is Alert.AdvanceFailed ->
             "Route update failed. " + if (alert.retryable) "Retrying." else "The car may stop at the waypoint."
+        Alert.AimRestored -> "Waypoint sent. Back in step."
         is Alert.OffRoute ->
             "Off the planned route. " + if (alert.replanning) "Finding a new one." else "Camera avoidance is not active."
         is Alert.Replanned ->
@@ -119,6 +120,11 @@ class AndroidAlerter(
                     null -> {}
                 }
             },
+        )
+        Alert.AimRestored -> Triple(
+            FAILURE_NOTIF,
+            "Waypoint sent",
+            "The car has the right waypoint again.",
         )
         is Alert.AdvanceFailed -> Triple(
             FAILURE_NOTIF,

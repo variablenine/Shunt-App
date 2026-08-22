@@ -829,6 +829,8 @@ private fun activityLabel(activity: DriveActivity): String = when (activity) {
     is DriveActivity.Watching -> "Watching for cameras"
     is DriveActivity.SendingWaypoint ->
         "Sending waypoint ${activity.number} of ${activity.total} to the car"
+    is DriveActivity.RetryingWaypoint ->
+        "Can't reach the car — retrying waypoint ${activity.number}"
     is DriveActivity.CheckingCharging -> "Asking your car about charging"
     is DriveActivity.Replanning -> "Re-planning from here"
     is DriveActivity.StoodDown -> "Not steering — the car is yours"

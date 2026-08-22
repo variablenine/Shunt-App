@@ -186,6 +186,8 @@ class DriveMonitorService : Service() {
 private fun describe(activity: DriveActivity): String = when (activity) {
     DriveActivity.Watching -> "watching for cameras"
     is DriveActivity.SendingWaypoint -> "sending waypoint ${activity.number} of ${activity.total}"
+    is DriveActivity.RetryingWaypoint ->
+        "retrying waypoint ${activity.number} of ${activity.total} — the car could not be reached"
     DriveActivity.CheckingCharging -> "asking the car about charging"
     DriveActivity.Replanning -> "re-planning"
     DriveActivity.StoodDown -> "stood down — no longer commanding the car"
