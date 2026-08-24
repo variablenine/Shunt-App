@@ -1297,6 +1297,13 @@ them, and add new observations as they come in. Detail lives in
    with the choice the pin existed to remove still open. §6, "A turn is
    committed once it is behind you", and F-62.
 
+32. **A leg extension restarted along-route progress at zero.** *Fixed,
+   unconfirmed on a drive.* A replacement engine begins at the start of its
+   line, and an extension's line is the leg being driven plus the new one — so
+   progress had to creep tens of kilometres. Nothing advanced while it did, then
+   every pin behind the car fired at once. §6, "A replacement engine has to be
+   told where the car already is", and F-63.
+
 ### A watched destination is not a reason to give up
 
 BRouter refuses a route that begins or ends inside a zone it has been told is
@@ -1763,6 +1770,32 @@ segment it is on is always a candidate however long it is. Three separate
 symptoms, one arithmetic mistake, and the marks on the map were the honest
 witness that found it.
 
+### A replacement engine has to be told where the car already is
+
+Every extension, re-plan and charging leg builds a fresh `DriveMonitorEngine`,
+and a fresh engine's `progressSegment` starts at **0**. For a re-plan or a
+charging leg that is right — the new line starts where the car is. For an
+*extension* it is badly wrong: `extend` gives the new engine the leg already
+being driven **plus** the new one, so the car can be tens of kilometres along a
+line the engine thinks it has not started.
+
+Progress is windowed and forward-only, so it then creeps. For as long as that
+takes, every pin reads as far ahead and nothing advances — and when progress
+catches up, every pin now behind the car fires on consecutive fixes. That is
+*"skipped two waypoints ahead and triggered early"*, and it survived all three
+earlier trigger fixes because none of them touched where progress *starts*.
+
+`startSegment` carries the previous engine's position across, and the caller
+decides whether to: an extension's line has the old one as a prefix, so the index
+still means what it meant. **The engine must not work this out for itself** — a
+route that comes back near itself has two places the car could plausibly be, and
+picking the wrong one is F-49b, the whole chain flushed at once.
+
+The forward step is also bounded by the ground actually covered since the last
+fix rather than a flat kilometre. A kilometre is thirty times a second's driving,
+which is enough slack to put several pins behind the car in one fix wherever the
+route runs near itself.
+
 ### The address is what the car resolves, not the point
 
 `share` hands the car a **string** and lets the car work out what it means. Given
@@ -1779,6 +1812,15 @@ IL"`, and `Destination.title` carries it the whole way. It was being thrown away
 in favour of the coordinate. `TessieVehicleNavClient.postalAddress` sends it
 instead, with the coordinate forms kept as fallbacks so a car that will not
 resolve the address is no worse off than before.
+
+**Charging stops go the same way.** A charger the car inserted arrives named
+however Tesla feels like naming it — "Supercharger", or nothing — which is no
+more specific than a coordinate. `ChargeStopCoordinator.addressFor` reverse
+geocodes the charger's own position and sends "Supercharger, 1200 Some Road,
+Town": the business and where it is. Only the *pushed* title changes; the driving
+sheet and the alerts still use the car's own name, so "Charging first at
+Supercharger" reads as it did. With no namer, or a lookup that fails, the
+charger's name is used exactly as before.
 
 **Only when it really looks like an address.** A favourite called "Home", or a
 long-pressed point named after the nearest hamlet, would be a *worse* thing to

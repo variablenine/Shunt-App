@@ -3380,3 +3380,65 @@ junction is exactly that state. Sixty metres past, the turn is made.
 Worth noting that this only became visible *because* the marks had been fixed to
 tell the truth. A drawing that was already wrong by the length of a segment would
 have hidden it.
+
+---
+
+### F-63 · Where progress *starts*, which none of the earlier fixes touched
+
+*Reported after three separate trigger fixes had shipped:* *"Still had the same
+issue where it skipped two waypoints ahead and triggered early."*
+
+The three before this were all real — the window anchored at the segment start
+(F-61), the marks rounded to a vertex and the pins snapped to one (F-62), the
+commit gate at the bend rather than past it. None of them touched the thing that
+was still wrong, and the reason is worth recording: they were all about how
+progress *moves*. This one is about where it *begins*.
+
+`newEngine` builds a fresh `DriveMonitorEngine` for every extension, re-plan and
+charging leg, and a fresh engine starts at `progressSegment = 0`. For a re-plan
+that is correct — the new line starts at the car. For an **extension** it is not:
+`extend` hands over the leg already being driven *plus* the leg that just landed,
+so the polyline begins where the trip began and the car is somewhere in the
+middle of it.
+
+Progress is forward-only and windowed, so from zero it crawls. While it crawls
+every pin reads as still far ahead and nothing advances; when it arrives, every
+pin now behind the car satisfies its lead and fires one per fix. Both halves of
+"skipped two waypoints ahead and triggered early", from one line.
+
+**The fix is a seed, and the interesting part is who supplies it.** The obvious
+move — have the engine find the car on its own line at the first fix — is F-49b
+exactly: a route that comes back near itself gives two plausible answers, and the
+wrong one flushes the whole chain. There is a test for that, and it caught the
+attempt. The caller knows what the engine cannot: whether the new line *extends*
+the old one, in which case the old index still means what it meant, or *replaces*
+it, in which case zero is right. So `DriveMonitor` passes `startSegment` and the
+engine never guesses.
+
+The forward step is now bounded by ground actually covered since the last fix
+instead of a flat kilometre — thirty times a second's driving was enough slack to
+skip several pins in one go wherever the route runs near itself.
+
+**Four trigger bugs, four fixes, and they were genuinely four bugs.** The
+temptation on the fourth report was to assume the third fix had not landed. What
+made the difference was asking what each fix could *not* explain: none of them
+had anything to say about the first fix after a leg landed.
+
+---
+
+### F-64 · The charger, sent as an address
+
+*Asked for once the destination fix was confirmed:* *"That final destination fix
+worked perfectly… Just to clean it up lets implement that same fix for the
+charging checking as well."*
+
+Straightforward, and worth the note only for what is *not* changed. A charger the
+car inserts is reported with whatever name Tesla gives it — "Supercharger", often
+nothing — which is no more resolvable than a coordinate. `addressFor` reverse
+geocodes the charger's own position and pushes "Supercharger, 1200 Some Road,
+Town".
+
+Only the pushed title moves. The driving sheet's banner and the spoken alerts
+take `ChargeStop.name` directly, so "Charging first at Supercharger" still reads
+as a place rather than a postal address — which is the right split, since one is
+for the car's geocoder and the other is for a person glancing at a phone.

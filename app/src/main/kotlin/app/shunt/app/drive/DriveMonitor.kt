@@ -208,7 +208,7 @@ class DriveMonitor(
                     // Inherits what has already been announced: an extension is
                     // the same drive continuing, so a camera warned about on the
                     // first leg must not be warned about again.
-                    engine = newEngine(current, engine)
+                    engine = newEngine(current, engine, carryProgress = true)
                     totalPins = (current.chain.size - 1).coerceAtLeast(0)
                     onPlanChanged(current)
                     // **An extension is normally invisible to the car** — it
@@ -437,15 +437,26 @@ class DriveMonitor(
      * Leave it out where the replacement is a genuinely new stretch of road, so
      * a camera met again there is announced again.
      */
-    private fun newEngine(plan: DrivePlan, previous: DriveMonitorEngine? = null) =
-        DriveMonitorEngine(
-            plan.chain,
-            plan.cameras,
-            config,
-            plan.polyline,
-            plan.stopPoints,
-            alreadyWarned = previous?.warnedTiers.orEmpty(),
-        )
+    /**
+     * [carryProgress] is for an engine whose line *extends* the previous one, so
+     * the car's position along it is unchanged and the index still means what it
+     * meant. A re-plan or a charging leg gets a brand-new line that starts where
+     * the car is, so progress starts at zero there and must: carrying an index
+     * into an unrelated line would place the car anywhere.
+     */
+    private fun newEngine(
+        plan: DrivePlan,
+        previous: DriveMonitorEngine? = null,
+        carryProgress: Boolean = false,
+    ) = DriveMonitorEngine(
+        plan.chain,
+        plan.cameras,
+        config,
+        plan.polyline,
+        plan.stopPoints,
+        alreadyWarned = previous?.warnedTiers.orEmpty(),
+        startSegment = if (carryProgress) previous?.progressAt ?: 0 else 0,
+    )
 
     /**
      * Re-plan from [from] and put the new route in force, pushing it to the

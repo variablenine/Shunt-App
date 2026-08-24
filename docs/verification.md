@@ -1364,6 +1364,35 @@ screenshot showing a ring and the car together.
 
 ---
 
+### A19 · A leg landing mid-drive does not disturb the waypoints
+
+*Never seen on a drive — 2026-08-24. See F-63.*
+
+**Provoke it.** Drive a trip long enough to be split, and watch the waypoints
+around the moment a later leg lands (the map's line grows toward the
+destination).
+
+**Expect:** nothing changes. The pin the car is aiming at stays the same, the
+next advance fires at its ring as usual.
+
+**The failure:** a minute of no advances at all, then two or three waypoints sent
+in quick succession. That is progress restarting at the beginning of the line and
+catching up.
+
+### D20 · A charging stop reaches the car as an address
+
+*Never verified on a vehicle — 2026-08-24. See F-64.*
+
+**Provoke it.** Let the car insert a Supercharger on a long trip, on a car that
+only accepts one destination.
+
+**Expect:** the car's screen names the charger and its street, not a coordinate
+or a point near it. The app's own banner still says "Charging first at
+Supercharger" — that one is for you, not for the car's geocoder, and it is
+supposed to stay short.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

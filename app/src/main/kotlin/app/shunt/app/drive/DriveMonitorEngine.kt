@@ -43,6 +43,26 @@ class DriveMonitorEngine(
     private val stopPoints: Set<GeoPoint> = emptySet(),
     /** Tiers already announced by the engine this one replaces. See [warnedTiers]. */
     alreadyWarned: Map<Long, Int> = emptyMap(),
+    /**
+     * Where along [routePolyline] the car already is, when this engine replaces
+     * one whose line this extends.
+     *
+     * **A replacement engine starts at the beginning of its line, and the car
+     * does not.** An extension's polyline is the leg already being driven *plus*
+     * the new one, so the car can be tens of kilometres along it — and progress
+     * starting at zero can only creep forward a fix at a time. For the minute
+     * that takes, every pin reads as still far ahead and nothing advances; then
+     * progress catches up and every pin now behind the car fires on consecutive
+     * fixes. That is the reported "skipped two waypoints ahead and triggered
+     * early".
+     *
+     * The caller passes it rather than the engine searching for it, and that is
+     * deliberate: a route that comes back near itself has two places the car
+     * could plausibly be, and picking the wrong one is F-49b — the whole chain
+     * flushed at once. `DriveMonitor` knows which case it is, because it knows
+     * whether the new line extends the old one or replaces it.
+     */
+    startSegment: Int = 0,
 ) {
     init {
         require(chain.isNotEmpty()) { "drive chain must have at least the destination" }
@@ -633,7 +653,13 @@ class DriveMonitorEngine(
      * instead, which is the safe direction — progress stops rather than
      * inventing itself, and off-route detection is what handles that case.
      */
-    private var progressSegment = 0
+    private var progressSegment = startSegment.coerceAtLeast(0)
+
+    /** How far along the route progress has got, for an engine that replaces this one. */
+    internal val progressAt: Int get() = progressSegment
+
+    /** Where the car was on the previous fix, to bound how far progress may move. */
+    private var lastFixPoint: GeoPoint? = null
 
     /**
      * Move [progressSegment] to the best match ahead of where it already is,
@@ -669,7 +695,16 @@ class DriveMonitorEngine(
         // positions, so they stayed right while the behaviour drifted — "waypoint
         // triggering overall just doesn't seem to line up with the map".
         val here = alongOf(p)
-        val limit = here + PROGRESS_WINDOW_METERS
+        // **Bounded by how far the car can actually have gone.** A fixed
+        // kilometre is thirty times a second's driving, which is enough slack
+        // for progress to skip several pins in one fix wherever the route comes
+        // back near itself. What the car has covered since the last fix is the
+        // honest bound, with a floor so a stationary or jittery fix can still
+        // settle onto the right segment.
+        val travelled = lastFixPoint?.let { haversineMeters(it, p) } ?: PROGRESS_WINDOW_METERS
+        lastFixPoint = p
+        val limit = here + maxOf(PROGRESS_MIN_STEP_METERS, travelled * PROGRESS_STEP_FACTOR)
+            .coerceAtMost(PROGRESS_WINDOW_METERS)
         var best = Double.MAX_VALUE
         var bestIndex = from
         var i = from
@@ -718,7 +753,7 @@ class DriveMonitorEngine(
         return if (diff >= 0) Side.RIGHT else Side.LEFT
     }
 
-    private companion object {
+    internal companion object {
         /** Segments to search behind/ahead of the last match on each fix. */
         const val WINDOW_BEHIND = 50
         const val WINDOW_AHEAD = 400
@@ -731,6 +766,12 @@ class DriveMonitorEngine(
          */
         /** Vertices of bend nearer than this are one corner, not several. */
         const val TURN_MERGE_METERS = 40.0
+
+        /** Progress may always settle at least this far ahead, however slow. */
+        const val PROGRESS_MIN_STEP_METERS = 150.0
+
+        /** ...and otherwise no further than this multiple of the ground covered. */
+        const val PROGRESS_STEP_FACTOR = 3.0
 
         const val PROGRESS_WINDOW_METERS = 1_000.0
     }

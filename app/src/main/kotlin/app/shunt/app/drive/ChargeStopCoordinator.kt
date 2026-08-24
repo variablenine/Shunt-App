@@ -106,6 +106,21 @@ class ChargeStopCoordinator(
      * simply never reports a charging stop.
      */
     private val steering: Boolean = false,
+    /**
+     * An address for a coordinate, when the car's own name for a charger is not
+     * one.
+     *
+     * **The same fix as the trip's destination, applied here.** `share` hands the
+     * car a string, and a coordinate tells it nothing about which site is meant —
+     * so a charging stop arrives as a point near the charger rather than the
+     * charger. What the car reports as its destination name ("Supercharger", or
+     * nothing at all) is usually not specific enough to send either. Reverse
+     * geocoding the charger's own coordinate gives the address that is.
+     *
+     * Optional: with no namer, or a lookup that fails, the charger's name is
+     * used exactly as it was before.
+     */
+    private val nameFor: (suspend (GeoPoint) -> String?)? = null,
     /** How long to let the car settle on a route after re-asserting the destination. */
     private val settleMillis: Long = 8_000,
     private val pause: suspend (Long) -> Unit = { delay(it) },
@@ -269,12 +284,30 @@ class ChargeStopCoordinator(
         // still driven, just on the other leg.
         val toCharger = haversineMeters(from, stop.at)
         val (before, beyond) = remainingStops.partition { haversineMeters(from, it) < toCharger }
-        val destination = Destination(stop.name, stop.at)
+        val destination = Destination(addressFor(stop), stop.at)
         val plan = runCatching { planLeg(from, before, destination, headingDegrees) }.getOrNull()
             ?: return LegChange.Unroutable(stop)
         stopsBeyondCharger = beyond
         leg = Leg.ToChargeStop(stop)
         return LegChange.ToChargeStop(stop, plan)
+    }
+
+    /**
+     * The most specific thing we can say about where this charger is.
+     *
+     * Only the *pushed* title changes — the charger's own name is what the
+     * driving sheet and the alerts use, so "Charging first at Supercharger"
+     * still reads as it did.
+     */
+    private suspend fun addressFor(stop: ChargeStop): String {
+        val named = stop.name.takeIf { it.isNotBlank() && it != ChargeStopReading.UNNAMED_STOP }
+        // Already specific enough to hand the car: a name and a place.
+        if (named != null && named.split(',').count { it.isNotBlank() } >= 2) return named
+        val address = nameFor?.let { runCatching { it(stop.at) }.getOrNull() } ?: return stop.name
+        if (address.isBlank()) return stop.name
+        // "Tesla Supercharger, 1200 Some Road, Town" — the business and where it
+        // is, which is what a person would type and what the car resolves.
+        return if (named != null && !address.startsWith(named)) "$named, $address" else address
     }
 
     private suspend fun resumeToDestination(

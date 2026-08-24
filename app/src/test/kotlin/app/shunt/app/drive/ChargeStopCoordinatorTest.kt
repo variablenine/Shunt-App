@@ -522,4 +522,67 @@ class ChargeStopCoordinatorTest {
             "a failed plan threw the carried stop away: ${plannedWith.last()}",
         )
     }
+
+    @Test
+    fun `a charger is pushed as an address, not a point`() = runTest {
+        // The same fix as the trip's destination: `share` hands the car a
+        // string, and a coordinate cannot say which site is meant — so a
+        // charging stop arrived as a point near the charger.
+        val vehicle = FakeVehicleNavClient()
+        val planned = mutableListOf<Destination>()
+        val reads = mutableListOf<ActiveRoute?>(navigatingTo(charger, name = "Supercharger"))
+        val coordinator = ChargeStopCoordinator(
+            vehicle = vehicle,
+            readActiveRoute = { reads.removeFirstOrNull() },
+            planLeg = { _, _, to, _ -> planned += to; planFor(to) },
+            pause = {},
+            nameFor = { "1200 Some Road, Springfield, IL" },
+        )
+
+        val change = coordinator.check(here, destination, emptyList(), emptyList())
+
+        assertIs<LegChange.ToChargeStop>(change)
+        assertEquals(
+            "Supercharger, 1200 Some Road, Springfield, IL",
+            planned.single().title,
+            "the charger should be named and placed",
+        )
+        // The driving sheet and the alerts still use the car's own name.
+        assertEquals("Supercharger", change.stop.name)
+    }
+
+    @Test
+    fun `a charger the car already named properly is left alone`() = runTest {
+        val reads = mutableListOf<ActiveRoute?>(
+            navigatingTo(charger, name = "Tesla Supercharger, Wausau, Wisconsin"),
+        )
+        val planned = mutableListOf<Destination>()
+        val coordinator = ChargeStopCoordinator(
+            vehicle = FakeVehicleNavClient(),
+            readActiveRoute = { reads.removeFirstOrNull() },
+            planLeg = { _, _, to, _ -> planned += to; planFor(to) },
+            pause = {},
+            nameFor = { kotlin.test.fail("should not have needed a lookup") },
+        )
+
+        coordinator.check(here, destination, emptyList(), emptyList())
+
+        assertEquals("Tesla Supercharger, Wausau, Wisconsin", planned.single().title)
+    }
+
+    @Test
+    fun `no namer leaves the charger exactly as it was`() = runTest {
+        val reads = mutableListOf<ActiveRoute?>(navigatingTo(charger, name = "Supercharger"))
+        val planned = mutableListOf<Destination>()
+        val coordinator = ChargeStopCoordinator(
+            vehicle = FakeVehicleNavClient(),
+            readActiveRoute = { reads.removeFirstOrNull() },
+            planLeg = { _, _, to, _ -> planned += to; planFor(to) },
+            pause = {},
+        )
+
+        coordinator.check(here, destination, emptyList(), emptyList())
+
+        assertEquals("Supercharger", planned.single().title)
+    }
 }

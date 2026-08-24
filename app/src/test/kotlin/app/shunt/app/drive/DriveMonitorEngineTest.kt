@@ -654,4 +654,57 @@ class DriveMonitorEngineTest {
             "the trigger is only $northOfCorner m past the turn",
         )
     }
+
+    @Test
+    fun `an engine extending another starts where the car already is`() {
+        // **The reported skip.** An extension's polyline is the leg being driven
+        // plus the new one, so the car is far along a line the replacement
+        // engine would otherwise think it had not started. Progress used to
+        // restart at zero and creep, so nothing advanced for a minute and then
+        // every pin behind the car fired on consecutive fixes.
+        val line = (0..200).map { east(origin, it * 100.0) }
+        val pin = line[150]
+        val carriedFrom = DriveMonitorEngine(
+            chain = listOf(pin, line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        // Drive 14 km on the first engine.
+        for (step in 0..140) carriedFrom.onLocation(update(east(origin, step * 100.0)))
+
+        val extended = DriveMonitorEngine(
+            chain = listOf(pin, line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+            startSegment = carriedFrom.progressAt,
+        )
+        val at = east(origin, 14_000.0)
+        extended.onLocation(update(at))
+
+        assertTrue(
+            extended.metersToEnd(at) < 6_500.0,
+            "the replacement engine lost the car: ${extended.metersToEnd(at)} m to the end",
+        )
+    }
+
+    @Test
+    fun `progress cannot jump further than the car has driven`() {
+        // A fixed window let progress move a kilometre in one fix — thirty times
+        // a second's driving — which is enough to put several pins behind the car
+        // at once wherever the route runs back near itself.
+        val line = (0..200).map { east(origin, it * 100.0) }
+        val engine = DriveMonitorEngine(
+            chain = listOf(line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        engine.onLocation(update(origin))
+        val startLeft = engine.metersToEnd(origin)
+
+        // A 30 m step must not move progress by anything like a kilometre.
+        val next = east(origin, 30.0)
+        engine.onLocation(update(next))
+        val moved = startLeft - engine.metersToEnd(next)
+        assertTrue(moved < DriveMonitorEngine.PROGRESS_MIN_STEP_METERS + 100.0, "progress jumped $moved m")
+    }
 }

@@ -1309,6 +1309,9 @@ class AppContainer(context: Context) {
             readActiveRoute = { tessieAccount.activeRoute(credentials.token, credentials.vin) },
             planLeg = { from, via, to, heading -> planLeg(from, via, to, heading) },
             steering = plan.steerByWaypoints,
+            // So a charger reaches the car as an address rather than a point,
+            // the same way the trip's own destination does.
+            nameFor = { point -> runCatching { nominatimSearch.reverse(point)?.title }.getOrNull() },
         )
     }
 
