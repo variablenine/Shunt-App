@@ -279,6 +279,7 @@ class BrouterPlanner(
         fun budgetLeft(): Long = (planDeadline - nowMillis()).coerceAtLeast(1L)
 
         // Temporary instrumentation — see PlanTimings.
+        roadCheckMillis.set(0)
         val stages = mutableListOf<PlanTimings.Timed>()
         val routingPasses = mutableListOf<PlanTimings.Timed>()
         var cameraMillis = 0L
@@ -621,6 +622,9 @@ class BrouterPlanner(
         stages += PlanTimings.Timed(PlanTimings.STAGE_CAMERAS, cameraMillis)
         stages += PlanTimings.Timed(PlanTimings.STAGE_ROUTING, routingMillis)
         stages += PlanTimings.Timed(PlanTimings.STAGE_PINS, nowMillis() - pinsStartedAt)
+        // Inside the pin phase, not beside it — listed separately because it is
+        // the one part whose cost has never been seen on a phone.
+        stages += PlanTimings.Timed(PlanTimings.STAGE_ROAD_CHECK, roadCheckMillis.get())
         return PlanOutcome.Routes(
             options = options,
             timings = PlanTimings(stages, routingPasses),
@@ -715,7 +719,9 @@ class BrouterPlanner(
             val at = sites.alongOf(pin)
             (listOf(0.0) + offsets).mapNotNull { d -> sites.pointAt(at + d) }.distinct()
         }
+        val askedAt = nowMillis()
         val radii = roadsNear(candidates.flatten(), PinSites.AMBIGUITY_RADIUS_METERS)
+        roadCheckMillis.addAndGet(nowMillis() - askedAt)
         if (radii.size != candidates.sumOf { it.size }) return pins
         var cursor = 0
         val out = mutableListOf<GeoPoint>()
@@ -1000,6 +1006,14 @@ class BrouterPlanner(
     /** Whether any search in this plan hit its ceiling rather than finishing. */
     private fun anyPassRanOut(passes: List<PlanTimings.Timed>): Boolean =
         passes.any { "out of time" in it.label || "over budget" in it.label }
+
+    /**
+     * Time spent in [roadsNear] for the plan in flight.
+     *
+     * Atomic because options are refined on more than one thread; reset per
+     * plan, which is safe because one planner runs one plan at a time.
+     */
+    private val roadCheckMillis = java.util.concurrent.atomic.AtomicLong(0)
 
     companion object {
         /**

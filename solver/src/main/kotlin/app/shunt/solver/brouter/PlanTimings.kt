@@ -32,5 +32,15 @@ data class PlanTimings(
         const val STAGE_CAMERAS = "Finding cameras"
         const val STAGE_ROUTING = "Planning routes"
         const val STAGE_PINS = "Placing pins"
+
+        /**
+         * Time spent asking BRouter's graph which roads are near each pin.
+         *
+         * Broken out of [STAGE_PINS] because it is the one part of planning
+         * whose cost has never been measured on a real device: it loads tiles,
+         * once per option, for every pin. This is how that gets answered — see
+         * `BrouterPlanner.onUnambiguousRoad`.
+         */
+        const val STAGE_ROAD_CHECK = "Checking pin roads"
     }
 }
