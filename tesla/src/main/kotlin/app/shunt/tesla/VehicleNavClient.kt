@@ -17,8 +17,18 @@ import app.shunt.core.GeoPoint
  *    a false Success. The drive monitor's alerting depends on this.
  */
 interface VehicleNavClient {
-    /** Push a full route as an ordered waypoint chain to the vehicle's navigation. */
-    suspend fun pushRoute(waypoints: List<GeoPoint>): PushResult
+    /**
+     * Push a full route as an ordered waypoint chain to the vehicle's
+     * navigation.
+     *
+     * [label] names the last point when it is the trip's actual destination
+     * rather than a shaping pin. It changes nothing about where the car goes —
+     * the coordinate is still authoritative — but a car that falls back to the
+     * `share` command resolves a *string*, and a labelled one shows the place
+     * the driver typed instead of a bare coordinate. Requested as "make the
+     * last destination not a waypoint but the actual location sent to the car".
+     */
+    suspend fun pushRoute(waypoints: List<GeoPoint>, label: String? = null): PushResult
 
     /**
      * Re-push the not-yet-passed tail of the chain, dropping waypoints the
@@ -26,7 +36,7 @@ interface VehicleNavClient {
      * waypoint (the vehicle treats waypoints as stops, so they must be
      * dropped before arrival).
      */
-    suspend fun advanceTo(remaining: List<GeoPoint>): PushResult
+    suspend fun advanceTo(remaining: List<GeoPoint>, label: String? = null): PushResult
 }
 
 sealed interface PushResult {

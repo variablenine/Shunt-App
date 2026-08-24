@@ -63,10 +63,10 @@ class FakeVehicleNavClient(
         callCount = 0
     }
 
-    override suspend fun pushRoute(waypoints: List<GeoPoint>): PushResult =
+    override suspend fun pushRoute(waypoints: List<GeoPoint>, label: String?): PushResult =
         handle(Call.PushRoute(waypoints))
 
-    override suspend fun advanceTo(remaining: List<GeoPoint>): PushResult =
+    override suspend fun advanceTo(remaining: List<GeoPoint>, label: String?): PushResult =
         handle(Call.AdvanceTo(remaining))
 
     private suspend fun handle(call: Call): PushResult {

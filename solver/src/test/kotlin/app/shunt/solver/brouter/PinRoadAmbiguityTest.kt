@@ -62,14 +62,32 @@ class PinRoadAmbiguityTest {
     }
 
     @Test
-    fun `a pin the car could not resolve at all is dropped`() {
-        // Below MIN_OTHER_ROAD_METERS which road the car picks is a coin toss,
-        // and a pin on the wrong one steers it off the route.
+    fun `a pin with another road close on every side is still kept`() {
+        // **Never dropped, only moved**, and this is the case that taught us
+        // why. An interchange has ramps, a service road and the far carriageway
+        // all within any threshold worth setting, so a rule that deleted pins
+        // there took the steering off a motorway exactly where it decides
+        // something — reported as "pretty much unusable on highways".
         val tooClose = PinSites.MIN_OTHER_ROAD_METERS / 2
         val kept = planner { points, _ -> points.map { listOf(tooClose) } }
             .onUnambiguousRoad(route, listOf(route[150]))
 
-        assertTrue(kept.isEmpty(), "kept a pin the car cannot resolve: $kept")
+        assertEquals(1, kept.size, "a pin was deleted for want of a clear spot: $kept")
+    }
+
+    @Test
+    fun `a pin moves to whichever nearby position has the most room`() {
+        // The query's job is to improve placement. The wanted position is
+        // offered first, so it wins ties; here it is the worst of the set and
+        // must lose.
+        val wanted = route[150]
+        val kept = planner { points, _ ->
+            // The first candidate is the wanted position, the rest are nudges.
+            points.mapIndexed { i, _ -> if (i == 0) listOf(4.0) else listOf(30.0) }
+        }.onUnambiguousRoad(route, listOf(wanted))
+
+        assertEquals(1, kept.size)
+        assertTrue(kept.single() != wanted, "stayed on the cramped position $wanted")
     }
 
     @Test

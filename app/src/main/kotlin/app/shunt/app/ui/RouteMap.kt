@@ -47,9 +47,12 @@ import app.shunt.R
 import app.shunt.core.GeoPoint
 import app.shunt.solver.brouter.CameraVision
 import app.shunt.solver.geo.BoundingBox
+import app.shunt.solver.geo.bearingDegrees
 import app.shunt.solver.geo.destinationPoint
+import app.shunt.solver.geo.haversineMeters
 import kotlinx.coroutines.delay
 import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
@@ -248,6 +251,12 @@ private const val FOLLOW_PADDING_FRACTION = 0.22
  * swipes the card down, which is the whole point of it being swipeable.
  */
 private const val FOLLOW_MAX_INSET_FRACTION = 0.55
+
+/**
+ * Below this the driver and the pin are close enough that the direction between
+ * them is noise, and the map keeps the bearing it has. See [frameDrive].
+ */
+private const val FOLLOW_MIN_BEARING_METERS = 60.0
 
 /** Never zoom in past this framing two points that are almost the same place. */
 private const val FOLLOW_MAX_ZOOM = 16.5
@@ -727,19 +736,43 @@ private fun frameDrive(view: MapView, target: GeoPoint, bottomInsetPx: Int) {
                 // strip that is actually visible and moves as the card is
                 // swiped up and down.
                 val bottom = followBottomPadding(pad, bottomInsetPx, view.height)
-                val update = CameraUpdateFactory.newLatLngBounds(bounds, pad, pad, pad, bottom)
+                val padding = intArrayOf(pad, pad, pad, bottom)
+                // **Turn the map so the drive runs up the screen.**
+                //
+                // Asked for as "can you have the camera zoom also change the
+                // angle to optimally frame it". A north-up map wastes the
+                // screen on every trip that is not going north: the box holding
+                // the driver and the next pin is a diagonal, so it is fitted to
+                // whichever axis is worse and the zoom drops accordingly. Rotate
+                // until that diagonal is vertical and the same two points fit at
+                // a closer zoom, on a screen that is taller than it is wide —
+                // which is also the orientation a driver reads without
+                // translating, because ahead is up.
+                //
+                // **Held still when the pin is nearly underneath the car.** The
+                // bearing between two almost-coincident points is mostly GPS
+                // noise, and a map that spins as a waypoint is reached is worse
+                // than one pointing slightly wrong for a few seconds.
+                val from = GeoPoint(here.latitude, here.longitude)
+                val bearing = if (haversineMeters(from, target) < FOLLOW_MIN_BEARING_METERS) {
+                    map.cameraPosition.bearing
+                } else {
+                    bearingDegrees(from, target)
+                }
+                val camera = map.getCameraForLatLngBounds(bounds, padding, bearing, 0.0)
+                    ?: return@getMapAsync
                 // Cap the zoom rather than the padding: two points a hundred
                 // metres apart would otherwise fill the screen with one junction
                 // and no context at all.
-                val camera = map.getCameraForLatLngBounds(bounds, intArrayOf(pad, pad, pad, bottom))
-                if (camera != null && camera.zoom > FOLLOW_MAX_ZOOM) {
-                    map.easeCamera(
-                        CameraUpdateFactory.newLatLngZoom(camera.target!!, FOLLOW_MAX_ZOOM),
-                        FOLLOW_TICK_MILLIS.toInt() / 3,
-                    )
-                } else {
-                    map.easeCamera(update, FOLLOW_TICK_MILLIS.toInt() / 3)
-                }
+                val position = CameraPosition.Builder()
+                    .target(camera.target)
+                    .zoom(minOf(camera.zoom, FOLLOW_MAX_ZOOM))
+                    .bearing(bearing)
+                    .build()
+                map.easeCamera(
+                    CameraUpdateFactory.newCameraPosition(position),
+                    FOLLOW_TICK_MILLIS.toInt() / 3,
+                )
             }
         }
     }

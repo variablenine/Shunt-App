@@ -172,6 +172,9 @@ class DriveMonitor(
                 // Worked out before `previous` moves on, so it compares this fix
                 // with the one before it rather than with itself.
                 val heading = headingOf(previous, update)
+                // Kept current so the destination can be recognised when it is
+                // the thing being sent. See [labelFor].
+                planInForce = current
                 // Take **every** leg that landed since the last fix, before
                 // deciding anything from this one — the chain they add may be
                 // what the current position should be measured against.
@@ -296,11 +299,7 @@ class DriveMonitor(
                 )
                 previous = update
                 onAim(engine.remainingChain().firstOrNull())
-                onTriggerPoints(
-                    engine.triggerPoints(
-                        update.speedMetersPerSec ?: config.assumedSpeedMetersPerSec,
-                    ),
-                )
+                onTriggerPoints(engine.triggerPoints())
                 if (!due) return@collect
 
                 onActivity(DriveActivity.CheckingCharging)
@@ -515,6 +514,31 @@ class DriveMonitor(
         if (steering && chain.isNotEmpty()) listOf(chain.first()) else chain
 
     /**
+     * The name to send with [chain], when what is being sent is the trip's
+     * actual destination rather than a shaping pin.
+     *
+     * **A pin and a destination are different things to the car** and were being
+     * sent identically. A pin is somewhere to pass through and its name is
+     * irrelevant; the destination is where the driver is going, and a car on the
+     * `share` fallback resolves a string — so an unlabelled one shows a
+     * coordinate, or whatever place the car decides that coordinate is near.
+     * Requested as "make the last destination not a waypoint but the actual
+     * location sent to the car".
+     *
+     * Only for the real thing: a leg boundary is not the destination, and
+     * naming it would put the trip's title on a point in open country.
+     */
+    private fun labelFor(chain: List<GeoPoint>): String? {
+        val plan = planInForce ?: return null
+        val sending = aim(chain).lastOrNull() ?: return null
+        if (plan.isPartial) return null
+        return plan.destination.title.takeIf { sending == plan.destination.location }
+    }
+
+    /** The plan the monitor is following, refreshed each fix for [labelFor]. */
+    private var planInForce: DrivePlan? = null
+
+    /**
      * [current] with [next] appended: the leg that just landed, joined onto what
      * is left of the one being driven.
      *
@@ -563,7 +587,7 @@ class DriveMonitor(
         if (stoodDown) return
         val sending = aim(chain)
         lastAimAttemptAt = nowMillis()
-        val pushed = runCatching { vehicle.pushRoute(sending) }
+        val pushed = runCatching { vehicle.pushRoute(sending, labelFor(chain)) }
             .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
         if (pushed is PushResult.Failed) {
             reportUnsent(Unsent.PUSH, sending, pushed)
@@ -607,7 +631,7 @@ class DriveMonitor(
         if (!steering || stoodDown || remaining.isEmpty()) return
         val sending = aim(remaining)
         lastAimAttemptAt = nowMillis()
-        val result = runCatching { vehicle.advanceTo(sending) }
+        val result = runCatching { vehicle.advanceTo(sending, labelFor(remaining)) }
             .getOrElse { e -> PushResult.Failed("re-aim threw: ${e.message}", retryable = true) }
         if (result is PushResult.Failed) {
             reportUnsent(Unsent.ADVANCE, sending, result)
@@ -624,7 +648,7 @@ class DriveMonitor(
         val number = totalPins - remaining.size + 1
         onActivity(DriveActivity.SendingWaypoint(number, totalPins))
         lastAimAttemptAt = nowMillis()
-        val result = runCatching { vehicle.advanceTo(sending) }
+        val result = runCatching { vehicle.advanceTo(sending, labelFor(remaining)) }
             .getOrElse { e -> PushResult.Failed("advance threw: ${e.message}", retryable = true) }
         if (result is PushResult.Failed) {
             reportUnsent(Unsent.ADVANCE, sending, result)

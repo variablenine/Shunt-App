@@ -131,23 +131,40 @@ class DriveMonitorEngineTest {
     }
 
     @Test
-    fun `lead distance honors the time lead and the floor`() {
-        // Fast: lead = 40 m/s * 18 s = 720 m, so 600 m out already advances.
-        val fast = DriveMonitorEngine(chain, emptyList())
-        assertTrue(fast.onLocation(update(west(w1, 600.0), speed = 40.0)).any { it is DriveSignal.ApproachingWaypoint })
-
-        // Stopped: speed 0 → floor of 150 m. 300 m out does NOT advance yet...
-        val slow = DriveMonitorEngine(chain, emptyList())
-        assertTrue(slow.onLocation(update(west(w1, 300.0), speed = 0.0)).none { it is DriveSignal.ApproachingWaypoint })
-        // ...100 m out does.
-        assertTrue(slow.onLocation(update(west(w1, 100.0), speed = 0.0)).any { it is DriveSignal.ApproachingWaypoint })
+    fun `the advance fires at the same distance whatever the car is doing`() {
+        // **The lead is the expected speed, not the current one.** Asked for as
+        // "let's make waypoint triggers static based on expected speed", after
+        // "waypoints are triggered way earlier than it shows on the map": a lead
+        // that tracked the speedometer moved every trigger point continuously,
+        // so the marks drawn described a moment that had already gone.
+        val lead = DriveMonitorConfig().let {
+            it.expectedSpeedMetersPerSec * it.waypointLeadSeconds
+        }
+        for (speed in listOf(0.0, 8.0, 40.0, null)) {
+            val short = DriveMonitorEngine(chain, emptyList())
+            assertTrue(
+                short.onLocation(update(west(w1, lead + 200.0), speed = speed)).none {
+                    it is DriveSignal.ApproachingWaypoint
+                },
+                "advanced from beyond the lead at speed $speed",
+            )
+            val near = DriveMonitorEngine(chain, emptyList())
+            assertTrue(
+                near.onLocation(update(west(w1, lead - 100.0), speed = speed)).any {
+                    it is DriveSignal.ApproachingWaypoint
+                },
+                "did not advance inside the lead at speed $speed",
+            )
+        }
     }
 
     @Test
-    fun `missing speed falls back to assumed speed`() {
+    fun `the floor holds where the gap would give almost no lead`() {
+        // The lead is capped at a share of the gap the pins were placed at, and
+        // then floored: a pin the monitor cannot re-aim before is worse than one
+        // it re-aims at slightly early.
         val engine = DriveMonitorEngine(chain, emptyList())
-        // assumed 25 m/s → 450 m lead; 400 m out advances even with null speed.
-        assertTrue(engine.onLocation(update(west(w1, 400.0), speed = null)).any { it is DriveSignal.ApproachingWaypoint })
+        assertTrue(engine.leadMetersFor(0) >= DriveMonitorConfig().waypointLeadMinMeters)
     }
 
     @Test
@@ -450,7 +467,7 @@ class DriveMonitorEngineTest {
         )
         engine.onLocation(update(line[0]))
 
-        val triggers = engine.triggerPoints(speedMetersPerSec = 25.0)
+        val triggers = engine.triggerPoints()
         // Two intermediate pins; the destination is arrived at, not advanced
         // past, so it has no trigger.
         assertEquals(2, triggers.size, "got $triggers")
@@ -462,9 +479,13 @@ class DriveMonitorEngineTest {
     }
 
     @Test
-    fun `the trigger moves further back as the car speeds up`() {
-        // The reason to draw it at all: the lead is eighteen seconds of driving,
-        // so it is not a fixed distance and cannot be judged by eye.
+    fun `the trigger does not move with the car's speed`() {
+        // **Asked for in these words:** "let's make waypoint triggers static
+        // based on expected speed." A lead that tracked the speedometer made
+        // every mark on the map a moving target — the driver's report was
+        // "waypoints are triggered way earlier than it shows on the map", which
+        // is what a rule whose answer changes between looking and arriving feels
+        // like from the seat.
         val line = (0..59).map { east(origin, it * 100.0) }
         fun triggerAt(speed: Double): GeoPoint {
             val engine = DriveMonitorEngine(
@@ -473,10 +494,30 @@ class DriveMonitorEngineTest {
                 cameras = emptyList(),
             )
             engine.onLocation(update(line[0], speed = speed))
-            return engine.triggerPoints(speed).first()
+            return engine.triggerPoints().first()
         }
-        val slow = haversineMeters(triggerAt(8.0), line[40])
-        val fast = haversineMeters(triggerAt(30.0), line[40])
-        assertTrue(fast > slow, "fast lead $fast should be longer than slow lead $slow")
+        assertEquals(
+            triggerAt(8.0),
+            triggerAt(30.0),
+            "the trigger must be the same place whatever the car is doing",
+        )
+    }
+
+    @Test
+    fun `a shorter gap between pins still shortens the lead`() {
+        // Static does not mean uniform. Spacing already tightens with density,
+        // so the geometry carries what the speedometer used to stand in for —
+        // and it carries it before the drive rather than during it.
+        val line = (0..99).map { east(origin, it * 100.0) }
+        fun leadFor(gapPoints: Int): Double {
+            val engine = DriveMonitorEngine(
+                chain = listOf(line[50], line[50 + gapPoints], line.last()),
+                routePolyline = line,
+                cameras = emptyList(),
+            )
+            engine.onLocation(update(line[0]))
+            return engine.leadMetersFor(1)
+        }
+        assertTrue(leadFor(4) < leadFor(40), "a tight gap must give a shorter lead")
     }
 }

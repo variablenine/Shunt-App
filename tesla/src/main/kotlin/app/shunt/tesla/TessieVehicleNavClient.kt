@@ -51,11 +51,13 @@ class TessieVehicleNavClient(
     @Volatile
     private var waypointsRequestWorks: Boolean? = null
 
-    override suspend fun pushRoute(waypoints: List<GeoPoint>): PushResult = sendChain(waypoints)
+    override suspend fun pushRoute(waypoints: List<GeoPoint>, label: String?): PushResult =
+        sendChain(waypoints, label)
 
-    override suspend fun advanceTo(remaining: List<GeoPoint>): PushResult = sendChain(remaining)
+    override suspend fun advanceTo(remaining: List<GeoPoint>, label: String?): PushResult =
+        sendChain(remaining, label)
 
-    private suspend fun sendChain(chain: List<GeoPoint>): PushResult {
+    private suspend fun sendChain(chain: List<GeoPoint>, label: String? = null): PushResult {
         if (chain.isEmpty()) return PushResult.Failed("empty waypoint chain", retryable = false)
 
         if (waypointsRequestWorks != false) {
@@ -87,7 +89,7 @@ class TessieVehicleNavClient(
         // implements navigation_request and none of the chain commands, so on a
         // car that requires signing this is the only thing that lands — at the
         // cost of the route shape, which the caller must surface.
-        return shareDestination(chain.last())
+        return shareDestination(chain.last(), label)
     }
 
     /**
@@ -99,9 +101,9 @@ class TessieVehicleNavClient(
      * REST call itself, which is what actually reaches the car. It takes one
      * destination and no waypoints, so the route shape is lost.
      */
-    private suspend fun shareDestination(point: GeoPoint): PushResult {
+    private suspend fun shareDestination(point: GeoPoint, label: String? = null): PushResult {
         // **Two formats, most specific first.** See [shareMapUrl].
-        when (val viaUrl = shareOnce(shareMapUrl(point))) {
+        when (val viaUrl = shareOnce(shareMapUrl(point, label))) {
             is ShareOutcome.Done -> return viaUrl.result
             ShareOutcome.ValueRejected -> Unit
         }
@@ -186,8 +188,18 @@ class TessieVehicleNavClient(
      * observed to work, so a car that will not take the link is no worse off
      * than before.
      */
-    private fun shareMapUrl(point: GeoPoint): String =
-        "https://maps.google.com/maps?q=" + shareValue(point)
+    private fun shareMapUrl(point: GeoPoint, label: String? = null): String {
+        val q = shareValue(point)
+        // The label rides *after* the coordinate, in the form map links use for
+        // a named pin. The coordinate stays the authoritative part — this only
+        // decides what the car's screen calls the place, which for the trip's
+        // real destination should be the place the driver typed rather than a
+        // pair of numbers. Parentheses and the characters that would end the
+        // query are stripped so a name can never change what is being asked
+        // for.
+        val name = label?.filterNot { it in "()&#?" }?.trim()?.take(64)?.takeIf { it.isNotEmpty() }
+        return "https://maps.google.com/maps?q=" + q + if (name != null) "($name)" else ""
+    }
 
     /**
      * The point as the share command wants it: plain decimal degrees, six

@@ -345,14 +345,17 @@ class PinSites(
         const val CAMERA_STANDOFF_METERS = 150.0
 
         /**
-         * How near another road may be before which one the car snaps to is a
-         * coin toss, and the pin is worth more dropped than kept.
+         * How near another road counts as "the car could go either way".
          *
-         * Well below [AMBIGUITY_RADIUS_METERS], because that one is a
-         * *preference* — a divided highway's carriageways run twenty metres
-         * apart for their whole length, and refusing every pin there would
-         * leave a motorway with no steering at all, which is how a car takes an
-         * exit nobody planned.
+         * **Reporting only.** It used to gate whether a pin survived, and that
+         * deleted pins all over a motorway — see `BrouterPlanner`.
+         *
+         * Kept because the distinction is real and worth naming: below this,
+         * which road the car's map picks is a coin toss, and a pin that has to
+         * sit there is one to be suspicious of when a drive goes wrong. Well
+         * below [AMBIGUITY_RADIUS_METERS], which is the *preference* — a
+         * divided highway's carriageways run twenty metres apart for their
+         * whole length.
          */
         const val MIN_OTHER_ROAD_METERS = 12.0
 

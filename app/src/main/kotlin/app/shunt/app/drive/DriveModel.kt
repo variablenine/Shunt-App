@@ -87,8 +87,31 @@ data class DriveMonitorConfig(
      * speed on 600 m spacing — and never so much that a pin is skipped.
      */
     val waypointLeadGapFraction: Double = 0.5,
-    /** Speed assumed when the fix carries none, for the lead computation. */
+    /** Speed assumed when the fix carries none. */
     val assumedSpeedMetersPerSec: Double = 25.0,
+    /**
+     * The speed the waypoint lead is computed from — **not** the car's current
+     * one.
+     *
+     * **Deliberately static, and asked for in those words:** "waypoints are
+     * triggered way earlier than it shows on the map and doesn't really get
+     * triggered sometimes… let's make waypoint triggers static based on
+     * expected speed."
+     *
+     * A lead that tracked the speedometer meant every pin's trigger point moved
+     * continuously — so the marks drawn on the map described a moment that had
+     * already passed by the time the driver looked up, and a burst of speed
+     * before a pin fired the advance hundreds of metres earlier than the map
+     * had ever shown. Nothing about that is calibratable, which is the whole
+     * purpose the marks were added for.
+     *
+     * Held against the gap the pins were actually placed at, which is what
+     * still makes a lead in town shorter than one on open road: spacing already
+     * tightens with density, so the geometry carries the information the
+     * speedometer was standing in for — and it does so *before* the drive
+     * rather than during it.
+     */
+    val expectedSpeedMetersPerSec: Double = 31.0,
     /** Within this of the destination counts as arrived. */
     val arrivalRadiusMeters: Double = 60.0,
     /**

@@ -1243,6 +1243,55 @@ been measured on a real device.
 
 ---
 
+### A17 · A motorway keeps its waypoints
+
+*Never seen on a drive — 2026-08-24. See F-59.*
+
+**Provoke it.** Plan a trip that runs a long way on a divided highway, and look
+at the pins drawn along it before setting off.
+
+**Expect:** pins along the whole motorway stretch, including through
+interchanges. A long divided run with no pins at all is the regression this
+entry exists for — it means the road-graph query has gone back to vetoing
+placements instead of improving them.
+
+**On the drive:** the car should stay on the highway between pins and not take
+an exit nobody planned.
+
+### C12 · The trigger mark is where it fires
+
+*Never seen on a drive — 2026-08-24. See F-59.*
+
+**Provoke it.** Drive a pinned route at varying speeds and watch a ring ahead.
+
+**Expect:** the ring **does not move** as you speed up or slow down. Reaching it
+is what fires the advance; the card should say it is sending that waypoint
+within a second or two of crossing the ring.
+
+**Must not happen:** the advance firing well before the ring. That was the
+reported symptom and it means the lead has gone back to tracking the
+speedometer.
+
+**A ring you pass with nothing happening** is still legitimate — the turn-commit
+gate holds the advance until the bend before the pin is behind you — but it
+should be rare on a straight road.
+
+### D18 · The car names the destination, not a coordinate
+
+*Never verified on a vehicle — 2026-08-24. See F-59.*
+
+**Provoke it.** Drive the last leg of a trip to a named place and watch the car's
+own screen once the final pin is passed.
+
+**Expect:** the car shows the destination's name. Not a bare coordinate, and not
+a different place near it.
+
+**Only tells you something on a car using the `share` fallback** — the result
+sheet says so ("your car only accepted the destination"). A car taking GPS
+waypoints was always getting the exact coordinate.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

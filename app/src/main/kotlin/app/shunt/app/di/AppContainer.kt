@@ -342,11 +342,11 @@ class AppContainer(context: Context) {
      * keyless build and CI still work.
      */
     val vehicleNavClient: VehicleNavClient = object : VehicleNavClient {
-        override suspend fun pushRoute(waypoints: List<app.shunt.core.GeoPoint>) =
-            delegate().pushRoute(waypoints)
+        override suspend fun pushRoute(waypoints: List<app.shunt.core.GeoPoint>, label: String?) =
+            delegate().pushRoute(waypoints, label)
 
-        override suspend fun advanceTo(remaining: List<app.shunt.core.GeoPoint>) =
-            delegate().advanceTo(remaining)
+        override suspend fun advanceTo(remaining: List<app.shunt.core.GeoPoint>, label: String?) =
+            delegate().advanceTo(remaining, label)
 
         private var cachedFor: VehicleCredentials? = null
         private var cached: VehicleNavClient = FakeVehicleNavClient()

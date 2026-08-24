@@ -3093,3 +3093,61 @@ distances, not ways, because that is all the decision needs. If a later question
 needs "is the near road one-way against us" — which would distinguish the far
 carriageway from a frontage road — the node pairs are right there in
 `MatchedWaypoint` and it is a small extension.
+
+---
+
+### F-59 · The graph query made highways worse, and the trigger marks were honest about the wrong thing
+
+*Reported after a drive, 2026-08-24:* *"Having some weird issues trying to start
+navigating on highways. Waypoints start off the highway and try to navigate the
+car off it… yeah it's pretty much unusable on highways."* And separately:
+*"waypoints are triggered way earlier than it shows on the map and doesn't really
+get triggered sometimes. Let's make waypoint triggers static based on expected
+speed."*
+
+**The highway regression was mine, from the day before.** `onUnambiguousRoad`
+asks BRouter's graph how far the nearest *other* road is from each pin and picks
+the best position available — which was the right idea — and then **dropped the
+pin** when even the best position had a road within `MIN_OTHER_ROAD_METERS`. I
+wrote that gate reasoning that a pin the car might snap to the wrong road is
+worse than no pin, and flagged the risk out loud when shipping it: *"if a long
+divided stretch comes back with no waypoints at all, the best-available rule has
+regressed to pass-or-fail."* It had, in a way I had not predicted — not on the
+open motorway but at every **interchange**, where ramps, a service road and the
+far carriageway are all within twelve metres of something. So the steering
+disappeared exactly where a motorway has a decision in it.
+
+The lesson is not "the threshold was wrong". It is that a placement query and a
+veto are different powers, and the second one needed evidence I did not have.
+Moving a pin can only improve on geometry that was already only a guess; deleting
+one removes a guarantee the rest of the design is built on. The query keeps the
+first power and has lost the second.
+
+**The trigger marks were drawing a rule whose answer moved.** The lead is
+eighteen seconds of driving, so it was a function of the speedometer: the mark on
+the map described the moment it was drawn, and by the time the driver had looked
+up and back at the road, both the car and the mark had moved. "Triggered way
+earlier than it shows on the map" is exactly what that feels like from the seat,
+and it was not a bug in the drawing — the drawing was faithful to a rule that
+could not be watched.
+
+The driver's own fix is the right one and better than tuning: make the lead
+static, from an expected speed. A pin's trigger is then a fixed place on the
+route, decided before anyone sets off. Static is not uniform — the cap against
+the pin gap survives, and spacing already tightens with density, so a town still
+gets a shorter lead than open road. The difference is that the road geometry
+carries that, and the driver can see it in advance instead of inferring it from
+their own speed.
+
+**Two smaller things from the same batch.** The destination now reaches the car
+with its name attached, because a pin and a destination had been sent
+identically and only one of them is a place. And the follow camera rotates to put
+the drive up the screen, which was asked for as better framing and is also just
+how navigation is read.
+
+**Still not explained:** *"navigates weird avoiding a crossing bridge to get onto
+the highway."* The log for that plan shows nothing wrong — three options, one
+unavoidable camera at the destination, 21 pins on a 250 km leg — and the detour
+in the screenshot is short enough that it could be the camera at that junction
+being avoided correctly. It wants a plan where the same thing happens and the
+map is legible enough to say which road was refused and why.

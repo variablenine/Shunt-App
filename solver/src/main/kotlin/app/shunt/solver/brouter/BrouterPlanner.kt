@@ -739,7 +739,15 @@ class BrouterPlanner(
                     best = choice
                 }
             }
-            if (best != null && bestClearance >= PinSites.MIN_OTHER_ROAD_METERS) out += best
+            // **Never dropped, only moved.** Requiring a clearance here was a
+            // mistake and a costly one: an interchange has ramps, a service
+            // road and the far carriageway all inside any threshold worth
+            // setting, so the rule deleted pins exactly where a motorway most
+            // needs them and the app came back "pretty much unusable on
+            // highways". A pin at the best position available is what this
+            // project had before the graph could be asked at all; the query's
+            // job is to improve placement, not to veto it.
+            if (best != null) out += best
         }
         return out
     }

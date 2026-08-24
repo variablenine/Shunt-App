@@ -189,20 +189,22 @@ class DriveMonitorEngine(
      * Where along the route each waypoint still ahead would be handed to the
      * car, at [speedMetersPerSec].
      *
-     * **Not a constant, which is the whole reason to draw it.** The lead is the
-     * larger of a fixed floor and eighteen seconds of driving, capped at half
-     * the gap the pins were actually placed at — and then the turn-commit gate
-     * holds the advance until the bend before the pin is behind the car,
-     * whichever comes later. Three interacting rules, two of them
-     * speed-dependent, and the driver asked to be shown the answer: "it would be
-     * nice to visualize on the map where exactly each waypoint's trigger is so
-     * that I can know when to expect the next to get sent to my car."
+     * **Fixed for a given route, which is what makes it worth drawing.** The
+     * lead is eighteen seconds at the *expected* speed, capped at half the gap
+     * the pins were placed at, and then the turn-commit gate holds the advance
+     * until the bend before the pin is behind the car, whichever comes later.
+     *
+     * These marks used to move with the speedometer, and a driver reported the
+     * consequence: "waypoints are triggered way earlier than it shows on the
+     * map". They were not lying to the driver about the rule, they were drawing
+     * a rule whose answer changed between looking at the screen and reaching
+     * the spot. Static, the mark on the map is the place it fires.
      *
      * The commit point wins where it is later, because that is what the monitor
      * does. A pin whose commit gate is unreachable shows its trigger at the pin
      * itself, which is honest: that is the arrival-radius valve firing.
      */
-    fun triggerPoints(speedMetersPerSec: Double): List<GeoPoint> {
+    fun triggerPoints(): List<GeoPoint> {
         if (routePolyline.size < 2 || alongAt.isEmpty()) return emptyList()
         return (targetIndex..chain.lastIndex).mapNotNull { i ->
             val pin = pinAlong.getOrNull(i) ?: return@mapNotNull null
@@ -211,7 +213,7 @@ class DriveMonitorEngine(
             // trigger to show, and drawing one would suggest the drive ends
             // early.
             if (i == chain.lastIndex || chain[i] in stopPoints) return@mapNotNull null
-            val lead = leadMetersFor(i, speedMetersPerSec)
+            val lead = leadMetersFor(i)
             val commit = commitAlong.getOrNull(i) ?: Double.NEGATIVE_INFINITY
             val at = maxOf(pin - lead, commit).coerceIn(0.0, alongAt.last())
             pointAtAlongRoute(at)
@@ -381,8 +383,7 @@ class DriveMonitorEngine(
             return null
         }
 
-        val speed = update.speedMetersPerSec ?: config.assumedSpeedMetersPerSec
-        val lead = leadMetersFor(targetIndex, speed)
+        val lead = leadMetersFor(targetIndex)
         // **How far there is left to drive, not how far away it is.**
         //
         // Straight-line distance is the wrong question wherever the route comes
@@ -473,8 +474,13 @@ class DriveMonitorEngine(
      * the lead to nothing, which would leave the car aimed at a waypoint it is
      * sitting on — and it stops there.
      */
-    internal fun leadMetersFor(index: Int, speedMetersPerSec: Double): Double {
-        val bySpeed = maxOf(config.waypointLeadMinMeters, speedMetersPerSec * config.waypointLeadSeconds)
+    internal fun leadMetersFor(index: Int): Double {
+        // **The expected speed, not the current one.** See
+        // DriveMonitorConfig.expectedSpeedMetersPerSec: a lead that tracked the
+        // speedometer made every trigger point a moving target, which is
+        // exactly what the driver could not calibrate against.
+        val bySpeed =
+            maxOf(config.waypointLeadMinMeters, config.expectedSpeedMetersPerSec * config.waypointLeadSeconds)
         val gap = gapBefore(index)
         if (gap == Double.MAX_VALUE) return bySpeed
         return minOf(bySpeed, gap * config.waypointLeadGapFraction)

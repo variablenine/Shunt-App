@@ -651,6 +651,16 @@ unless `MatchedWaypoint.nearbyCollectRadius` is set**, so ordinary routing runs
 byte-identical code paths — that is a structural guarantee, not a measurement.
 Both edits are marked `SHUNT CHANGE`.
 
+**Best available, and never a veto** — a pin is *moved*, never dropped, for want
+of a clear spot. Requiring a clearance was tried and was a bad mistake: an
+interchange has ramps, a service road and the far carriageway all inside any
+threshold worth setting, so the rule deleted pins exactly where a motorway
+decides something, and the app came back **"pretty much unusable on highways"**.
+The graph query's job is to improve placement, not to withhold it.
+`MIN_OTHER_ROAD_METERS` survives as a description of "the car could go either
+way" — a pin that has to sit there is one to suspect when a drive goes wrong —
+and not as a gate.
+
 **Best available, not pass-or-drop**, and that is the whole design.
 `BrouterPlanner.onUnambiguousRoad` offers each pin a handful of positions along
 the route (`PIN_NUDGE_METERS`) and takes the one where the nearest *other* road
@@ -839,6 +849,27 @@ though the car may resolve the link through its host, which is worth knowing
 before this is extended. **Unverified on a vehicle**: this is a diagnosis from
 the symptom, and the read-back experiment in `docs/field-notes.md` is what would
 confirm it.
+
+### The lead is the expected speed, not the current one
+
+`leadMetersFor` used the speedometer, and a driver reported the consequence:
+*"waypoints are triggered way earlier than it shows on the map and doesn't really
+get triggered sometimes"*, followed by the fix in their own words — *"let's make
+waypoint triggers static based on expected speed."*
+
+They are right, and the reason is worth keeping. A lead that tracks speed makes
+every trigger point a **moving target**: the mark drawn on the map describes a
+moment that has already passed by the time the driver looks up, and a burst of
+speed on the approach fires the advance hundreds of metres earlier than the map
+had ever shown. Nothing about that can be calibrated against, which is the whole
+purpose the marks were added for.
+
+`expectedSpeedMetersPerSec` replaces it, so a pin's trigger point is a fixed
+place on the route, decided before the drive. **Static is not uniform**: the lead
+is still capped at `waypointLeadGapFraction` of the gap the pins were placed at,
+and spacing already tightens with camera density — so the geometry carries the
+information the speedometer was standing in for, and carries it somewhere the
+driver can see it in advance.
 
 ### Where the aim moves on, drawn on the map
 
@@ -1212,6 +1243,25 @@ them, and add new observations as they come in. Detail lives in
    Shunt told the driver the car was detouring to a charger its own way, then
    re-aimed the car back at our route — off the charger it inserted because it
    needed the charge. F-57.
+
+24. **The road-graph query made highways unusable.** *Fixed, unconfirmed on a
+   drive.* `onUnambiguousRoad` dropped a pin when no position had a clear
+   `MIN_OTHER_ROAD_METERS` — which at an interchange is every position, so the
+   steering vanished exactly where a motorway decides something. It now moves a
+   pin and never withholds one. §6, "Asking the road graph what is actually near
+   a pin", and F-59.
+
+25. **Waypoints fired earlier than the map said they would.** *Fixed,
+   unconfirmed on a drive.* The lead was eighteen seconds at the *current*
+   speed, so every trigger point moved continuously and the marks drawn
+   described a moment already gone. The lead is now taken from an expected
+   speed and is fixed for a route. §6, "The lead is the expected speed", and
+   F-59.
+
+26. **The destination reached the car unnamed.** *Fixed, unverified on a
+   vehicle.* A pin and the trip's destination were pushed identically, so a car
+   on the `share` fallback showed a coordinate or a place near it. §6, "The
+   destination is a place, a pin is only a point".
 
 ### A watched destination is not a reason to give up
 
@@ -1593,6 +1643,42 @@ doomed pins from what is still ahead. Three things make it safe:
 
 This is the lead-boundary exemption in the roadmap, done for the trim. The
 handover truncation still does not use it. See F-55.
+
+### The destination is a place, a pin is only a point
+
+Both reach the car as coordinates, and until now they reached it *identically*.
+That is wrong for the last one: a pin is somewhere to pass through and its name
+is irrelevant, while the destination is where the driver is going — and a car on
+the `share` fallback resolves a **string**, so an unnamed destination shows a
+coordinate or whatever place the car decides that coordinate is near. Asked for
+as *"make the last destination not a waypoint but the actual location sent to the
+car."*
+
+`VehicleNavClient` takes an optional `label`, `DriveMonitor.labelFor` supplies it
+only when the point being sent really is the trip's destination, and
+`shareMapUrl` puts it after the coordinate in the form map links use for a named
+pin. The coordinate stays authoritative — the label only decides what the car's
+screen calls the place — and characters that could end the query are stripped, so
+a name can never change where the car goes.
+
+A leg boundary gets no label. It is not the destination, and naming it would put
+the trip's title on a point in open country.
+
+### The map turns to face the drive
+
+`frameDrive` fitted a north-up box, and a driver asked for the obvious
+improvement: *"can you have the camera zoom also change the angle to optimally
+frame it?"* North-up wastes the screen on every trip not going north — the box
+holding the driver and the next pin is a diagonal, so it is fitted to whichever
+axis is worse and the zoom drops accordingly. Rotating until that diagonal is
+vertical fits the same two points closer on a screen that is taller than it is
+wide, and it is the orientation a driver reads without translating, because ahead
+is up.
+
+One guard: within `FOLLOW_MIN_BEARING_METERS` of the pin the bearing between two
+nearly-coincident points is mostly GPS noise, so the map keeps the bearing it
+has. A map that spins as a waypoint is reached is worse than one pointing
+slightly wrong for a few seconds.
 
 ### The chooser's selection is the whole trip's
 
