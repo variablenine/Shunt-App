@@ -122,19 +122,38 @@ class DriveMonitorEngine(
         if (routePolyline.size >= 2) {
             var cursor = 0
             for (i in chain.indices) {
-                cursor = nearestVertex(chain[i], from = cursor)
-                pinAlong[i] = alongAt[cursor]
-                commitAlong[i] = commitPointFor(cursor)
+                val segment = nearestSegmentTo(chain[i], from = cursor)
+                cursor = segment
+                pinAlong[i] = alongWithin(chain[i], segment)
+                commitAlong[i] = commitPointFor(segment)
             }
         }
     }
 
-    /** Index of the route vertex nearest [p], searching forward from [from]. */
-    private fun nearestVertex(p: GeoPoint, from: Int): Int {
-        var best = from
+    /**
+     * Index of the route *segment* nearest [p], searching forward from [from].
+     *
+     * **Segment, not vertex, and that is the whole point.** Snapping each pin to
+     * its nearest vertex made `pinAlong` a vertex position rather than the pin's
+     * own — which on a dense line is a metre or two and on a long straight
+     * segment is the length of the segment. Two consequences, and a driver
+     * reported both as one sentence: "the pin triggers early and then the next
+     * pin after that fires shortly after".
+     *
+     *  - **Early**, because a pin rounded back to the start of the segment it
+     *    sits on has a `pinAlong` short of where it really is, so the lead is
+     *    satisfied that much sooner.
+     *  - **In pairs**, because two pins inside the same long segment round to
+     *    the *same* vertex. Their `pinAlong` is then identical, the gap between
+     *    them is zero, and the moment one advances the next is already inside
+     *    its lead — so it fires on the following fix.
+     */
+    private fun nearestSegmentTo(p: GeoPoint, from: Int): Int {
+        val last = routePolyline.size - 2
+        var best = from.coerceIn(0, last)
         var bestDistance = Double.MAX_VALUE
-        for (i in from until routePolyline.size) {
-            val d = haversineMeters(p, routePolyline[i])
+        for (i in best..last) {
+            val d = pointToSegmentMeters(p, routePolyline[i], routePolyline[i + 1])
             if (d < bestDistance) { bestDistance = d; best = i }
         }
         return best
@@ -229,7 +248,29 @@ class DriveMonitorEngine(
             val mid = (lo + hi) / 2
             if (alongAt[mid] < target) lo = mid + 1 else hi = mid
         }
-        return routePolyline[lo]
+        if (lo == 0) return routePolyline[0]
+        // **Interpolated, not rounded to the vertex.**
+        //
+        // This is where the mark is *drawn*, and the advance it describes is
+        // decided by `alongOf`, which projects the car into its segment and is
+        // accurate to the metre. Returning the vertex at or past the target put
+        // the mark at the far end of whatever segment the trigger fell inside —
+        // and a route's segments are as long as the road is straight, so on a
+        // motorway that is kilometres. The waypoint then fired, correctly, well
+        // before the driver reached the ring: "still having waypoints firing
+        // before I hit the trigger point".
+        //
+        // The same trap as `sampleSpine` and as `alongOf` before it: a
+        // polyline's vertices say nothing about the road between them.
+        val before = routePolyline[lo - 1]
+        val after = routePolyline[lo]
+        val span = alongAt[lo] - alongAt[lo - 1]
+        if (span <= 0.0) return after
+        val t = ((target - alongAt[lo - 1]) / span).coerceIn(0.0, 1.0)
+        return GeoPoint(
+            lat = before.lat + (after.lat - before.lat) * t,
+            lon = before.lon + (after.lon - before.lon) * t,
+        )
     }
 
     /** Metres to the nearest camera we're warning about, or null when there are none. */
@@ -538,8 +579,11 @@ class DriveMonitorEngine(
      * advances. The same trap `sampleSpine` fell into in the planner: a
      * polyline's vertices say nothing about the road between them.
      */
-    private fun alongOf(p: GeoPoint): Double {
-        val i = progressSegment.coerceIn(0, routePolyline.size - 2)
+    private fun alongOf(p: GeoPoint): Double = alongWithin(p, progressSegment)
+
+    /** How far along the route [p] projects, taken within segment [segment]. */
+    private fun alongWithin(p: GeoPoint, segment: Int): Double {
+        val i = segment.coerceIn(0, routePolyline.size - 2)
         val a = routePolyline[i]
         val b = routePolyline[i + 1]
         val metersPerLon = METERS_PER_DEGREE_LAT * kotlin.math.cos(Math.toRadians(a.lat))

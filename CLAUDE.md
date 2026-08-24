@@ -1278,6 +1278,19 @@ them, and add new observations as they come in. Detail lives in
    the behaviour drifted away from them. §7, "Progress has to be measured from
    where the car is", and F-61.
 
+29. **Waypoints fired early, and in pairs.** *Fixed, unconfirmed on a drive.*
+   Each pin's along-route position was snapped to the nearest route vertex, so a
+   pin read as short of where it was, and two pins inside one long segment read
+   as being in the *same place* — the second firing a fix after the first. §6,
+   "The mark and the trigger must be the same arithmetic", and F-62.
+
+30. **The trigger marks were drawn ahead of where the waypoint fired.**
+   *Fixed, unconfirmed on a drive.* The advance projects the car into its
+   segment; the mark rounded forward to the next vertex, landing at the segment's
+   far end. On a long segment that is hundreds of metres to kilometres, so the
+   waypoint fired well before the driver reached the ring. §6, "The mark and the
+   trigger must be the same arithmetic", and F-62.
+
 ### A watched destination is not a reason to give up
 
 BRouter refuses a route that begins or ends inside a zone it has been told is
@@ -1658,6 +1671,43 @@ doomed pins from what is still ahead. Three things make it safe:
 
 This is the lead-boundary exemption in the roadmap, done for the trim. The
 handover truncation still does not use it. See F-55.
+
+### The mark and the trigger must be the same arithmetic
+
+The advance is decided by `alongOf`, which **projects** the car into its segment
+and is accurate to the metre. The mark drawn for it was found by rounding forward
+to the next *vertex* — so it landed at the far end of whatever segment the
+trigger fell inside, and a route's segments are as long as the road is straight.
+On a motorway that is kilometres. The waypoint then fired, correctly, well before
+the driver reached the ring: *"still having waypoints firing before I hit the
+trigger point"*.
+
+Measured on a fixture with 8 km segments: fired at 15,500 m, ring drawn at
+15,982 m. The error is bounded by the segment length, so it is worst exactly
+where the marks are most useful.
+
+`pointAtAlongRoute` interpolates now, and `PinSites.pointAt` with it — every
+caller there is moving a pin by a *measured* amount, and rounding a sixty-metre
+nudge to the end of a kilometre-long segment is not a rounding error, it is a
+different pin.
+
+**And `pinAlong` had it worst of all.** Each waypoint's along-route position was
+found by snapping it to the nearest route *vertex*, which is where the driver's
+sharpest description comes from: *"the pin triggers early and then the next pin
+after that fires shortly after."* Both halves fall out of the snapping. A pin
+rounded back to the start of its segment reads as short of where it really is,
+so its lead is satisfied early. And **two pins inside one long segment round to
+the same vertex** — identical `pinAlong`, zero gap between them, so the moment
+one advances the next is already inside its lead and fires on the following fix.
+Measured on a fixture with two pins 4 km apart in a 20 km segment: they fired at
+0 m and 100 m. Pins are projected onto their segment now, like everything else.
+
+**This is the fourth time this exact trap has been paid for** — `sampleSpine`
+dropped cameras between vertices, `alongOf` learned to project after freezing
+progress, then the marks, then the pins themselves. Stated once more, in the hope
+it sticks: *a polyline's vertices say nothing about the road between them.*
+Anything that turns a distance-along into a position, or a position into a
+distance-along, has to project — never snap.
 
 ### Progress has to be measured from where the car is
 

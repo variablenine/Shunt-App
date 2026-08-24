@@ -256,7 +256,22 @@ class PinSites(
             val mid = (lo + hi) / 2
             if (alongAt[mid] < at) lo = mid + 1 else hi = mid
         }
-        return chosen[lo]
+        if (lo == 0) return chosen[0]
+        // **Interpolated.** Rounding to the next vertex is fine on a dense line
+        // and wrong on a sparse one: a straight run between junctions is two
+        // points a kilometre or more apart, so a pin asked for sixty metres
+        // further on would land at the far end of it. Every caller here is
+        // moving a pin by a measured amount — a nudge, a settle, a fork
+        // distance — and the amount is the whole point.
+        val before = chosen[lo - 1]
+        val after = chosen[lo]
+        val span = alongAt[lo] - alongAt[lo - 1]
+        if (span <= 0.0) return after
+        val t = ((at - alongAt[lo - 1]) / span).coerceIn(0.0, 1.0)
+        return GeoPoint(
+            lat = before.lat + (after.lat - before.lat) * t,
+            lon = before.lon + (after.lon - before.lon) * t,
+        )
     }
 
     private fun nearAnyTurn(at: Double): Boolean {

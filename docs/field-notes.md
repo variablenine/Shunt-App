@@ -3307,3 +3307,63 @@ nearest vertex over the *whole* route, so on a route that runs back near itself
 it could match the wrong passage — and `onUnambiguousRoad` then nudged the pin
 from there, placing it on a different road entirely. Pins are matched in route
 order with a forward cursor now, as `DriveMonitorEngine` already did.
+
+---
+
+### F-62 · The same trap, a third time: the mark was drawn at the vertex
+
+*Reported after the progress-window fix, 2026-08-24:* *"Still having waypoints
+firing before I hit the trigger point."*
+
+The progress fix (F-61) was real and necessary, and it was not this. Two
+different pieces of arithmetic answer "where does this waypoint fire":
+
+- The **advance** compares `pinAlong[i] - alongOf(car)` against the lead.
+  `alongOf` projects the car into its segment — accurate to the metre.
+- The **mark** turned `pinAlong[i] - lead` back into a position by binary-
+  searching the along-array and returning `routePolyline[lo]` — the first vertex
+  *at or past* the target.
+
+So the mark was pushed forward to the end of whatever segment the trigger fell
+inside. On a dense urban line the vertices are metres apart and nobody would
+notice. On a motorway, where BRouter emits one long segment between junctions,
+the mark lands hundreds of metres to kilometres beyond the real trigger. The
+waypoint fires exactly when it should and the driver has not reached the ring.
+
+Measured on a fixture with 8 km segments: fired at 15,500 m, drawn at 15,982 m.
+
+**Worth noting how it was found.** The report was the same words as before —
+"firing before the trigger point" — and the tempting move was to look again at
+the thing just fixed. The two are distinguishable: F-61 made the *behaviour*
+drift while the marks stayed right; this one makes the *marks* drift while the
+behaviour stays right. Both look identical from the driver's seat, which is why
+the fix has a test that pins the two computations to each other rather than
+checking either alone.
+
+**And this is the third time this exact mistake has been paid for.**
+`sampleSpine` kept only existing vertices and dropped every camera in the gaps.
+`alongOf` rounded back to the segment start and froze progress. Now the marks
+round forward to the segment end. Each was found the hard way, months apart, in
+different files. The sentence is in CLAUDE.md twice already and is now there a
+third time: *a polyline's vertices say nothing about the road between them.*
+Anything converting a distance-along into a position must interpolate.
+
+**And then the driver described it precisely enough to find the worst instance
+of all:** *"the pin triggers early and then the next pin after that fires shortly
+after."* That is not the marks at all — it is `pinAlong`, which found each
+waypoint's along-route position by snapping it to the nearest route **vertex**.
+Both halves of the sentence fall straight out of that. A pin rounded back to the
+start of its segment reads as short of where it really is, so its lead is
+satisfied early. And two pins inside the same long segment round to the *same*
+vertex: identical positions, zero gap, so the instant one advances the next is
+already inside its lead and fires on the following fix. Reverting the fix in a
+test put two pins 4 km apart at 0 m and 100 m.
+
+That sentence was worth more than any amount of re-reading the code. "Fires
+early" alone had already sent me to two wrong places; "and then the next one
+shortly after" is a *cascade*, and a cascade means two things share a position.
+
+`PinSites.pointAt` had it too and was fixed in the same commit — every caller
+there is moving a pin by a measured amount (a nudge, a settle, a fork distance),
+and rounding a sixty-metre nudge to the end of a kilometre segment does not
+misplace the pin slightly, it puts it somewhere else.

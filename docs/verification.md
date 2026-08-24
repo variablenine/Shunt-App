@@ -1330,6 +1330,29 @@ a time and in step with passing the rings.
 
 ---
 
+### C13 · The ring is where the waypoint fires
+
+*Never seen on a drive — 2026-08-24. See F-62.*
+
+**Provoke it.** Drive a long straight stretch — a motorway between junctions,
+where the route line has few vertices — and watch a ring approach.
+
+**Expect:** the "sending waypoint N" line appears as the car crosses the ring,
+within a second or two either side. Not before it.
+
+**Two different bugs look identical from the seat**, so note which way it is
+wrong if it recurs:
+
+- firing *before* the ring, on long straight stretches → the mark is being
+  drawn ahead of the trigger (F-62)
+- firing at odd times with the rings looking right, or not firing at all →
+  along-route progress is stalling (F-61)
+
+The distinction is whether the rings themselves look plausible, so it is worth a
+screenshot showing a ring and the car together.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

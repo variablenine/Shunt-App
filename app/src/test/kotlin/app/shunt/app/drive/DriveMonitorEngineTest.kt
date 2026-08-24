@@ -552,4 +552,76 @@ class DriveMonitorEngineTest {
         }
         assertTrue(previous < 400.0, "never got near the end: $previous m short")
     }
+
+    @Test
+    fun `the ring is drawn exactly where the waypoint fires, on a long segment`() {
+        // **The two were computed by different arithmetic.** The advance uses
+        // `alongOf`, which projects the car into its segment and is accurate to
+        // the metre. The mark was drawn by rounding forward to the next vertex —
+        // so on a segment as long as a straight motorway run, it landed at the
+        // far end, and the waypoint fired correctly a long way before the driver
+        // reached the ring. Reported as "waypoints firing before I hit the
+        // trigger point".
+        val a = origin
+        val b = east(a, 8_000.0)
+        val c = east(a, 16_000.0)
+        val pin = c
+        val engine = DriveMonitorEngine(
+            chain = listOf(pin, east(a, 20_000.0)),
+            routePolyline = listOf(a, b, c, east(a, 20_000.0)),
+            cameras = emptyList(),
+        )
+        engine.onLocation(update(a))
+        val ring = engine.triggerPoints().first()
+
+        // Walk up to the ring: nothing should fire before it.
+        var firedAt: Double? = null
+        for (step in 1..190) {
+            val metres = step * 100.0
+            val at = east(a, metres)
+            val signals = engine.onLocation(update(at))
+            if (signals.any { it is DriveSignal.ApproachingWaypoint }) {
+                firedAt = metres
+                break
+            }
+        }
+        val fired = firedAt ?: kotlin.test.fail("the waypoint never fired")
+        val ringAt = haversineMeters(a, ring)
+        assertTrue(
+            kotlin.math.abs(fired - ringAt) <= 150.0,
+            "fired at $fired m but the ring is drawn at $ringAt m",
+        )
+    }
+
+    @Test
+    fun `two pins inside one long segment do not fire together`() {
+        // **Reported exactly:** "the pin triggers early and then the next pin
+        // after that fires shortly after." Snapping each pin to its nearest
+        // route *vertex* gave both pins in a long segment the same along-route
+        // position — so their gap was zero, and the moment one advanced the next
+        // was already inside its lead.
+        val a = origin
+        val far = east(a, 20_000.0)
+        // One 20 km segment, with two pins 4 km apart inside it.
+        val first = east(a, 8_000.0)
+        val second = east(a, 12_000.0)
+        val engine = DriveMonitorEngine(
+            chain = listOf(first, second, far),
+            routePolyline = listOf(a, far),
+            cameras = emptyList(),
+        )
+
+        val firedAt = mutableListOf<Double>()
+        for (step in 0..199) {
+            val metres = step * 100.0
+            val signals = engine.onLocation(update(east(a, metres)))
+            repeat(signals.count { it is DriveSignal.ApproachingWaypoint }) { firedAt += metres }
+        }
+
+        assertTrue(firedAt.size >= 2, "expected both pins to fire, got $firedAt")
+        assertTrue(
+            firedAt[1] - firedAt[0] > 2_000.0,
+            "the two pins are 4 km apart but fired ${firedAt[1] - firedAt[0]} m apart: $firedAt",
+        )
+    }
 }
