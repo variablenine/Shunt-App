@@ -3074,11 +3074,19 @@ often slightly better, because the carriageways do drift apart at junctions and
 the nudge finds those. Only below `MIN_OTHER_ROAD_METERS`, where which road the
 car picks is a coin toss, is the pin dropped.
 
-**What has not been done: measuring it.** `roadsNear` loads tiles, once per
-option, for a hundred-odd points. The benchmark is the place to find out whether
-that is milliseconds or seconds, and it needs a machine that can reach the tile
-CDN. Until then this is a correctness change of unknown cost, and if long-route
-planning suddenly slows down, this is the first thing to suspect.
+**Measuring it, without a machine that can measure it.** `roadsNear` loads
+tiles, once per option, for a hundred-odd points, and the sandbox this is
+developed in cannot reach the tile CDN — so the cost could not be measured where
+the change was written.
+
+It was made *visible* instead. `PlanTimings.STAGE_ROAD_CHECK` is its own line in
+the planning breakdown on the result sheet, beside the camera fetch, the routing
+and the pin phase it sits inside. That is the same trick that found every other
+performance problem in this project: §7's whole "where planning time actually
+goes" section was written from screenshots of that breakdown, for exactly this
+reason. The next long route planned on a phone answers the question with nobody
+setting up a benchmark, and if long-route planning has slowed down, the line says
+so outright rather than leaving it to be suspected.
 
 **And what it still cannot tell you** is which road is which. The query returns
 distances, not ways, because that is all the decision needs. If a later question

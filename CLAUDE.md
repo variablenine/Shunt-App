@@ -2209,8 +2209,10 @@ Ordered roughly by what unblocks real use.
   `BrouterRouter.roadsNear` answers it from BRouter's own tiles, and
   `BrouterPlanner.onUnambiguousRoad` moves each pin to the position where the
   car's map has least to choose between. §6, "Asking the road graph what is
-  actually near a pin", F-53 and F-58. **Wants confirming on a drive**, and
-  wants measuring: it is one extra tile-loading query per option.
+  actually near a pin", F-53 and F-58. **Wants confirming on a drive.** Its cost
+  is now its own line in the planning breakdown (`PlanTimings.STAGE_ROAD_CHECK`),
+  so the next plan on a real phone answers the one thing that could not be
+  measured here.
 - **Surface BRouter's own `indexInTrack` and snap distance.** `runRoute` throws
   away `track.matchedWaypoints`, which gives the exact index of each waypoint in
   the returned line, how far it had to snap to reach a road, and whether BRouter
