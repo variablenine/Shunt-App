@@ -320,9 +320,16 @@ class DriveMonitor(
                     // often an hour later, and a camera met again there is a new
                     // encounter — under-warning is the worse mistake here.
                     engine = newEngine(afterCharging)
-                } else {
+                } else if (change !is LegChange.Unroutable) {
                     reaim(engine.remainingChain())
                 }
+                // **Not after an unroutable charge leg.** The driver has just
+                // been told the car is detouring to a charger its own way and
+                // that nothing is protecting that leg. Re-aiming would steer it
+                // off the charger it inserted because it needs the charge —
+                // fighting the driver (§6.1) over the one thing the car knows
+                // better than we do, while the alert says the opposite. The
+                // next probe re-tries the leg, and usually gets it.
             }
         } finally {
             if (!arrived) onStatus(DriveStatus.Idle)

@@ -908,9 +908,10 @@ private fun DrivingContent(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Your car added this stop itself. Shunt has planned the route to " +
-                        "it with camera avoidance, and will route the rest of the trip " +
-                        "once you're charged.",
+                    // The number and the noun. The driver needs to know the car
+                    // added it and that Shunt is routing it; the rest of that
+                    // explanation was three lines of reading at speed.
+                    "Your car's stop. Routed with camera avoidance.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )

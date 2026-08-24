@@ -1152,6 +1152,23 @@ them, and add new observations as they come in. Detail lives in
    carriageway or frontage road neither uses is invisible to it. Needs the graph
    query in the roadmap.
 
+21. **A split trip's first leg was driven to the trip's destination.**
+   *Fixed, unconfirmed on a drive.* `drivePlanFor` appended the final
+   destination to a chain describing the first leg only, so the car was aimed
+   hundreds of kilometres ahead once past the last lead pin — and an extension
+   then put the trip's end in the middle of the chain. §6, "A leg's chain ends
+   where the leg ends", and F-57.
+
+22. **A charging detour deleted the driver's own stops.** *Fixed, unconfirmed
+   on a drive.* The charge leg was planned with no stops and the monitor rebuilt
+   its engine from it, so the stops were gone from every later read. §6, "What
+   happens when the car adds a charging stop", and F-57.
+
+23. **An unroutable charging leg was fought.** *Fixed, unconfirmed on a drive.*
+   Shunt told the driver the car was detouring to a charger its own way, then
+   re-aimed the car back at our route — off the charger it inserted because it
+   needed the charge. F-57.
+
 ### A watched destination is not a reason to give up
 
 BRouter refuses a route that begins or ends inside a zone it has been told is
@@ -1444,6 +1461,57 @@ correctness point rather than a layout one — the cards are a choice *for this
 leg*, while later legs are planned once and begin at the same boundary whichever
 card is picked, so folding their distance into "Fastest" would describe a trip
 nobody is being offered. See F-25.
+
+### A leg's chain ends where the leg ends
+
+`DrivePlan.chain` is the pins followed by the point the leg finishes at, and on
+a split trip that is **the boundary, not the trip's destination**. `AppContainer`
+has always built later legs that way and says why in a comment; the lead leg is
+built in `PlanViewModel.drivePlanFor` and appended `destination.location`
+regardless. Two failures follow from the one line:
+
+- **The car is aimed at the destination the moment it passes the last lead
+  pin** — hundreds of kilometres ahead, with no avoidance for anything between.
+- **`extend` appends the next leg after it**, so the trip's end sits in the
+  *middle* of the chain. The car is sent there, then back to leg two's first
+  pin. That is the shape of "it navigated to a previous pin and then to the
+  correct one" and of a detour nobody planned.
+
+`remaining.first()` is the boundary — the point this leg stops at and the next
+one starts from — so the append stays continuous and `isPartial` means what it
+says. A trip planned in one go has no `remaining` and still ends at the
+destination.
+
+### What happens when the car adds a charging stop
+
+The end-to-end path, because it is the least exercised thing in the app and the
+easiest to get subtly wrong.
+
+1. **Noticing.** While the car holds the final destination the read is free and
+   runs every 45 s; while Shunt is steering it pin by pin the read costs a
+   re-assert and is rationed by `ProbeWindow`. `classify` compares *positions*,
+   never names — a destination more than `SAME_PLACE_METERS` from ours is a stop
+   the car inserted.
+2. **Routing to it.** `startChargeLeg` plans a camera-aware leg to the charger
+   and the monitor pushes it, alerts `ChargeStopAhead` with the leg's camera
+   count, and puts "Charging first at X" on the driving sheet.
+3. **The driver's own stops go with it.** Those before the charger travel in the
+   charging leg; those beyond it are **held in `stopsBeyondCharger`** and added
+   back to the leg onward. They used to be deleted outright: the charge leg was
+   planned with no stops, the monitor built a fresh engine from it, and the next
+   check read `remainingStops` from a plan that had none. A stop the driver
+   typed in must survive the *car* deciding to charge.
+4. **Arriving.** `Arrived` on a charging leg is not the trip's end — the monitor
+   says so, sets `ParkedAt`, and probes every minute for the car to decide what
+   is next.
+5. **Onward.** A read that comes back pointing at the real destination resumes:
+   a fresh camera-aware leg, `ResumingToDestination`, and the carried stops.
+
+**When it cannot be routed, the car is left alone.** `LegChange.Unroutable`
+alerts that the car is detouring its own way with nothing protecting the leg —
+and Shunt must then *not* re-aim it at our route. It did, which both contradicted
+what the driver had just been told and steered the car off a charger it inserted
+because it needs the charge. The next probe re-tries the leg and usually gets it.
 
 ### A leg the driver is already on can still be revised, and the car must hear it
 

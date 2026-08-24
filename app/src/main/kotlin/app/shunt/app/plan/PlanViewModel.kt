@@ -841,7 +841,22 @@ class PlanViewModel(
     ): DrivePlan =
         DrivePlan(
             destination = destination,
-            chain = option.waypoints + destination.location,
+            // **This leg's own end, not the trip's.**
+            //
+            // On a split trip `option` describes the first leg only, so
+            // appending the trip's destination puts a waypoint hundreds of
+            // kilometres past where this route stops. Two things go wrong with
+            // that, and both were live: the car is aimed at the destination the
+            // moment it passes the last pin of leg one, losing avoidance for
+            // everything after it; and `DriveMonitor.extend` appends the next
+            // leg onto a chain that still ends in the destination, so the
+            // trip's end sits in the *middle* and the car is sent there and
+            // then back. `remaining.first()` is the boundary, which is where
+            // this leg actually stops and where the next one starts.
+            //
+            // AppContainer fixes exactly this for later legs; the lead leg is
+            // built here and kept the bug.
+            chain = option.waypoints + (remaining.firstOrNull() ?: destination.location),
             cameras = option.passedCameras,
             polyline = option.polyline,
             // The driver's own stops are in the chain too, but must not be shed

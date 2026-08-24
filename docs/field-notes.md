@@ -2952,3 +2952,81 @@ which turns the proxy into the real test. Guessing an offset toward the directio
 of travel was considered and rejected — it trades a known failure for an unknown
 one, and on a road with a frontage road on the *other* side it makes things
 worse.
+
+---
+
+### F-57 · Reading the charging path end to end, and what fell out of it
+
+*Not a field report — a review, asked for after a drive: "check for the end user
+experience of the charging check too, what to do if a new location actually comes
+up, and make sure that it works correctly."* Three faults, and the first is not
+about charging at all.
+
+**1. A split trip's first leg was driven to the trip's destination.**
+
+`drivePlanFor` builds the plan handed to the drive monitor at Go:
+
+    chain = option.waypoints + destination.location
+
+On a split trip `option` describes the **first leg**, and `destination` is where
+the driver is going — so the chain is the first leg's pins followed by a point
+hundreds of kilometres past the end of that leg. Two things break, and the second
+is the nastier:
+
+- Past the last lead pin the car is aimed at the final destination and navigates
+  its own way there, with no avoidance, until the next leg lands.
+- `DriveMonitor.extend` appends the next leg onto `remainingChain()`, which still
+  ends in that destination. So the trip's end sits in the **middle** of the
+  chain: the car is sent to the destination, then back to leg two's first pin.
+
+The fix is one line — `remaining.first()` is the boundary — and the interesting
+part is why it survived. `AppContainer` builds later legs and gets it right, with
+a comment saying exactly what goes wrong if you do not: *"This leg's own end, not
+the trip's. `points.last()` is the final destination, so on a trip that takes
+three legs it put a waypoint hundreds of kilometres past the end of the leg being
+appended."* Someone found this, fixed it, wrote it down — and fixed it in one of
+the two places legs are built. The lead leg is built in a different file, by a
+different function, and kept the bug.
+
+**The existing test made it invisible.** `a leg that lands mid-drive extends the
+chain without losing progress` constructs its first leg by hand with the boundary
+as its destination — i.e. it encodes the behaviour production was supposed to
+have. It passed throughout. A fixture that asserts the right shape is worth
+nothing if nothing checks that the shape is what the code actually produces; the
+new test drives `onGo` and reads the chain out of the driving phase.
+
+**2. A charging detour deleted the driver's own stops.**
+
+`startChargeLeg` planned the leg to the charger with `emptyList()` for stops, and
+the monitor then builds a *fresh engine* from that plan. So the next probe reads
+`remainingStops` from a plan that has none, and the route onward is planned
+without them. The driver's stop is not skipped by a decision — it stops existing,
+because the *car* decided to charge.
+
+Stops before the charger now travel in the charging leg and stops beyond it are
+held in `stopsBeyondCharger` and added back on resume. The before/after split is
+straight-line distance from the car, which is coarse; that is fine here in a way
+it was not in `LegSplitter` (F-43), because an inserted Supercharger is tens of
+kilometres away and "before or after it" is not a close call. A stop put on the
+wrong side is still driven, just on the other leg. The carried stops are also not
+dropped when a resume plan fails — the failure path keeps them, since throwing
+them away on a transient routing failure is the original bug with extra steps.
+
+**3. An unroutable charging leg was fought.**
+
+`LegChange.Unroutable` alerts: *"Your car is detouring to X and Shunt could not
+route it. Drive as if unprotected."* And then the monitor called `reaim`, pushing
+our own pin back at the car — steering it off the charger it inserted because it
+needs the charge, while the driver had just been told the opposite was happening.
+Both halves are wrong: the code contradicted the alert, and it fought the car
+over the one thing the car knows better than Shunt does. §6.1 applies to this
+path as much as any other.
+
+**On the driver-facing side, which was the other half of the question.** The
+sequence a driver actually sees is sound: a spoken "your car added a charging
+stop at X, that leg is camera free / passes N cameras", a banner on the driving
+sheet naming the charger, the map redrawn to the charging leg, "charging stop
+reached" on arrival, and "back on the way" when the car re-plans. The one change
+made was to the banner's body text, which was three lines explaining the
+mechanism — against the standing rule that a paragraph shown to someone driving
+is a weaker warning than a sentence, because it does not get read.

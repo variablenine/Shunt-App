@@ -439,4 +439,87 @@ class ChargeStopCoordinatorTest {
         assertTrue(due(holding), "a car holding the destination is asked for free and often")
         assertTrue(!due(steered), "a steered car must not be redirected on the free-read cadence")
     }
+
+    @Test
+    fun `the driver's own stops survive a charging detour`() {
+        // **A stop the driver typed in must not be deleted because the car
+        // decided to charge.** The charge leg is planned with no stops, and the
+        // monitor then builds a fresh engine from it — so without carrying them
+        // the next check reads a plan that has none and routes the rest of the
+        // trip straight past them.
+        runTest {
+            val vehicle = FakeVehicleNavClient()
+            val nearStop = GeoPoint(39.05, -98.55)
+            val farStop = GeoPoint(39.0, -98.1)
+            val plannedWith = mutableListOf<List<GeoPoint>>()
+            val clock = Clock()
+            val reads = mutableListOf<ActiveRoute?>(
+                navigatingTo(charger),
+                navigatingTo(destination.location),
+            )
+            val coordinator = coordinator(
+                vehicle, clock, reads,
+                planLeg = { _, stops, to, _ ->
+                    plannedWith += stops
+                    planFor(to)
+                },
+            )
+
+            val toCharger = coordinator.check(here, destination, listOf(nearStop, farStop), emptyList())
+            assertIs<LegChange.ToChargeStop>(toCharger)
+            assertEquals(
+                listOf(nearStop),
+                plannedWith.last(),
+                "the stop before the charger belongs to the charging leg",
+            )
+
+            // The car finishes charging and heads for the destination. The
+            // engine built from the charge leg knows nothing of the far stop.
+            clock.now += 10 * 60_000
+            val onward = coordinator.check(here, destination, emptyList(), emptyList())
+            assertIs<LegChange.ToDestination>(onward)
+            assertTrue(
+                farStop in plannedWith.last(),
+                "the stop beyond the charger was dropped: ${plannedWith.last()}",
+            )
+        }
+    }
+
+    @Test
+    fun `a carried stop is not lost when the route onward fails to plan`() = runTest {
+        val vehicle = FakeVehicleNavClient()
+        val farStop = GeoPoint(39.0, -98.1)
+        val plannedWith = mutableListOf<List<GeoPoint>>()
+        var failOnce = true
+        val clock = Clock()
+        val reads = mutableListOf<ActiveRoute?>(
+            navigatingTo(charger),
+            navigatingTo(destination.location),
+            navigatingTo(destination.location),
+        )
+        val coordinator = coordinator(
+            vehicle, clock, reads,
+            planLeg = { _, stops, to, _ ->
+                plannedWith += stops
+                if (to == destination && failOnce) {
+                    failOnce = false
+                    null
+                } else {
+                    planFor(to)
+                }
+            },
+        )
+
+        coordinator.check(here, destination, listOf(farStop), emptyList())
+        clock.now += 10 * 60_000
+        assertEquals(LegChange.None, coordinator.check(here, destination, emptyList(), emptyList()))
+        clock.now += 10 * 60_000
+        val onward = coordinator.check(here, destination, emptyList(), emptyList())
+
+        assertIs<LegChange.ToDestination>(onward)
+        assertTrue(
+            farStop in plannedWith.last(),
+            "a failed plan threw the carried stop away: ${plannedWith.last()}",
+        )
+    }
 }

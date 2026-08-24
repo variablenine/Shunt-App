@@ -347,6 +347,59 @@ class PlanViewModelTest {
     }
 
     @Test
+    fun `a split trip's first leg is driven to its own boundary, not the destination`() = runTest {
+        // **The chain has to end where this leg ends.** Appending the trip's
+        // destination to a first-leg route aims the car hundreds of kilometres
+        // ahead the moment it passes the last pin — and DriveMonitor.extend
+        // then appends the next leg *after* that destination, putting the end
+        // of the trip in the middle of the chain. AppContainer has always done
+        // this correctly for later legs; the lead leg is built elsewhere and
+        // did not.
+        val boundary = GeoPoint(39.9, -97.8)
+        val pin = GeoPoint(39.7, -97.95)
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = PlanOutcome.Routes(
+                listOf(plannedRoute(RouteChoice.FASTEST, 600, waypoints = listOf(pin))),
+                remaining = listOf(boundary, dest),
+            ),
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+
+        val driving = model.state.value.phase as? Phase.Driving
+        assertTrue(driving != null, "expected the driving phase, got ${model.state.value.phase}")
+        assertEquals(
+            listOf(pin, boundary),
+            driving.plan.chain,
+            "the first leg must end at its boundary, not at the trip's destination",
+        )
+        assertTrue(driving.plan.isPartial, "a leg with more to come is partial")
+    }
+
+    @Test
+    fun `a trip planned in one go still ends at the destination`() = runTest {
+        val pin = GeoPoint(39.7, -97.95)
+        val model = vm(
+            this,
+            suggestions = listOf(Suggestion("X", dest, "place")),
+            outcome = PlanOutcome.Routes(
+                listOf(plannedRoute(RouteChoice.FASTEST, 600, waypoints = listOf(pin))),
+            ),
+        )
+        model.onQueryChange("X"); advanceUntilIdle()
+        model.onSuggestionSelected(0); advanceUntilIdle()
+        model.onGo(); advanceUntilIdle()
+
+        val driving = model.state.value.phase as? Phase.Driving
+        assertTrue(driving != null, "expected the driving phase, got ${model.state.value.phase}")
+        assertEquals(listOf(pin, dest), driving.plan.chain)
+        assertTrue(!driving.plan.isPartial)
+    }
+
+    @Test
     fun `one option that happens to be labelled FASTEST still means fewest cameras`() = runTest {
         // **Straight out of a real diagnostic log.** On a leg where every pass
         // finds the same camera-free road the options collapse to one card, and

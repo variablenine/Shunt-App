@@ -1176,6 +1176,52 @@ support.
 
 ---
 
+### B21 · A split trip's first leg stops at its boundary
+
+*Never seen on a drive — 2026-08-24. See F-57.*
+
+**Provoke it.** Plan a trip long enough to split, tap Go, and watch what the car
+is aimed at as you approach the end of the first leg.
+
+**Expect:** the car is walked from pin to pin and then to the **boundary** — the
+point the drawn line ends at before the next leg lands. It must never be aimed
+at the trip's final destination while there are legs still to come.
+
+**The tell that this is wrong:** the car's own screen naming your final
+destination early in the trip, or naming it and then switching back to somewhere
+much closer. The second is the extension appending after a destination left at
+the end of the chain.
+
+### B22 · A charging detour keeps the stops you asked for
+
+*Never seen on a drive — 2026-08-24. See F-57.*
+
+**Provoke it.** Add a stop of your own to a long trip, then let the car insert a
+Supercharger (or use a trip long enough that it will).
+
+**Expect:** a stop **before** the charger is visited on the way to it. A stop
+**beyond** the charger is still in the route after charging — check the map shows
+the line going through it once "back on the way" is announced.
+
+**The failure:** the stop simply not being in the route any more, with nothing
+said about it.
+
+### A16 · An unroutable charging leg is left to the car
+
+*Never seen on a drive — 2026-08-24. See F-57.*
+
+**Provoke it.** Hard to force deliberately; watch for the alert "no camera
+avoidance to the charger".
+
+**Expect:** after that alert, Shunt stops steering toward its own route and lets
+the car drive to the charger. It must not push a waypoint that pulls the car off
+the charging detour — the car inserted that stop because it needs the charge.
+
+**Also expect:** the next probe tries the leg again, and usually succeeds; the
+"charging first at X" banner appears when it does.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

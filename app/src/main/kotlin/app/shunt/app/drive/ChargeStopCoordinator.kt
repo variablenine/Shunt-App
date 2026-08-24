@@ -228,7 +228,7 @@ class ChargeStopCoordinator(
                     // Same charger, same leg — confirmed, put the car back on it.
                     unchanged(reasserted, steeringChain)
                 } else {
-                    startChargeLeg(from, probe.stop, headingDegrees)
+                    startChargeLeg(from, probe.stop, remainingStops, headingDegrees)
                 }
             }
         }
@@ -243,14 +243,36 @@ class ChargeStopCoordinator(
         lastProbeAt = nowMillis() - window.parkedIntervalMillis
     }
 
+    /**
+     * The driver's own stops that lie beyond the charger, held across the
+     * charging leg.
+     *
+     * **A charging detour used to delete them.** The charge leg was planned with
+     * no stops at all, and the monitor then builds a fresh engine from it — so
+     * the next check reads `remainingStops` from a plan that has none, and the
+     * route onward is planned without them. A stop the driver typed in was
+     * silently dropped because the *car* decided to charge, which is the one
+     * thing a stop must survive.
+     */
+    private var stopsBeyondCharger: List<GeoPoint> = emptyList()
+
     private suspend fun startChargeLeg(
         from: GeoPoint,
         stop: ChargeStop,
+        remainingStops: List<GeoPoint>,
         headingDegrees: Double?,
     ): LegChange {
+        // Which of the driver's stops this leg should still visit. Straight-line
+        // from here is a coarse test, and coarse is all it needs to be: a
+        // charger the car inserted is tens of kilometres away, so "before or
+        // after it" is not a close call. A stop it puts on the wrong side is
+        // still driven, just on the other leg.
+        val toCharger = haversineMeters(from, stop.at)
+        val (before, beyond) = remainingStops.partition { haversineMeters(from, it) < toCharger }
         val destination = Destination(stop.name, stop.at)
-        val plan = runCatching { planLeg(from, emptyList(), destination, headingDegrees) }.getOrNull()
+        val plan = runCatching { planLeg(from, before, destination, headingDegrees) }.getOrNull()
             ?: return LegChange.Unroutable(stop)
+        stopsBeyondCharger = beyond
         leg = Leg.ToChargeStop(stop)
         return LegChange.ToChargeStop(stop, plan)
     }
@@ -261,10 +283,17 @@ class ChargeStopCoordinator(
         destination: Destination,
         headingDegrees: Double?,
     ): LegChange {
-        val plan = runCatching { planLeg(from, remainingStops, destination, headingDegrees) }.getOrNull()
+        // What is left of this leg's stops, plus the ones the charging detour
+        // was carrying for us. Ordered as they were: the charge leg's leftovers
+        // are the near ones, which still come first.
+        val stops = (remainingStops + stopsBeyondCharger).distinct()
+        val plan = runCatching { planLeg(from, stops, destination, headingDegrees) }.getOrNull()
             // Keep the leg as it was: claiming a route we haven't got would be
             // worse than leaving the car pointed at the destination it has.
+            // The carried stops stay carried — dropping them because one plan
+            // failed is how they went missing in the first place.
             ?: return LegChange.None
+        stopsBeyondCharger = emptyList()
         leg = Leg.ToDestination
         return LegChange.ToDestination(plan)
     }
