@@ -223,6 +223,9 @@ fun PlanScreen(
             // Only while driving. Framing the trip against a pin the driver has
             // not set off toward would take the map away from them for nothing.
             followTo = state.aimedAt.takeIf { state.phase is Phase.Driving },
+            // Only while driving: before Go there is no speed to compute a lead
+            // from, so the marks would be drawn at a guess and read as fact.
+            waypointTriggers = if (state.phase is Phase.Driving) state.waypointTriggers else emptyList(),
             // The direct road onward, so the pending stretch follows real roads
             // instead of cutting across country.
             directAhead = directAhead,

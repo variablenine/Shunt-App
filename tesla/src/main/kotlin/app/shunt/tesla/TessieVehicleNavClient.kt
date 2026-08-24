@@ -100,9 +100,29 @@ class TessieVehicleNavClient(
      * destination and no waypoints, so the route shape is lost.
      */
     private suspend fun shareDestination(point: GeoPoint): PushResult {
+        // **Two formats, most specific first.** See [shareMapUrl].
+        when (val viaUrl = shareOnce(shareMapUrl(point))) {
+            is ShareOutcome.Done -> return viaUrl.result
+            ShareOutcome.ValueRejected -> Unit
+        }
+        return when (val plain = shareOnce(shareValue(point))) {
+            is ShareOutcome.Done -> plain.result
+            ShareOutcome.ValueRejected ->
+                PushResult.Failed("the vehicle rejected the destination", retryable = true)
+        }
+    }
+
+    /** What one `share` call did. [ValueRejected] means try a different format. */
+    private sealed interface ShareOutcome {
+        data class Done(val result: PushResult) : ShareOutcome
+        /** The car took the command and would not use the value it was given. */
+        data object ValueRejected : ShareOutcome
+    }
+
+    private suspend fun shareOnce(value: String): ShareOutcome {
         rateLimiter.acquire()
         val url = "$baseUrl/$vin/command/share".toHttpUrl().newBuilder()
-            .addQueryParameter("value", shareValue(point))
+            .addQueryParameter("value", value)
             .addQueryParameter("locale", locale)
             .build()
         val request = Request.Builder()
@@ -116,24 +136,58 @@ class TessieVehicleNavClient(
                 http.newCall(request).execute().use { it.code to it.body?.string().orEmpty() }
             }
         }.getOrElse { e ->
-            return PushResult.Failed("network error: ${e.message}", retryable = true)
+            return ShareOutcome.Done(PushResult.Failed("network error: ${e.message}", retryable = true))
         }
 
         if (code !in 200..299) {
-            return PushResult.Failed(
-                "HTTP $code${text.take(200).let { if (it.isBlank()) "" else ": $it" }}",
-                retryable = statusRetryable(code),
+            // A refused *value* is worth trying again in another format; a
+            // refused *request* is not, and re-sending it would only cost the
+            // rate limiter another slot.
+            if (code == 400 || code == 422) return ShareOutcome.ValueRejected
+            return ShareOutcome.Done(
+                PushResult.Failed(
+                    "HTTP $code${text.take(200).let { if (it.isBlank()) "" else ": $it" }}",
+                    retryable = statusRetryable(code),
+                ),
             )
         }
         val ok = runCatching { json.decodeFromString<ShareResponse>(text).result }.getOrDefault(false)
         return if (ok) {
-            PushResult.DestinationOnly(
-                "this vehicle only accepts a single destination, not a waypoint route",
+            ShareOutcome.Done(
+                PushResult.DestinationOnly(
+                    "this vehicle only accepts a single destination, not a waypoint route",
+                ),
             )
         } else {
-            PushResult.Failed("the vehicle rejected the destination", retryable = true)
+            ShareOutcome.ValueRejected
         }
     }
+
+    /**
+     * The point as a map link, which is the form the car resolves rather than
+     * *searches for*.
+     *
+     * **Share is a search box, and that is the problem.** It is the one place
+     * Shunt hands the car a string and lets the car decide what it means, and
+     * given a bare coordinate pair the car runs it through the same place
+     * lookup a typed query goes through. Two failures follow, both reported
+     * from real drives: it can resolve to something near the coordinate rather
+     * than the coordinate, and where the lookup finds more than one candidate
+     * the car stops and asks the driver to pick — "sometimes the car doesn't
+     * know what specific location is being referenced and will ask the user to
+     * select which location the car is being sent to."
+     *
+     * A map link carries the coordinate as a coordinate, so there is nothing to
+     * disambiguate. It costs no account and no key of ours — it is a string,
+     * not a request Shunt makes — though the car may resolve it through the
+     * link's own host, which is worth knowing before this is extended.
+     *
+     * [shareValue] stays as the fallback: it is the format that has been
+     * observed to work, so a car that will not take the link is no worse off
+     * than before.
+     */
+    private fun shareMapUrl(point: GeoPoint): String =
+        "https://maps.google.com/maps?q=" + shareValue(point)
 
     /**
      * The point as the share command wants it: plain decimal degrees, six

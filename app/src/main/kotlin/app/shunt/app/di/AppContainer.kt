@@ -398,6 +398,12 @@ class AppContainer(context: Context) {
     val aimedAt = MutableStateFlow<GeoPoint?>(null)
 
     /**
+     * Where each waypoint ahead will be handed to the car, drawn on the map so
+     * the advance can be seen coming rather than guessed at. Moves with speed.
+     */
+    val waypointTriggers = MutableStateFlow<List<GeoPoint>>(emptyList())
+
+    /**
      * Legs planned after the driver set off, on their way to the drive monitor.
      *
      * **Unbounded, and it was conflated on a false premise.** The comment here

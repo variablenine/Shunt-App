@@ -109,6 +109,31 @@ data class ProbeWindow(
     val clearOfWaypointMeters: Double = 3_000.0,
     /** Metres of clear road needed from the nearest camera on the route. */
     val clearOfCameraMeters: Double = 1_500.0,
+    /**
+     * Metres of clear road needed before the next **turn** on the route.
+     *
+     * **A probe redirects the car at the final destination**, and for as long
+     * as it holds that destination it is navigating its own way there. Any
+     * junction inside that window is one it may take — reported from a drive:
+     * "we can't have it check for charging if there are any potential turns
+     * around that the car would take if navigating directly to the destination.
+     * That needs to be fixed. We also can't have that happen right before a turn
+     * either."
+     *
+     * Wider than [clearOfCameraMeters] on purpose. A camera is something to be
+     * warned about a little early; a turn taken wrongly is a manoeuvre that has
+     * to be undone, and under FSD it happens before the driver has decided
+     * anything. At motorway speed 2 km is about a minute, which is far longer
+     * than a probe takes even on a slow connection.
+     */
+    val clearOfTurnMeters: Double = 2_000.0,
+    /**
+     * ...and metres of road since the last one.
+     *
+     * The car is still settling onto the road it just turned onto, and a
+     * redirect there is the one most likely to send it straight back round.
+     */
+    val clearOfLastTurnMeters: Double = 400.0,
 ) {
     /**
      * [metersToNextWaypoint] and [metersToNearestCamera] are null when there is
@@ -119,11 +144,15 @@ data class ProbeWindow(
         metersToNextWaypoint: Double?,
         metersToNearestCamera: Double?,
         offRoute: Boolean,
+        metersToNextTurn: Double? = null,
+        metersSinceLastTurn: Double? = null,
     ): Boolean {
         if (offRoute) return false
         if (millisSinceLastProbe < minIntervalMillis) return false
         if (metersToNextWaypoint != null && metersToNextWaypoint < clearOfWaypointMeters) return false
         if (metersToNearestCamera != null && metersToNearestCamera < clearOfCameraMeters) return false
+        if (metersToNextTurn != null && metersToNextTurn < clearOfTurnMeters) return false
+        if (metersSinceLastTurn != null && metersSinceLastTurn < clearOfLastTurnMeters) return false
         return true
     }
 
@@ -151,4 +180,5 @@ data class ProbeWindow(
         if (millisSinceLastProbe < readIntervalMillis) return false
         return metersToNearestCamera == null || metersToNearestCamera >= clearOfCameraMeters
     }
+
 }

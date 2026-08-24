@@ -369,4 +369,114 @@ class DriveMonitorEngineTest {
             "the shaping pin must still be shed early",
         )
     }
+
+    @Test
+    fun `a waypoint the car has driven away from is given up on`() {
+        // Reported: "during navigation, it can still get caught up on a previous
+        // waypoint and I'll have to exit and restart navigation to fix." The
+        // along-route gates cannot fire once the driver leaves the route —
+        // progress is forward-only and windowed, so it stops advancing and the
+        // pin sticks for the rest of the drive.
+        val line = (0..59).map { east(origin, it * 100.0) }
+        val pin = line[20]
+        val engine = DriveMonitorEngine(
+            chain = listOf(pin, line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        // Drive up to the pin but never inside the lead, then head away north.
+        engine.onLocation(LocationUpdate(line[10], speedMetersPerSec = 25.0, bearingDegrees = 90.0))
+        var signals = emptyList<DriveSignal>()
+        var away = line[19]
+        repeat(20) {
+            away = north(away, 300.0)
+            signals = engine.onLocation(
+                LocationUpdate(away, speedMetersPerSec = 25.0, bearingDegrees = 0.0),
+            )
+            if (signals.any { it is DriveSignal.ApproachingWaypoint }) return
+        }
+        kotlin.test.fail("the monitor never let go of a pin it had driven away from")
+    }
+
+    @Test
+    fun `an ordinary bend does not count as driving past a waypoint`() {
+        // The guard must not fire on a route that swings away before coming
+        // back — which is every switchback and every motorway interchange.
+        val line = (0..59).map { east(origin, it * 100.0) }
+        val engine = DriveMonitorEngine(
+            chain = listOf(line[40], line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        // Two fixes pointing away, then back on course — nowhere near the
+        // sustained run the guard needs.
+        repeat(2) {
+            engine.onLocation(LocationUpdate(line[5], speedMetersPerSec = 25.0, bearingDegrees = 270.0))
+        }
+        val signals = engine.onLocation(
+            LocationUpdate(line[10], speedMetersPerSec = 25.0, bearingDegrees = 90.0),
+        )
+        assertTrue(
+            signals.none { it is DriveSignal.ApproachingWaypoint },
+            "a pin still well ahead was abandoned: $signals",
+        )
+    }
+
+    @Test
+    fun `turns along the route are reported for the charging gate`() {
+        // East, then a right-angle turn north.
+        val eastLimb = (0..29).map { east(origin, it * 100.0) }
+        val corner = eastLimb.last()
+        val line = eastLimb + (1..30).map { north(corner, it * 100.0) }
+        val engine = DriveMonitorEngine(
+            chain = listOf(line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        engine.onLocation(LocationUpdate(line[5], speedMetersPerSec = 25.0, bearingDegrees = 90.0))
+
+        val ahead = engine.metersToNextTurn(line[5])
+        assertTrue(ahead != null && ahead > 2_000.0, "the turn is about 2.4 km ahead, got $ahead")
+        assertTrue(engine.metersSinceLastTurn(line[5]) == null, "no turn has been passed yet")
+    }
+
+    @Test
+    fun `each waypoint's trigger sits a lead short of it`() {
+        val line = (0..59).map { east(origin, it * 100.0) }
+        val engine = DriveMonitorEngine(
+            chain = listOf(line[20], line[40], line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        engine.onLocation(update(line[0]))
+
+        val triggers = engine.triggerPoints(speedMetersPerSec = 25.0)
+        // Two intermediate pins; the destination is arrived at, not advanced
+        // past, so it has no trigger.
+        assertEquals(2, triggers.size, "got $triggers")
+        for ((i, pin) in listOf(line[20], line[40]).withIndex()) {
+            val short = haversineMeters(triggers[i], pin)
+            assertTrue(short > 0.0, "trigger ${triggers[i]} sits on top of its pin")
+            assertTrue(short <= 1_000.0, "trigger for pin $i is $short m short, too far back")
+        }
+    }
+
+    @Test
+    fun `the trigger moves further back as the car speeds up`() {
+        // The reason to draw it at all: the lead is eighteen seconds of driving,
+        // so it is not a fixed distance and cannot be judged by eye.
+        val line = (0..59).map { east(origin, it * 100.0) }
+        fun triggerAt(speed: Double): GeoPoint {
+            val engine = DriveMonitorEngine(
+                chain = listOf(line[40], line.last()),
+                routePolyline = line,
+                cameras = emptyList(),
+            )
+            engine.onLocation(update(line[0], speed = speed))
+            return engine.triggerPoints(speed).first()
+        }
+        val slow = haversineMeters(triggerAt(8.0), line[40])
+        val fast = haversineMeters(triggerAt(30.0), line[40])
+        assertTrue(fast > slow, "fast lead $fast should be longer than slow lead $slow")
+    }
 }

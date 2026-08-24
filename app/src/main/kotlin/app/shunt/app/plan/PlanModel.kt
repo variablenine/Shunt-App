@@ -151,6 +151,8 @@ data class PlanUiState(
      * follow camera. Null when nothing is being driven.
      */
     val aimedAt: GeoPoint? = null,
+    /** Where each waypoint ahead will be handed to the car. See RouteMap. */
+    val waypointTriggers: List<GeoPoint> = emptyList(),
     val phase: Phase = Phase.Browsing,
 ) {
     /** Camera data came only from the bundled offline snapshot. */

@@ -93,6 +93,12 @@ class DriveMonitor(
      */
     private val onAim: (GeoPoint?) -> Unit = {},
     /**
+     * Where each waypoint still ahead will be sent to the car, recomputed each
+     * fix because the lead moves with speed. See
+     * [DriveMonitorEngine.triggerPoints].
+     */
+    private val onTriggerPoints: (List<GeoPoint>) -> Unit = {},
+    /**
      * Works out a fresh camera-aware plan from the vehicle's current position
      * when it has left the planned route, or null if it can't. Absent, leaving
      * the route is still detected and alerted — just not recovered from.
@@ -284,10 +290,17 @@ class DriveMonitor(
                     moving = isMoving(previous, update),
                     metersToNextWaypoint = engine.metersToNextWaypoint(update.point),
                     metersToNearestCamera = engine.metersToNearestCamera(update.point),
+                    metersToNextTurn = engine.metersToNextTurn(update.point),
+                    metersSinceLastTurn = engine.metersSinceLastTurn(update.point),
                     offRoute = engine.isOffRoute,
                 )
                 previous = update
                 onAim(engine.remainingChain().firstOrNull())
+                onTriggerPoints(
+                    engine.triggerPoints(
+                        update.speedMetersPerSec ?: config.assumedSpeedMetersPerSec,
+                    ),
+                )
                 if (!due) return@collect
 
                 onActivity(DriveActivity.CheckingCharging)

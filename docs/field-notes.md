@@ -2867,3 +2867,88 @@ against the wanted position: slide either way, but never nearer than
 `CAMERA_STANDOFF_METERS`. `usable` enforces the same standoff for every pin from
 every producer, because a pin is where the car *arrives*, and arriving at a
 camera is the one thing this app exists to prevent.
+
+---
+
+### F-56 · Four reports from one drive, and what each turned out to be
+
+*Reported mid-drive, 2026-08-22.* Taken together because they arrived together;
+they are four separate faults.
+
+**1. "It should send the actual correct location at the end."** And, separately,
+*"sometimes the car doesn't know what specific location is being referenced and
+will ask the user to select which location the car is being sent to. We cant have
+that happening."*
+
+One cause. The `share` fallback — the path a car requiring signed commands
+actually lands on — takes a `value` string, and Shunt sends `"lat,lon"`. That is
+not a coordinate as far as the car is concerned; it is a *search*, run through
+the same lookup a typed query goes through. A search can return something near
+the point instead of the point, and it can return several things, at which point
+the car asks. Both reports are the same sentence about the same string.
+
+`shareMapUrl` wraps the coordinate in a map link, which is parsed rather than
+searched. `shareValue` is kept as a fallback and is tried when the car refuses
+the link, so the format known to work is still there.
+
+**This is a diagnosis, not a confirmed fix.** The vehicle path cannot be
+exercised here. What would settle it is the read-back experiment: push a
+destination, then read `activeRoute` and compare the coordinate the car reports
+with the one that was sent. A car that comes back with a different coordinate is
+geocoding; one that comes back with the same is not, and the fault is elsewhere.
+
+**2. "During navigation, it can still get caught up on a previous waypoint and
+I'll have to exit and restart navigation to fix."**
+
+Every advance gate in `DriveMonitorEngine` measures progress *along the route*.
+That was a deliberate fix (F-?, "How far away a waypoint is, is a question about
+the road") and it is right — while the car is on the route. The projection is
+forward-only and bounded to a window ahead of the last known position, so a
+driver who takes over and drives their own way stops advancing by that measure
+entirely. `metersLeftTo` then never falls below the lead, the commit gate never
+sees the turn, and the pin is aimed at until the app is restarted.
+
+The guard is deliberately crude, because anything cleverer would be a route
+decision and this is a safety net: a pin behind the direction of travel *and*
+receding, sustained for fifteen fixes. No approach looks like that.
+
+**3. "We cant have it check for charging if there are any potential turns around
+that the car would take if navigating directly to the destination… We also can't
+have that happen right before a turn either."**
+
+Correct, and the gap was exactly as described. `ProbeWindow` knew about the next
+waypoint and the nearest camera and nothing about junctions. A re-assert hands
+the car the final destination for a few seconds, and FSD acts on what the car is
+navigating to, not on what the phone intends.
+
+Worth recording *why the gate is wider than the camera one*: 2 km against 1.5 km,
+and both against a 3 km waypoint gate. A camera warning arriving a few seconds
+late costs the driver some notice. A turn taken because the car was briefly
+pointed somewhere else has to be undone, and on a divided road that can be
+kilometres.
+
+**4. "It would be nice to visualize on the map where exactly each waypoint's
+trigger is."**
+
+Not a bug, and the most useful request of the four. The advance point is the
+larger of a speed-dependent lead and a floor, capped by half the pin gap, then
+held back by the turn-commit gate — three rules the driver has no way to see. If
+the pins are firing at the wrong moment, the way to find out is to watch where
+they were *going* to fire, before they do.
+
+Drawn as hollow rings on the route, recomputed each fix, on their own render memo
+so a cross-state route is not rebuilt once a second for them.
+
+**Still open: the far carriageway.** *"When a waypoint is set on or near a
+highway it can sometimes go to the other side of a road on Tesla's navigation,
+leading to routing wanting to go back around"*, and *"the car has a resistance to
+navigating to the highway if other parallel roads are nearby."* This is F-53's
+known limit, now reported from the road twice. `PinSites` refuses a pin beside a
+road it can *see* — the fastest route, or our own line coming back near itself —
+and the opposite carriageway of a divided highway is neither. There is no
+geometry for it in anything the planner holds. The answer is the roadmap item:
+ask BRouter's own graph which ways lie within a few tens of metres of a point,
+which turns the proxy into the real test. Guessing an offset toward the direction
+of travel was considered and rejected — it trades a known failure for an unknown
+one, and on a road with a frontage road on the *other* side it makes things
+worse.

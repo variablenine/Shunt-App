@@ -735,6 +735,85 @@ a *stop* and will slow for it. There is one safety valve: within
 `arrivalRadiusMeters` it advances regardless, so a car that never registers as
 past the commit point is not left aiming at a pin it is sitting on.
 
+### A waypoint the car has driven away from must be let go of
+
+Every advance gate measures progress **along the route**, which is right while
+the car is on it and useless the moment it is not. The projection is forward-only
+and windowed, so a driver who takes over and goes their own way stops making
+progress by that measure, `metersLeftTo` never falls below the lead again, and
+the pin sticks — for the rest of the drive. Reported as *"during navigation, it
+can still get caught up on a previous waypoint and I'll have to exit and restart
+navigation to fix."*
+
+`strandedOn` is the safety net: a pin more than `passedBehindDegrees` off the
+direction of travel **and** getting further away, for `passedFixes` fixes
+running, is one the car has driven past. Both halves are needed — *behind* alone
+is true for a moment at every junction, *receding* alone is true of any route
+that swings away before coming back — and the run resets the instant either
+stops holding, so an ordinary bend costs nothing.
+
+It never applies to the destination or to a stop the driver asked for. Both are
+handled earlier, and both are places the car is *meant* to arrive at.
+
+### The probe must not redirect the car near a junction
+
+A charging probe re-asserts the final destination to ask its question, so for
+those seconds the car is navigating its own way there. `ProbeWindow` rationed
+that against the next waypoint and the nearest camera — and not against turns.
+Reported: *"we can't have it check for charging if there are any potential turns
+around that the car would take if navigating directly to the destination. That
+needs to be fixed. We also can't have that happen right before a turn either."*
+
+`clearOfTurnMeters` (2 km) and `clearOfLastTurnMeters` (400 m) close it, from
+`DriveMonitorEngine.metersToNextTurn` / `metersSinceLastTurn` — the same bend
+test the waypoint commit gate uses, so a junction is a junction by one definition
+wherever it is asked about. Wider than the camera gate on purpose: a camera is
+something to warn about a little early, while a turn taken wrongly is a
+manoeuvre that has to be undone, and under FSD it happens before the driver has
+decided anything.
+
+**Free reads are exempt and should stay that way.** A car that already holds the
+final destination is read without pushing anything, so there is no redirect to
+mistime. Only the re-assert path is gated.
+
+### Share is a search box, and that is the problem
+
+The `share` fallback (§6) is the one place Shunt hands the car a *string* and
+lets the car decide what it means. Given a bare `lat,lon` it runs that through
+the same place lookup a typed query goes through, and two reported failures
+follow: it can resolve to something near the coordinate rather than the
+coordinate — *"it should send the actual correct location at the end"* — and
+where the lookup finds more than one candidate the car stops and asks the driver
+to choose: *"sometimes the car doesn't know what specific location is being
+referenced and will ask the user to select which location the car is being sent
+to."*
+
+`shareMapUrl` sends the coordinate as a map link, which the car resolves rather
+than searches, and `shareValue` stays as the fallback — a car that will not take
+the link is no worse off than before. It costs no account and no key of ours,
+though the car may resolve the link through its host, which is worth knowing
+before this is extended. **Unverified on a vehicle**: this is a diagnosis from
+the symptom, and the read-back experiment in `docs/field-notes.md` is what would
+confirm it.
+
+### Where the aim moves on, drawn on the map
+
+Requested from a drive: *"it would be nice to visualize on the map where exactly
+each waypoint's trigger is so that I can know when to expect the next to get sent
+to my car. This will help with sensitivity calibrating."*
+
+`DriveMonitorEngine.triggerPoints` answers it, and the reason it is worth drawing
+is that no driver could work it out: the lead is the larger of a floor and
+eighteen seconds of driving, capped at half the gap the pins were placed at, and
+then the turn-commit gate holds the advance until the bend before the pin is
+behind the car — three interacting rules, two of them speed-dependent. The marks
+slide along the line as the car speeds up and slows down, which is the honest
+picture.
+
+Its own render memo, not the route's: they move every fix, and rebuilding a
+cross-state route's lines once a second is exactly what that memo exists to
+prevent.
+
 ### How far away a waypoint is, is a question about the road
 
 The monitor used to answer it with a ruler: straight-line distance from the car
@@ -1048,6 +1127,30 @@ them, and add new observations as they come in. Detail lives in
    settle to 50 m from it, aiming the car at the thing the route detoured around.
    Guards now settle only away from their camera, and no pin may sit within
    `CAMERA_STANDOFF_METERS` of one. F-55.
+
+17. **The monitor could get stuck on a waypoint already passed.** *Fixed,
+   unconfirmed on a drive.* Reported mid-drive: "it can still get caught up on a
+   previous waypoint and I'll have to exit and restart navigation to fix."
+   Along-route progress stalls once the driver leaves the route, and every
+   advance gate depends on it. §6, "A waypoint the car has driven away from".
+
+18. **A charging probe could redirect the car just before a junction.** *Fixed,
+   unconfirmed on a drive.* `ProbeWindow` gated on waypoints and cameras but not
+   turns, so a re-assert could hand the car the destination a few hundred metres
+   from a turn it would then take. §6, "The probe must not redirect the car near
+   a junction".
+
+19. **The car asked the driver which location was meant.** *Diagnosed, fix
+   landed, unverified on a vehicle.* The `share` fallback hands the car a bare
+   coordinate string, which it geocodes — so it can land near rather than on the
+   destination, and can come back ambiguous. §6, "Share is a search box".
+
+20. **A pin on or near a highway can snap to the far carriageway.** *Open.*
+   Reported twice: the car navigates to the other side of the road and wants to
+   go back around, and it prefers a parallel side road over the highway itself.
+   `PinSites` can only see roads that carry our route or the fastest one, so a
+   carriageway or frontage road neither uses is invisible to it. Needs the graph
+   query in the roadmap.
 
 ### A watched destination is not a reason to give up
 

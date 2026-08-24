@@ -1117,6 +1117,65 @@ at should produce a push.
 
 ---
 
+### A14 · A passed waypoint is let go of without restarting the app
+
+*Never seen on a drive — 2026-08-22. See F-56.*
+
+**Provoke it.** Mid-drive, take over and deliberately drive away from the next
+waypoint — off the planned route, in a direction that takes you further from it.
+
+**Expect:** within about fifteen seconds the monitor gives up on that pin and
+moves to the next. The driving card's "waypoint N of M" advances. You should
+never have to cancel and restart navigation to unstick it.
+
+**Must not happen:** the pin being abandoned while you are still approaching it,
+including round a bend that swings away first. If waypoints start advancing early
+on ordinary corners, this guard is firing when it should not.
+
+### A15 · No charging probe near a junction
+
+*Never seen on a drive — 2026-08-22. See F-56.*
+
+**Provoke it.** Drive a long trip with the vehicle connected and watch the
+driving card for "Asking your car about charging".
+
+**Expect:** it appears only on open road — at least 2 km before the next turn on
+the route and 400 m past the last one. Never in the approach to a junction.
+
+**The failure it prevents:** the car briefly holds the final destination during a
+re-assert, and if there is a junction in that window FSD may take it.
+
+### D17 · The car goes exactly where it was sent
+
+*Never seen on a drive — 2026-08-22. See F-56.*
+
+**Provoke it.** Complete a drive to a destination with a precise location.
+
+**Expect:** the car's own navigation ends at the point Shunt showed, not nearby,
+and it never stops to ask which of several places was meant.
+
+**If it still asks**, note whether the car is on the `share` fallback (the result
+sheet says the car only accepted the destination). The read-back experiment in
+F-56 is what distinguishes a geocoding car from a formatting fault.
+
+### C11 · The waypoint triggers are drawn where they actually fire
+
+*Never seen on a drive — 2026-08-22. See F-56.*
+
+**Provoke it.** Drive a pinned route and watch the hollow rings on the line ahead.
+
+**Expect:** each ring sits short of its waypoint, and slides *further* back as
+speed rises and closer as it falls. When the car reaches a ring, the card should
+say it is sending that waypoint within a second or two.
+
+**Read it as:** a ring the car passes with no advance means the turn-commit gate
+is holding it — which is correct behaviour, and the gate's own point is drawn at
+the pin in that case. A ring far in front of its pin on a slow road means the
+lead is too generous for that stretch, which is the calibration this was added to
+support.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

@@ -130,4 +130,62 @@ class ChargeStopsTest {
         assertTrue(window.isSafeParked(window.parkedIntervalMillis))
         assertFalse(window.isSafeParked(window.parkedIntervalMillis - 1))
     }
+
+    @Test
+    fun `a probe holds off before a turn`() {
+        // Reported: "we can't have it check for charging if there are any
+        // potential turns around that the car would take if navigating directly
+        // to the destination… we also can't have that happen right before a
+        // turn either." A probe re-asserts the destination, so for a few
+        // seconds the car is navigating its own way there.
+        val window = ProbeWindow()
+        val clear = window.isSafeUnderWay(
+            millisSinceLastProbe = 10 * 60_000,
+            metersToNextWaypoint = 9_000.0,
+            metersToNearestCamera = 9_000.0,
+            offRoute = false,
+            metersToNextTurn = 9_000.0,
+            metersSinceLastTurn = 9_000.0,
+        )
+        assertTrue(clear, "open road with nothing near should probe")
+
+        assertFalse(
+            window.isSafeUnderWay(
+                millisSinceLastProbe = 10 * 60_000,
+                metersToNextWaypoint = 9_000.0,
+                metersToNearestCamera = 9_000.0,
+                offRoute = false,
+                metersToNextTurn = window.clearOfTurnMeters - 1,
+                metersSinceLastTurn = 9_000.0,
+            ),
+            "a turn just ahead must block the probe",
+        )
+        assertFalse(
+            window.isSafeUnderWay(
+                millisSinceLastProbe = 10 * 60_000,
+                metersToNextWaypoint = 9_000.0,
+                metersToNearestCamera = 9_000.0,
+                offRoute = false,
+                metersToNextTurn = 9_000.0,
+                metersSinceLastTurn = window.clearOfLastTurnMeters - 1,
+            ),
+            "a turn just behind must block it too — the car is still settling",
+        )
+    }
+
+    @Test
+    fun `a route with no turns left does not block the probe`() {
+        // Null means "there is none", which is clear road rather than a blocker
+        // — the same convention the waypoint and camera gates use.
+        assertTrue(
+            ProbeWindow().isSafeUnderWay(
+                millisSinceLastProbe = 10 * 60_000,
+                metersToNextWaypoint = null,
+                metersToNearestCamera = null,
+                offRoute = false,
+                metersToNextTurn = null,
+                metersSinceLastTurn = null,
+            ),
+        )
+    }
 }

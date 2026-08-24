@@ -3,6 +3,7 @@ package app.shunt.app.drive
 import app.shunt.core.GeoPoint
 import app.shunt.solver.camera.Camera
 import app.shunt.solver.geo.bearingDegrees
+import app.shunt.solver.geo.bearingDifference
 import app.shunt.solver.geo.METERS_PER_DEGREE_LAT
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.geo.pointToSegmentMeters
@@ -62,6 +63,15 @@ class DriveMonitorEngine(
     val warnedTiers: Map<Long, Int> get() = cameraTier.toMap()
     private var targetIndex = 0
     private var arrived = false
+
+    /**
+     * How many fixes in a row the current waypoint has been behind the car and
+     * getting further away, and how far away it was on the last fix. See
+     * [strandedOn].
+     */
+    private var recedingFixes = 0
+    private var lastTargetDistance = Double.MAX_VALUE
+    private var recedingFrom: GeoPoint? = null
 
     /** Progress along [routePolyline], so each fix only searches nearby segments. */
     private var nearestSegment = 0
@@ -175,9 +185,92 @@ class DriveMonitorEngine(
     fun metersToNextWaypoint(at: GeoPoint): Double? =
         chain.getOrNull(targetIndex)?.let { haversineMeters(at, it) }
 
+    /**
+     * Where along the route each waypoint still ahead would be handed to the
+     * car, at [speedMetersPerSec].
+     *
+     * **Not a constant, which is the whole reason to draw it.** The lead is the
+     * larger of a fixed floor and eighteen seconds of driving, capped at half
+     * the gap the pins were actually placed at — and then the turn-commit gate
+     * holds the advance until the bend before the pin is behind the car,
+     * whichever comes later. Three interacting rules, two of them
+     * speed-dependent, and the driver asked to be shown the answer: "it would be
+     * nice to visualize on the map where exactly each waypoint's trigger is so
+     * that I can know when to expect the next to get sent to my car."
+     *
+     * The commit point wins where it is later, because that is what the monitor
+     * does. A pin whose commit gate is unreachable shows its trigger at the pin
+     * itself, which is honest: that is the arrival-radius valve firing.
+     */
+    fun triggerPoints(speedMetersPerSec: Double): List<GeoPoint> {
+        if (routePolyline.size < 2 || alongAt.isEmpty()) return emptyList()
+        return (targetIndex..chain.lastIndex).mapNotNull { i ->
+            val pin = pinAlong.getOrNull(i) ?: return@mapNotNull null
+            if (pin == Double.MAX_VALUE) return@mapNotNull null
+            // The destination is arrived at, not advanced past — there is no
+            // trigger to show, and drawing one would suggest the drive ends
+            // early.
+            if (i == chain.lastIndex || chain[i] in stopPoints) return@mapNotNull null
+            val lead = leadMetersFor(i, speedMetersPerSec)
+            val commit = commitAlong.getOrNull(i) ?: Double.NEGATIVE_INFINITY
+            val at = maxOf(pin - lead, commit).coerceIn(0.0, alongAt.last())
+            pointAtAlongRoute(at)
+        }
+    }
+
+    /** The point [target] metres along the route line. */
+    private fun pointAtAlongRoute(target: Double): GeoPoint? {
+        if (routePolyline.isEmpty()) return null
+        var lo = 0
+        var hi = routePolyline.size - 1
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (alongAt[mid] < target) lo = mid + 1 else hi = mid
+        }
+        return routePolyline[lo]
+    }
+
     /** Metres to the nearest camera we're warning about, or null when there are none. */
     fun metersToNearestCamera(at: GeoPoint): Double? =
         cameras.minOfOrNull { haversineMeters(at, it.location) }
+
+    /**
+     * Every turn the route takes, as a distance along it.
+     *
+     * The same bend test the waypoint commit gate uses, applied to the whole
+     * line rather than to the run before one waypoint — so a junction is a
+     * junction by one definition wherever it is asked about.
+     */
+    private val turnsAlong: DoubleArray by lazy {
+        if (routePolyline.size < 3) DoubleArray(0)
+        else {
+            val out = mutableListOf<Double>()
+            for (j in routePolyline.indices) {
+                if (bendDegreesAt(j) > config.turnCommitDegrees) {
+                    // One entry per run of bend: a corner is several vertices.
+                    if (out.isEmpty() || alongAt[j] - out.last() > TURN_MERGE_METERS) out += alongAt[j]
+                }
+            }
+            out.toDoubleArray()
+        }
+    }
+
+    /**
+     * Metres of road before the next turn ahead, or null when the route has no
+     * turn left in it — which is clear road, not a blocker.
+     */
+    fun metersToNextTurn(at: GeoPoint): Double? {
+        if (turnsAlong.isEmpty()) return null
+        val here = alongOf(at)
+        return turnsAlong.firstOrNull { it > here }?.minus(here)
+    }
+
+    /** Metres since the last turn behind, or null when none has been passed. */
+    fun metersSinceLastTurn(at: GeoPoint): Double? {
+        if (turnsAlong.isEmpty()) return null
+        val here = alongOf(at)
+        return turnsAlong.lastOrNull { it <= here }?.let { here - it }
+    }
 
     /** True while the vehicle is judged to have left the planned route. */
     val isOffRoute: Boolean get() = offRoute
@@ -263,6 +356,11 @@ class DriveMonitorEngine(
         if (targetIndex > chain.lastIndex) return null
         val target = chain[targetIndex]
         val distance = haversineMeters(update.point, target)
+        if (target !== recedingFrom) {
+            recedingFrom = target
+            recedingFixes = 0
+            lastTargetDistance = Double.MAX_VALUE
+        }
 
         if (targetIndex == chain.lastIndex) {
             if (distance <= config.arrivalRadiusMeters) {
@@ -293,6 +391,22 @@ class DriveMonitorEngine(
         // not reached yet and will not reach for another mile, and measuring
         // with a ruler says it has arrived. Distance along the route says it has
         // a mile to go, which is the truth the waypoint was placed against.
+        // **A waypoint the car has driven past is not one to keep aiming at.**
+        //
+        // Everything above measures progress *along the route*, which is right
+        // whenever the car is on it and useless the moment it is not: the
+        // projection is forward-only and windowed, so a driver who takes over
+        // and goes their own way stops making progress by that measure, and
+        // `metersLeftTo` never falls below the lead again. The pin then sticks
+        // for the rest of the drive. Reported as "it can still get caught up on
+        // a previous waypoint and I'll have to exit and restart navigation".
+        //
+        // Deliberately checked before the lead rather than after: the whole
+        // point is that the ordinary gates cannot fire in this state.
+        if (strandedOn(update, distance)) {
+            targetIndex++
+            return DriveSignal.ApproachingWaypoint(chain.subList(targetIndex, chain.size).toList())
+        }
         if (metersLeftTo(targetIndex, update.point) > lead) return null
         // Close enough to advance — but not until the turn this waypoint exists
         // to force is actually behind the car. Sitting at a light in a turn lane
@@ -307,6 +421,35 @@ class DriveMonitorEngine(
         if (!pastCommitPoint(update.point) && distance > config.arrivalRadiusMeters) return null
         targetIndex++
         return DriveSignal.ApproachingWaypoint(chain.subList(targetIndex, chain.size).toList())
+    }
+
+    /**
+     * Whether the car has plainly left the current waypoint behind.
+     *
+     * Two conditions together, and both are needed. **Behind** —
+     * [DriveMonitorConfig.passedBehindDegrees] off the direction of travel — on
+     * its own is true for a moment at every junction. **Receding** on its own is
+     * true whenever a route bends away before coming back. Sustained for
+     * [DriveMonitorConfig.passedFixes] together, they mean the pin is somewhere
+     * the car is driving away from and has been for a quarter of a minute,
+     * which no approach ever looks like.
+     *
+     * Reset whenever either stops holding, so an ordinary bend costs nothing.
+     *
+     * This is a safety net, not a route decision: it fires only where the
+     * along-route gates cannot, and the pin it drops was going to be aimed at
+     * for the rest of the drive otherwise. It never applies to the destination
+     * or to a stop the driver asked for — both are handled before it, and both
+     * are places the car is *meant* to arrive at.
+     */
+    private fun strandedOn(update: LocationUpdate, distance: Double): Boolean {
+        val bearing = update.bearingDegrees
+        val behind = bearing != null && kotlin.math.abs(
+            bearingDifference(bearing, bearingDegrees(update.point, chain[targetIndex])),
+        ) >= config.passedBehindDegrees
+        recedingFixes = if (behind && distance > lastTargetDistance) recedingFixes + 1 else 0
+        lastTargetDistance = distance
+        return recedingFixes >= config.passedFixes
     }
 
     /**
@@ -500,6 +643,9 @@ class DriveMonitorEngine(
          * See [updateProgress]. Generous against what a car can cover between
          * fixes, tight against a route that comes back near itself.
          */
+        /** Vertices of bend nearer than this are one corner, not several. */
+        const val TURN_MERGE_METERS = 40.0
+
         const val PROGRESS_WINDOW_METERS = 1_000.0
     }
 }

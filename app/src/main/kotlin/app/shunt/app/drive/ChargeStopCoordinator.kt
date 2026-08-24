@@ -150,13 +150,27 @@ class ChargeStopCoordinator(
         metersToNextWaypoint: Double?,
         metersToNearestCamera: Double?,
         offRoute: Boolean,
+        /**
+         * Road left before the next turn, and covered since the last one.
+         *
+         * Only the redirecting path uses them, and that is the whole point: a
+         * probe that has to re-assert the destination leaves the car navigating
+         * its own way there for a few seconds, so a junction inside that window
+         * is one it may take. A free read pushes nothing and can happen
+         * anywhere.
+         */
+        metersToNextTurn: Double? = null,
+        metersSinceLastTurn: Double? = null,
     ): Boolean {
         val since = nowMillis() - lastProbeAt
         return when {
             leg is Leg.ParkedAt -> window.isSafeParked(since)
             carHoldsFinalDestination ->
                 moving && window.isSafeToRead(since, metersToNearestCamera, offRoute)
-            else -> window.isSafeUnderWay(since, metersToNextWaypoint, metersToNearestCamera, offRoute)
+            else -> window.isSafeUnderWay(
+                since, metersToNextWaypoint, metersToNearestCamera, offRoute,
+                metersToNextTurn, metersSinceLastTurn,
+            )
         }
     }
 

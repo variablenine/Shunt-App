@@ -92,6 +92,21 @@ data class DriveMonitorConfig(
     /** Within this of the destination counts as arrived. */
     val arrivalRadiusMeters: Double = 60.0,
     /**
+     * How far behind the direction of travel a waypoint has to be before it
+     * counts as one the car has driven past. See
+     * [DriveMonitorEngine.strandedOn].
+     */
+    val passedBehindDegrees: Double = 100.0,
+    /**
+     * How many consecutive fixes a waypoint must sit behind the car and get
+     * further away before the monitor gives up on it.
+     *
+     * At a fix a second that is a quarter of a minute of driving away from a
+     * point the car was supposed to reach — long past any GPS wobble, and well
+     * short of the minutes the driver used to spend restarting navigation.
+     */
+    val passedFixes: Int = 15,
+    /**
      * A bend sharper than this counts as a turn the car has to commit to before
      * the waypoint beyond it may be advanced past. See
      * [DriveMonitorEngine.commitPointFor].

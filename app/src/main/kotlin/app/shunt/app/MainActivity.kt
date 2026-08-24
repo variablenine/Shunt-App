@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
                 val planningLaterLegs by container.planningLaterLegs.collectAsStateWithLifecycle()
                 val trimmedLead by container.trimmedLeadPolyline.collectAsStateWithLifecycle()
                 val aimedAt by container.aimedAt.collectAsStateWithLifecycle()
+                val waypointTriggers by container.waypointTriggers.collectAsStateWithLifecycle()
                 val trimmedLeadPins by container.trimmedLeadWaypoints.collectAsStateWithLifecycle()
                 val legDirectAhead by container.laterLegDirectAhead.collectAsStateWithLifecycle()
 
@@ -196,6 +197,7 @@ class MainActivity : ComponentActivity() {
                         planningLaterLegs = planningLaterLegs,
                         trimmedLeadPolyline = trimmedLead,
                         aimedAt = aimedAt,
+                        waypointTriggers = waypointTriggers,
                         trimmedLeadWaypoints = trimmedLeadPins,
                         laterLegDirectAhead = legDirectAhead,
                     ),

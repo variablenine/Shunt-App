@@ -325,6 +325,8 @@ private const val DESTINATION_LAYER = "trip-destination-pin"
 
 private const val WAYPOINT_SOURCE = "route-waypoints"
 private const val WAYPOINT_LAYER = "route-waypoint-dots"
+private const val TRIGGER_SOURCE = "waypoint-triggers"
+private const val TRIGGER_LAYER = "waypoint-trigger-marks"
 
 /**
  * Above this viewport span (~330 km) we stop fetching cameras for the visible
@@ -403,6 +405,15 @@ fun RouteMap(
     followTo: GeoPoint? = null,
     /** The direct road onward from what is planned. See [renderPending]. */
     directAhead: List<GeoPoint> = emptyList(),
+    /**
+     * Where each waypoint ahead will be handed to the car.
+     *
+     * Drawn small and hollow so it reads as a mark *on* the route rather than
+     * another thing on it — it is not a place, it is the moment the aim moves
+     * on. Only while driving, and only worth anything then: the lead moves with
+     * speed, so these slide along the line as the car speeds up and slows down.
+     */
+    waypointTriggers: List<GeoPoint> = emptyList(),
     /**
      * How many pixels at the bottom of the map are covered by the sheet over
      * it. The follow camera frames the strip above that rather than the whole
@@ -639,6 +650,7 @@ fun RouteMap(
     // skipped as unchanged.
     val renderedRoute = remember { arrayOfNulls<Any>(1) }
     val renderedPending = remember { arrayOfNulls<Any>(1) }
+    val renderedTriggers = remember { arrayOfNulls<Any>(1) }
 
     Box(modifier = modifier) {
         AndroidView(factory = { mapView }, modifier = Modifier) { view ->
@@ -651,6 +663,15 @@ fun RouteMap(
             if (renderedRoute[0] != routeKey) {
                 renderRoute(loadedStyle, routeLines, passedCameras, steeringWaypoints, routeCameras, destination)
                 renderedRoute[0] = routeKey
+            }
+            // **Its own memo, deliberately.** These move with speed, so folding
+            // them into the route's key would rebuild every line on the map
+            // once a second — which is the exact cost the route memo exists to
+            // avoid on a long trip.
+            val triggerKey: Any = listOf(loadedStyle, waypointTriggers)
+            if (renderedTriggers[0] != triggerKey) {
+                renderTriggers(loadedStyle, waypointTriggers)
+                renderedTriggers[0] = triggerKey
             }
             val pendingKey: Any = listOf(loadedStyle, pendingLine)
             if (renderedPending[0] != pendingKey) {
@@ -933,6 +954,43 @@ private fun pendingLineOf(
 private fun onwardOf(tail: GeoPoint, p: GeoPoint, destination: GeoPoint): Boolean =
     app.shunt.solver.geo.haversineMeters(p, destination) <
         app.shunt.solver.geo.haversineMeters(tail, destination)
+
+/**
+ * The marks showing where the aim moves on to the next waypoint.
+ *
+ * A small hollow ring on the line: not a place to go, a point the car's target
+ * changes at. Requested from a drive — "it would be nice to visualize on the map
+ * where exactly each waypoint's trigger is so that I can know when to expect the
+ * next to get sent to my car. This will help with sensitivity calibrating" — and
+ * that is what it is for. The lead is speed-dependent and the turn-commit gate
+ * moves it again, so there is no working it out by eye.
+ *
+ * Set even when empty: a source left holding the last drive's marks would show
+ * them over the next route.
+ */
+private fun renderTriggers(style: Style, triggers: List<GeoPoint>) {
+    val features = FeatureCollection.fromFeatures(
+        triggers.map { Feature.fromGeometry(Point.fromLngLat(it.lon, it.lat)) },
+    )
+    val source = style.getSourceAs<GeoJsonSource>(TRIGGER_SOURCE)
+    if (source != null) {
+        source.setGeoJson(features)
+        return
+    }
+    style.addSource(GeoJsonSource(TRIGGER_SOURCE, features))
+    style.addLayer(
+        CircleLayer(TRIGGER_LAYER, TRIGGER_SOURCE).withProperties(
+            // Hollow: the fill is the map showing through, so the road stays
+            // readable underneath a mark that sits right on it.
+            PropertyFactory.circleColor("#0b0d17"),
+            PropertyFactory.circleOpacity(0.0f),
+            PropertyFactory.circleRadius(5f),
+            PropertyFactory.circleStrokeColor("#7ee7ff"),
+            PropertyFactory.circleStrokeWidth(2f),
+            PropertyFactory.circleStrokeOpacity(0.9f),
+        ),
+    )
+}
 
 private fun renderRoute(
     style: Style,
