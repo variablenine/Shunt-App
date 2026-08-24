@@ -258,6 +258,15 @@ class DriveMonitorEngine(
     }
 
     /**
+     * Metres of road left to the end of this chain, measured along the route.
+     *
+     * Along the route rather than as the crow flies, for the same reason
+     * [metersLeftTo] is: a destination the line passes near on its way somewhere
+     * else is not one the car is close to.
+     */
+    fun metersToEnd(at: GeoPoint): Double = metersLeftTo(chain.lastIndex, at)
+
+    /**
      * Metres of road before the next turn ahead, or null when the route has no
      * turn left in it — which is clear road, not a blocker.
      */

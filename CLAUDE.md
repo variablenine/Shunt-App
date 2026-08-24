@@ -1263,6 +1263,12 @@ them, and add new observations as they come in. Detail lives in
    on the `share` fallback showed a coordinate or a place near it. §6, "The
    destination is a place, a pin is only a point".
 
+27. **A Supercharger destination never preconditioned.** *Fixed, unverified
+   on a vehicle.* While steering pin by pin the car's destination is a shaping
+   pin, so it is never told the trip ends at a charger — and preconditioning is
+   decided from the destination. The destination is now handed over 30 km out
+   when it is a charger. §6, "The car has to be told where the trip ends".
+
 ### A watched destination is not a reason to give up
 
 BRouter refuses a route that begins or ends inside a zone it has been told is
@@ -1643,6 +1649,55 @@ doomed pins from what is still ahead. Three things make it safe:
 
 This is the lead-boundary exemption in the roadmap, done for the trim. The
 handover truncation still does not use it. See F-55.
+
+### The car has to be told where the trip ends, in time to act on it
+
+A car that accepts one destination is aimed at a **shaping pin** for the whole
+trip. Its navigation target is never the place the driver is going, so anything
+the car would do *because of* the destination cannot happen. The case that makes
+this matter is battery preconditioning:
+
+> When I'm routing to a Tesla supercharger, I want that last waypoint to be the
+> supercharger itself so the car starts preconditioning if I'm not going to any
+> interim waypoints before then. That's still not happening. Tesla app does it
+> somehow, Google maps does it somehow, we should too.
+
+They do it the easy way: they only ever send one destination and never shape the
+route at all. Shunt cannot copy that without giving up the whole point of the
+app — but it can give up the pins **at the end**, which is where they buy least.
+
+`DriveMonitor.handoverMetersFor` decides how far from the end that happens, and
+it is two very different numbers because the car needs the time for two very
+different things:
+
+- `DESTINATION_HANDOVER_METERS` (1.5 km) for an ordinary destination. This is
+  only about the last pin not shadowing the place the driver is going — a pin
+  can sit a few hundred metres short of it, and while the car aims at that pin
+  it is arriving somewhere beside the destination.
+- `PRECONDITION_HANDOVER_METERS` (30 km) when the destination is a charger. A
+  Tesla starts warming the pack on the order of fifteen to twenty minutes out, so
+  the window has to be that far in *road* distance.
+
+Three things worth keeping:
+
+- **It happens before the fix's pins are looked at.** Inside the window a pin
+  buys nothing, and advancing to one first spends a command on a target about to
+  be replaced.
+- **Once handed over, pins stop being sent.** Re-sending the destination at
+  every pin would be a command a minute for no change.
+- **It resets whenever a new leg takes force** — a charging leg, a re-plan.
+  What was handed over belonged to the route that has been replaced.
+
+**How a charging destination is recognised**: `Destination.charging`, set by
+`ChargeStopCoordinator` for a charger the car inserted, and by
+`PlanViewModel.chargingAware` when the driver's own destination sits within
+`CHARGER_AT_DESTINATION_METERS` of a charging site already fetched for the route.
+By position, not by name — a name test would be a guess in one language.
+
+**What is given up is real and bounded**: camera *shaping* stops for the final
+stretch and the car routes it itself. Camera warnings continue, because those
+never needed the car. On a charging run that trade is the driver's, and they
+asked for it.
 
 ### The destination is a place, a pin is only a point
 

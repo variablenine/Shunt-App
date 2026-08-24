@@ -3151,3 +3151,51 @@ unavoidable camera at the destination, 21 pins on a 250 km leg — and the detou
 in the screenshot is short enough that it could be the camera at that junction
 being avoided correctly. It wants a plan where the same thing happens and the
 map is legible enough to say which road was refused and why.
+
+---
+
+### F-60 · The car was never told where it was going
+
+*Reported after a drive, 2026-08-24:*
+
+> For example, when I'm routing to a Tesla supercharger, I want that last
+> waypoint to be the supercharger itself so the car starts preconditioning if I'm
+> not going to any interim waypoints before then. That's still not happening.
+> Tesla app does it somehow, Google maps does it somehow, we should too.
+
+The label added the day before was not the fix, and it is worth being clear why:
+that changed what the car *calls* the place it is going, and this is about the
+car not being sent there at all until the last few hundred metres.
+
+**The mechanism.** On a car that only accepts one destination, `aim()` sends
+`listOf(chain.first())` — the next shaping pin. That is the whole design and it
+is what makes a camera-avoiding route reach a car that routes itself. But it
+means the car's navigation target is a pin for the entire trip, so anything the
+car does *because of* the destination has nothing to work from. Preconditioning
+is exactly that: a Tesla decides to warm the pack from the destination it is
+navigating to, fifteen or twenty minutes out. Shunt handed it the charger when
+the last pin was passed, a few hundred metres away, which is the same as never.
+
+**Why the comparison is fair and also unwinnable as stated.** The Tesla app and
+Google Maps precondition reliably because they send *one* destination and never
+shape the route — the thing this app exists to do is the reason it does not get
+that for free. So the question is not how they do it, it is what to give up and
+where. The end of the trip is the cheapest place: pins are least useful there,
+the destination camera is usually unavoidable anyway (see "a watched destination
+is not a reason to give up"), and it is the only stretch where handing the car
+its real destination costs nothing it was going to do differently.
+
+**Two windows, because two different things need the time.** An ordinary
+destination gets 1.5 km, which is only about the last pin not shadowing the place
+the driver typed. A charger gets 30 km, because that is what preconditioning
+needs in road distance. Recognising a charger is done by position against the
+charging sites already fetched for the route, not by matching "Supercharger" in
+the name, which would work in one language and quietly fail in others.
+
+**What this does not settle.** Whether Tesla then *identifies* the destination as
+one of its Superchargers — and preconditions rather than merely navigating — is
+not something this repository can determine. The coordinate arrives early and
+named; if the car still does not warm the pack, the next thing to find out is
+whether it ever matches a shared coordinate to its own charger database at all,
+or whether that needs `navigation_sc_request` and a Tesla charger ID, which
+Shunt has no source for. Recorded so nobody re-derives the easy half.

@@ -8,7 +8,20 @@ import app.shunt.solver.charging.RangeCheck
 import app.shunt.solver.search.Suggestion
 
 /** A place the user can route to: a search result or a saved favorite. */
-data class Destination(val title: String, val location: GeoPoint) {
+data class Destination(
+    val title: String,
+    val location: GeoPoint,
+    /**
+     * Whether this is somewhere the car will plug in.
+     *
+     * **It changes how early the car is told about it.** A Tesla preconditions
+     * the battery on the way to a charger, and it can only do that if the
+     * charger is the destination it is navigating to — which, while Shunt is
+     * steering a single-destination car pin by pin, it never is. See
+     * `DriveMonitor.handoverMetersFor`.
+     */
+    val charging: Boolean = false,
+) {
     companion object {
         fun of(suggestion: Suggestion) = Destination(suggestion.title, suggestion.location)
     }

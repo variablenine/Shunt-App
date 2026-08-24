@@ -208,9 +208,34 @@ class DriveMonitor(
                     val aimNow = engine.remainingChain().firstOrNull()
                     if (aimNow != null && aimNow != aimBefore) advance(engine.remainingChain())
                 }
+                // **Give the car the destination itself near the end**, before
+                // this fix's pins are looked at: inside the window there is
+                // nothing a pin can still buy, and advancing to one first would
+                // spend a command on a target about to be replaced.
+                //
+                // Only while steering — a car that takes the whole chain already
+                // holds the destination — and never on a partial leg, whose
+                // "end" is a boundary in open country rather than anywhere the
+                // driver is going.
+                if (steering && !stoodDown && !handedOver && !current.isPartial &&
+                    engine.metersToEnd(update.point) <= handoverMetersFor(current.destination)
+                ) {
+                    handedOver = true
+                    advance(engine.remainingChain())
+                    alerter.alert(
+                        Alert.DestinationHandedOver(
+                            current.destination.title,
+                            charging = current.destination.charging,
+                        ),
+                    )
+                }
                 for (signal in engine.onLocation(update)) {
                     when (signal) {
-                        is DriveSignal.ApproachingWaypoint -> advance(signal.remaining)
+                        // Once the car holds the destination there is nothing
+                        // to advance to: re-sending it at every pin would be a
+                        // command a minute for no change.
+                        is DriveSignal.ApproachingWaypoint ->
+                            if (!handedOver) advance(signal.remaining)
                         is DriveSignal.ApproachingCamera -> alerter.alert(
                             Alert.CameraApproaching(
                                 signal.camera, signal.distanceMeters, signal.side, signal.imminent,
@@ -239,6 +264,7 @@ class DriveMonitor(
                             // — which on a road you've just committed to is not
                             // an answer at all.
                             replanFrom(signal.at, current, heading)?.let { fresh ->
+                                handedOver = false
                                 current = fresh
                                 engine = newEngine(fresh, engine)
                             }
@@ -313,6 +339,10 @@ class DriveMonitor(
                 onActivity(if (stoodDown) DriveActivity.StoodDown else DriveActivity.Watching)
                 val afterCharging = applyLeg(change, finalDestination)
                 if (afterCharging != null) {
+                    // A new leg is a new destination — a charger, or the trip's
+                    // end after one. Whatever was handed over belonged to the
+                    // leg that has just been replaced.
+                    handedOver = false
                     current = afterCharging
                     // Deliberately NOT inheriting what has already been
                     // announced. A charging leg is a different stretch of road,
@@ -510,8 +540,45 @@ class DriveMonitor(
      * makes the avoidance reach the car — and the pin moves forward as each one
      * is approached, so the car is walked along the route.
      */
-    private fun aim(chain: List<GeoPoint>): List<GeoPoint> =
-        if (steering && chain.isNotEmpty()) listOf(chain.first()) else chain
+    private fun aim(chain: List<GeoPoint>): List<GeoPoint> = when {
+        !steering || chain.isEmpty() -> chain
+        // Handed over: the car holds the trip's destination itself from here.
+        handedOver -> listOf(chain.last())
+        else -> listOf(chain.first())
+    }
+
+    /**
+     * Whether the car has been given the trip's destination in place of the
+     * next pin, and how far out that happens.
+     *
+     * **A car that only takes one destination is never told where the trip
+     * ends.** While Shunt steers it pin by pin, its navigation target is a
+     * shaping pin — so anything the car would do *because of* the destination
+     * cannot happen. The case that makes this matter is battery
+     * preconditioning: a Tesla warms the pack on the way to a charger, and it
+     * decides to do that from the destination it is navigating to. Reported as
+     * "when I'm routing to a Tesla supercharger, I want that last waypoint to be
+     * the supercharger itself so the car starts preconditioning… Tesla app does
+     * it somehow, Google maps does it somehow, we should too" — and they do it
+     * the easy way, by only ever sending one destination and never shaping the
+     * route at all.
+     *
+     * So the pins are given up at the end of the trip, and *how far* from the
+     * end depends on what the car needs the time for. Preconditioning wants
+     * something like a quarter of an hour; arriving at the right place wants
+     * only the last stretch, where a pin would otherwise shadow the destination
+     * and the car would still be aiming at a point beside it.
+     *
+     * The cost is honest and bounded: camera shaping stops for the final
+     * stretch, and the car drives its own way there. Camera *warnings* continue
+     * — those never needed the car. On a charging run that trade is the
+     * driver's, and they asked for it.
+     */
+    private fun handoverMetersFor(destination: Destination): Double =
+        if (destination.charging) PRECONDITION_HANDOVER_METERS else DESTINATION_HANDOVER_METERS
+
+    /** Set once the car has been handed the destination; see [handoverMetersFor]. */
+    private var handedOver = false
 
     /**
      * The name to send with [chain], when what is being sent is the trip's
@@ -752,6 +819,26 @@ class DriveMonitor(
          * highway speed — well inside the gap between pins, so a recovery is
          * never more than a fraction of a leg late.
          */
+        /**
+         * How far from an ordinary destination the car is given it directly.
+         *
+         * Short: this is only about the last pin not shadowing the destination.
+         * A pin can sit a few hundred metres from the end, and while the car is
+         * aiming at that pin it is not aiming at where the driver is going.
+         */
+        const val DESTINATION_HANDOVER_METERS = 1_500.0
+
+        /**
+         * ...and how far out when the destination is a charger.
+         *
+         * A Tesla starts warming the pack on the order of fifteen to twenty
+         * minutes from a Supercharger, so this has to be that far out in road
+         * distance — about twenty minutes at highway speed. Erring long costs
+         * some camera shaping at the end of a charging leg; erring short means
+         * the car arrives cold, which is the whole thing being asked for.
+         */
+        const val PRECONDITION_HANDOVER_METERS = 30_000.0
+
         const val AIM_RETRY_INTERVAL_MILLIS = 10_000L
 
         const val MAX_REPLANS_IN_WINDOW = 3

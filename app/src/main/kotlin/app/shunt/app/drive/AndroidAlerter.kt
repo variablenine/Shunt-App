@@ -74,6 +74,9 @@ class AndroidAlerter(
         is Alert.AdvanceFailed ->
             "Route update failed. " + if (alert.retryable) "Retrying." else "The car may stop at the waypoint."
         Alert.AimRestored -> "Waypoint sent. Back in step."
+        is Alert.DestinationHandedOver ->
+            if (alert.charging) "Charger sent. Your car can precondition now."
+            else "Destination sent. Your car takes it from here."
         is Alert.OffRoute ->
             "Off the planned route. " + if (alert.replanning) "Finding a new one." else "Camera avoidance is not active."
         is Alert.Replanned ->
@@ -119,6 +122,17 @@ class AndroidAlerter(
                     Side.RIGHT -> append(" on your right")
                     null -> {}
                 }
+            },
+        )
+        is Alert.DestinationHandedOver -> Triple(
+            CHARGING_NOTIF,
+            if (alert.charging) "Charger sent to your car" else "Destination sent",
+            if (alert.charging) {
+                "Your car has ${alert.title} as its destination, so it can " +
+                    "precondition the battery. It routes the last stretch itself."
+            } else {
+                "Your car has ${alert.title} as its destination and routes the " +
+                    "last stretch itself. Camera warnings continue."
             },
         )
         Alert.AimRestored -> Triple(

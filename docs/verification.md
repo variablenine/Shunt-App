@@ -1292,6 +1292,40 @@ waypoints was always getting the exact coordinate.
 
 ---
 
+### D19 · A Supercharger destination preconditions
+
+*Never verified on a vehicle — 2026-08-24. See F-60.*
+
+**Provoke it.** Navigate to a Supercharger as the trip's destination, on a car
+that only accepts one destination (the result sheet says so).
+
+**Expect:** roughly twenty minutes out — about 30 km — the app announces
+"charger sent, your car can precondition now", the car's own screen switches to
+the Supercharger, and the shaping pins stop. The car should begin preconditioning
+some minutes later.
+
+**What to check if it still does not precondition:** whether the car's screen
+names the Supercharger or shows a plain coordinate. If it names it and still does
+not warm the pack, the coordinate is not being matched to Tesla's charger
+database, and the answer is a different command rather than a different string —
+see F-60.
+
+**Also expect:** camera warnings carry on for that last stretch. Only the
+steering stops.
+
+### A18 · An ordinary destination is not given up early
+
+*Never seen on a drive — 2026-08-24. See F-60.*
+
+**Provoke it.** Drive to a normal destination and watch when the pins stop.
+
+**Expect:** shaping pins right up to about 1.5 km from the end, then "destination
+sent". A trip that stops steering tens of kilometres out has taken the charging
+window by mistake — check whether the destination was matched to a charging site
+it happens to sit near.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

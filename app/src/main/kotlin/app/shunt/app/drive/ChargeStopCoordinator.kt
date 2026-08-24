@@ -269,7 +269,10 @@ class ChargeStopCoordinator(
         // still driven, just on the other leg.
         val toCharger = haversineMeters(from, stop.at)
         val (before, beyond) = remainingStops.partition { haversineMeters(from, it) < toCharger }
-        val destination = Destination(stop.name, stop.at)
+        // Flagged as somewhere the car plugs in, so the monitor hands the car
+        // this destination early enough for it to precondition. See
+        // DriveMonitor.handoverMetersFor.
+        val destination = Destination(stop.name, stop.at, charging = true)
         val plan = runCatching { planLeg(from, before, destination, headingDegrees) }.getOrNull()
             ?: return LegChange.Unroutable(stop)
         stopsBeyondCharger = beyond

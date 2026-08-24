@@ -293,6 +293,18 @@ sealed interface Alert {
         override val severity get() = Severity.INFO
     }
 
+    /**
+     * The car has been given the trip's destination and the shaping pins are
+     * done.
+     *
+     * Worth saying out loud: from here the car is routing itself, so the road it
+     * picks for the last stretch is its own. On a charging run it is also the
+     * good news — this is what lets it precondition.
+     */
+    data class DestinationHandedOver(val title: String, val charging: Boolean) : Alert {
+        override val severity get() = Severity.INFO
+    }
+
     data object Arrived : Alert {
         override val severity get() = Severity.INFO
     }
