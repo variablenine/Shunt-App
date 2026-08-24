@@ -520,4 +520,36 @@ class DriveMonitorEngineTest {
         }
         assertTrue(leadFor(4) < leadFor(40), "a tight gap must give a shorter lead")
     }
+
+    @Test
+    fun `progress keeps moving across a segment longer than the search window`() {
+        // **The bug behind the trigger reports.** A route's segments are as long
+        // as the road is straight, so on a motorway they run to kilometres. The
+        // progress window was measured from the *start of the current segment*,
+        // which put the next segment beyond it — so progress saturated at the
+        // end of the segment the car was on and stopped there for good.
+        //
+        // From then on everything measured along the route was wrong in both
+        // directions at once: pins ahead never got closer and never fired, and
+        // pins whose own position was behind the frozen point read as reached
+        // and fired all at once.
+        val a = origin
+        val b = east(a, 6_000.0)
+        val c = east(a, 12_000.0)
+        val engine = DriveMonitorEngine(
+            chain = listOf(c),
+            routePolyline = listOf(a, b, c),
+            cameras = emptyList(),
+        )
+
+        var previous = Double.MAX_VALUE
+        for (step in 0..59) {
+            val at = east(a, step * 200.0)
+            engine.onLocation(update(at))
+            val left = engine.metersToEnd(at)
+            assertTrue(left < previous, "progress stalled at $left m with the car ${step * 200} m along")
+            previous = left
+        }
+        assertTrue(previous < 400.0, "never got near the end: $previous m short")
+    }
 }

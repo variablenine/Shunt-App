@@ -3154,6 +3154,37 @@ map is legible enough to say which road was refused and why.
 
 ---
 
+### F-60 · The car was never told where it was going — and that was the wrong fix
+
+*Superseded the same day. Kept because the mistake is instructive; see F-61 for
+what was actually wanted.*
+
+The report was that routing to a Supercharger never preconditions, and the
+diagnosis was correct: on a car that accepts one destination, `aim()` sends the
+next shaping pin, so the car's navigation target is a pin for the whole trip and
+anything it would do *because of* the destination has nothing to work from.
+
+The **fix** was wrong. Handing the car its destination thirty kilometres out
+gives back twenty minutes of camera shaping to buy preconditioning, and the
+maintainer said so immediately:
+
+> No, I'm not asking for you to hand over the final destination to the charger
+> 30 km out for preconditioning… Camera avoidance is the important thing here,
+> not preconditioning.
+
+Which is obviously right, and the error is worth naming precisely: I took a
+concrete example ("when I'm routing to a Tesla supercharger…") and optimised for
+the example rather than the sentence it was illustrating. The sentence was about
+the destination being *picked up correctly by the car*. Preconditioning was
+offered as evidence that it is not — the car cannot precondition for a place it
+does not know it is going to — not as the thing to build for.
+
+The 30 km window was reverted. What remains is an 800 m handover, which exists
+only so the last pin does not shadow the destination, and is short enough that
+essentially all the shaping survives. See F-61 for the real fix.
+
+---
+
 ### F-60 · The car was never told where it was going
 
 *Reported after a drive, 2026-08-24:*
@@ -3199,3 +3230,80 @@ named; if the car still does not warm the pack, the next thing to find out is
 whether it ever matches a shared coordinate to its own charger database at all,
 or whether that needs `navigation_sc_request` and a Tesla charger ID, which
 Shunt has no source for. Recorded so nobody re-derives the easy half.
+
+---
+
+### F-61 · An address, and the arithmetic that broke every trigger
+
+Two things, both from the same drive, and the second is the more serious.
+
+**1. The car wanted an address, and we had one all along.**
+
+> Make sure that the final destination is actually picked up by the car
+> correctly. The correct address, correct business name, not just a nearby point.
+> On Tessie, I'm able to set an address for my car to be sent to on an
+> automation. I should be able to get a similar thing here.
+
+`share` hands the car a *string*. A coordinate — however precise, and inside
+whatever map-link wrapper — tells the car nothing about which building or
+business is meant, so it resolves to a point and shows whatever it thinks that
+point is near. An address does not have that problem, which is why a Tessie
+automation set to an address works.
+
+The address was never missing. Photon composes `"132 Birch Street, Kingsford,
+Michigan"` and `"Central Library, Springfield, IL"`, `Destination.title` carries
+it from the search result all the way to the push, and the push threw it away in
+favour of the coordinate. Two days were spent making the *coordinate* less
+ambiguous — a map link so the car would resolve rather than search it — which
+made it land on the right spot and none of that was the question being asked.
+
+The guard that matters is knowing when the title is *not* an address. "Home", or
+a long-pressed point named after the nearest hamlet, is a worse thing to search
+for than a coordinate. A comma with something on both sides is the test; every
+address this app produces has one.
+
+**2. Along-route progress froze on any long segment, and that broke the
+triggers three different ways.**
+
+Reported as three separate complaints:
+
+> Waypoints being sent to the car keep missing the highway entirely.
+> …still having premature waypoint triggering too for some reason waaay too far
+> ahead.
+> …waypoint triggering overall just doesn't seem to line up with the map
+> visualization.
+
+One arithmetic mistake. `updateProgress` bounds how far forward it will look, so
+progress cannot teleport across a route that comes back near itself. That bound
+was measured from `alongAt[from]`, the start of the segment the car is on. A
+route's segments are as long as the road is straight — kilometres on a motorway
+— so the next segment started beyond a window measured from the current one's
+start, was never a candidate, and `progressSegment` could not advance.
+`alongOf` clamps to its segment, so progress saturated at that segment's end and
+stopped there for good.
+
+Everything derived from it then failed *in both directions at the same time*,
+which is why the reports looked contradictory:
+
+- A pin ahead never got closer. Its advance never fired.
+- A pin whose position was behind the frozen point read as already reached, and
+  fired at once — along with every other pin behind it.
+- The marks on the map are drawn from the pins' own positions, which stayed
+  correct. So the drawing was right and the behaviour was wrong, which is
+  precisely "doesn't line up with the map".
+
+**The marks are what found it.** They were added so a driver could calibrate
+sensitivity, and instead they served as an independent witness: a rule drawn from
+one source and executed from another, disagreeing visibly. That is worth
+remembering the next time something is instrumented — the value was not in the
+number, it was in having two paths to the same answer.
+
+Found by printing `metersToEnd` at each fix of a straight-line fixture and
+watching it stick at 1863 m while the car covered another 1.8 km. Reasoning about
+it had already produced two wrong theories.
+
+**3. A smaller one, same family.** `PinSites.alongOf` matched a pin to the
+nearest vertex over the *whole* route, so on a route that runs back near itself
+it could match the wrong passage — and `onUnambiguousRoad` then nudged the pin
+from there, placing it on a different road entirely. Pins are matched in route
+order with a forward cursor now, as `DriveMonitorEngine` already did.

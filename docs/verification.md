@@ -1292,37 +1292,41 @@ waypoints was always getting the exact coordinate.
 
 ---
 
-### D19 · A Supercharger destination preconditions
+### D19 · The car names the actual address
 
-*Never verified on a vehicle — 2026-08-24. See F-60.*
+*Never verified on a vehicle — 2026-08-24. See F-61.*
 
-**Provoke it.** Navigate to a Supercharger as the trip's destination, on a car
-that only accepts one destination (the result sheet says so).
+**Provoke it.** Navigate to a place with a real address or business name, on a
+car that only accepts one destination (the result sheet says so).
 
-**Expect:** roughly twenty minutes out — about 30 km — the app announces
-"charger sent, your car can precondition now", the car's own screen switches to
-the Supercharger, and the shaping pins stop. The car should begin preconditioning
-some minutes later.
+**Expect:** the car's own screen shows that address or business — "132 Birch
+Street, Kingsford" — not a coordinate and not a different place nearby.
 
-**What to check if it still does not precondition:** whether the car's screen
-names the Supercharger or shows a plain coordinate. If it names it and still does
-not warm the pack, the coordinate is not being matched to Tesla's charger
-database, and the answer is a different command rather than a different string —
-see F-60.
+**Check the fallbacks too:** a destination saved as "Home", or a long-pressed
+point on the map, has no address to send. Those still go as a coordinate, and
+the car showing a point for them is correct behaviour, not a regression.
 
-**Also expect:** camera warnings carry on for that last stretch. Only the
-steering stops.
+### A17 · Waypoints trigger where the rings say, all the way along
 
-### A18 · An ordinary destination is not given up early
+*Never seen on a drive — 2026-08-24. See F-61.*
 
-*Never seen on a drive — 2026-08-24. See F-60.*
+**Provoke it.** Drive a route with a long straight run — a motorway between
+junctions is ideal, since that is where this failed — and watch the rings and
+the "sending waypoint N" line together.
 
-**Provoke it.** Drive to a normal destination and watch when the pins stop.
+**Expect:** each advance fires as the car crosses its ring, the whole way to the
+destination. Progress must keep decreasing on a long segment; the failure was it
+freezing at the end of the segment the car was on.
 
-**Expect:** shaping pins right up to about 1.5 km from the end, then "destination
-sent". A trip that stops steering tens of kilometres out has taken the charging
-window by mistake — check whether the destination was matched to a charging site
-it happens to sit near.
+**The three symptoms this replaces**, all of which were the same bug and any of
+which returning means it is back:
+
+- waypoints firing far too early, or several at once
+- waypoints never firing at all on a long stretch
+- the rings and the actual triggers not lining up
+
+**Also worth watching:** the driving card's "waypoint N of M" should climb one at
+a time and in step with passing the rings.
 
 ---
 

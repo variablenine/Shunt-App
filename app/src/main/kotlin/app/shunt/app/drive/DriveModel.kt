@@ -298,10 +298,9 @@ sealed interface Alert {
      * done.
      *
      * Worth saying out loud: from here the car is routing itself, so the road it
-     * picks for the last stretch is its own. On a charging run it is also the
-     * good news — this is what lets it precondition.
+     * picks for the last stretch is its own.
      */
-    data class DestinationHandedOver(val title: String, val charging: Boolean) : Alert {
+    data class DestinationHandedOver(val title: String) : Alert {
         override val severity get() = Severity.INFO
     }
 

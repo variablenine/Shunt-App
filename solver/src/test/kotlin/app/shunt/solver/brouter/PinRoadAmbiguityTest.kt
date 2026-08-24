@@ -112,6 +112,31 @@ class PinRoadAmbiguityTest {
         assertEquals(pins, planner.onUnambiguousRoad(route, pins))
     }
 
+    @Test
+    fun `a route that runs back near itself does not relocate its pins`() {
+        // **A nearest-vertex search over the whole line matches the wrong
+        // passage** wherever a route comes back near itself, and the nudge is
+        // then applied from there — so the pin lands on a different road
+        // entirely. Reported as waypoints "missing the highway entirely".
+        val out = (0..150).map { GeoPoint(base.lat, base.lon + it * 10.0 / metersPerDegLon) }
+        val back = (0..150).map {
+            GeoPoint(base.lat + 25.0 / 111_320.0, base.lon + (150 - it) * 10.0 / metersPerDegLon)
+        }
+        val loop = out + back
+        val pin = out[75]
+
+        val kept = BrouterPlanner(
+            route = { emptyList() },
+            missingTiles = { emptyList() },
+            camerasIn = { emptyList() },
+            roadsNear = { points, _ -> points.map { emptyList() } },
+        ).onUnambiguousRoad(loop, listOf(pin))
+
+        // With nothing near anything the pin should not move at all; the failure
+        // mode is it being re-placed on the return limb, twenty-five metres north.
+        assertEquals(listOf(pin), kept)
+    }
+
     private fun alongIndexOf(p: GeoPoint): Int =
         route.indices.minByOrNull {
             kotlin.math.abs(route[it].lon - p.lon) + kotlin.math.abs(route[it].lat - p.lat)

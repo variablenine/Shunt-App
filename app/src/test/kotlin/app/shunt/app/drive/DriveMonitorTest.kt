@@ -184,77 +184,76 @@ class DriveMonitorTest {
     }
 
     @Test
-    fun `a charging destination reaches the car far enough out to precondition`() = runTest {
-        // **The reported gap.** A car that takes one destination is aimed at a
-        // shaping pin for the whole trip, so it is never told the trip ends at a
-        // charger — and a Tesla decides to precondition from the destination it
-        // is navigating to. "I want that last waypoint to be the supercharger
-        // itself so the car starts preconditioning."
-        val vehicle = FakeVehicleNavClient()
-        val alerter = RecordingAlerter()
-        val charger = Destination("Supercharger", dest, charging = true)
-        val plan = DrivePlan(
-            destination = charger,
-            chain = chain,
-            cameras = emptyList(),
-            polyline = chain,
-            steerByWaypoints = true,
-        )
+    fun `a pin sitting on top of the destination is dropped for the destination`() {
+        // What the handover is actually for. A shaping pin a few hundred metres
+        // short of the destination shadows it: while the car aims at that pin it
+        // is arriving beside where the driver is going rather than at it.
+        runTest {
+            val vehicle = FakeVehicleNavClient()
+            val alerter = RecordingAlerter()
+            val nearDest = west(dest, 300.0)
+            val plan = DrivePlan(
+                destination = Destination("132 Birch Street, Kingsford, Michigan", dest),
+                chain = listOf(w1, nearDest, dest),
+                cameras = emptyList(),
+                polyline = listOf(w1, nearDest, dest),
+                steerByWaypoints = true,
+            )
+            // Fixes at a realistic spacing: along-route progress is windowed, so
+            // a fixture that jumps kilometres between fixes never advances it.
+            val fixes = (0..18).map { west(w1, -(it * 200.0)) } + listOf(west(dest, 30.0))
 
-        DriveMonitor(vehicle, alerter).run(plan, flowOf(fix(west(w1, 1000.0))))
+            DriveMonitor(vehicle, alerter).run(plan, flowOf(*fixes.map { fix(it) }.toTypedArray()))
 
-        val sent = vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
-        assertTrue(
-            sent.any { it.waypoints == listOf(dest) },
-            "the charger was never sent as the destination: ${sent.map { it.waypoints }}",
-        )
-        val handover = alerter.alerts.filterIsInstance<Alert.DestinationHandedOver>().single()
-        assertTrue(handover.charging, "a charging handover should say so")
+            val sent = vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
+            assertEquals(
+                listOf(dest),
+                sent.last().waypoints,
+                "the last thing the car was given must be the destination",
+            )
+            assertEquals(
+                1,
+                alerter.alerts.filterIsInstance<Alert.DestinationHandedOver>().size,
+                "handing over is announced once, not per pin",
+            )
+        }
     }
 
     @Test
-    fun `an ordinary destination is not handed over from miles away`() = runTest {
-        // The long window is for preconditioning. Giving up the shaping pins
-        // thirty kilometres from an ordinary destination would trade the
-        // avoidance for nothing.
-        val vehicle = FakeVehicleNavClient()
-        val plan = DrivePlan(
-            destination = Destination("Home", dest),
-            chain = chain,
-            cameras = emptyList(),
-            polyline = chain,
-            steerByWaypoints = true,
-        )
+    fun `a car already holding the destination is not sent it again`() {
+        // By the time most trips are inside the window the last pin has been
+        // passed and the car already holds the destination. Re-sending it would
+        // be a command for no change, and announcing it would be noise.
+        runTest {
+            val vehicle = FakeVehicleNavClient()
+            val alerter = RecordingAlerter()
+            val plan = DrivePlan(
+                destination = Destination("Home", dest),
+                chain = chain,
+                cameras = emptyList(),
+                polyline = chain,
+                steerByWaypoints = true,
+            )
 
-        DriveMonitor(vehicle, RecordingAlerter()).run(plan, flowOf(fix(west(w1, 1000.0))))
+            DriveMonitor(vehicle, alerter).run(plan, flowOf(*approach.map { fix(it) }.toTypedArray()))
 
-        val sent = vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
-        assertTrue(
-            sent.none { it.waypoints == listOf(dest) },
-            "handed the destination over too early: ${sent.map { it.waypoints }}",
-        )
+            assertEquals(
+                listOf(listOf(w2, dest).map { it }.let { listOf(w2) }, listOf(dest)).map { it },
+                vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>().map { it.waypoints },
+            )
+            assertTrue(alerter.alerts.none { it is Alert.DestinationHandedOver })
+        }
     }
 
     @Test
-    fun `once the car holds the destination the pins stop being sent`() = runTest {
-        // Re-sending the destination at every pin would be a command a minute
-        // for no change at all.
-        val vehicle = FakeVehicleNavClient()
-        val charger = Destination("Supercharger", dest, charging = true)
-        val plan = DrivePlan(
-            destination = charger,
-            chain = chain,
-            cameras = emptyList(),
-            polyline = chain,
-            steerByWaypoints = true,
-        )
-
-        DriveMonitor(vehicle, RecordingAlerter()).run(plan, flowOf(*approach.map { fix(it) }.toTypedArray()))
-
-        val sent = vehicle.calls().filterIsInstance<FakeVehicleNavClient.Call.AdvanceTo>()
-        assertEquals(
-            1, sent.size,
-            "the destination should be sent once and the pins dropped: ${sent.map { it.waypoints }}",
+    fun `shaping pins are kept almost to the end`() {
+        // **Camera avoidance is the point of this app.** The handover exists so
+        // the last pin does not shadow the destination, and it must not become a
+        // window that trades away the shaping — a thirty-kilometre one was tried
+        // for battery preconditioning and was the wrong trade.
+        assertTrue(
+            DriveMonitorBounds.DESTINATION_HANDOVER_METERS <= 1_000.0,
+            "the handover window has grown into the route",
         )
     }
 

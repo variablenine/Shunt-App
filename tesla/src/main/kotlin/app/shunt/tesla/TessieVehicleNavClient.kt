@@ -102,16 +102,48 @@ class TessieVehicleNavClient(
      * destination and no waypoints, so the route shape is lost.
      */
     private suspend fun shareDestination(point: GeoPoint, label: String? = null): PushResult {
-        // **Two formats, most specific first.** See [shareMapUrl].
-        when (val viaUrl = shareOnce(shareMapUrl(point, label))) {
-            is ShareOutcome.Done -> return viaUrl.result
-            ShareOutcome.ValueRejected -> Unit
+        // **The address first, then the coordinate.** See [postalAddress].
+        for (value in listOfNotNull(postalAddress(label), shareMapUrl(point, label), shareValue(point))) {
+            when (val outcome = shareOnce(value)) {
+                is ShareOutcome.Done -> return outcome.result
+                ShareOutcome.ValueRejected -> Unit
+            }
         }
-        return when (val plain = shareOnce(shareValue(point))) {
-            is ShareOutcome.Done -> plain.result
-            ShareOutcome.ValueRejected ->
-                PushResult.Failed("the vehicle rejected the destination", retryable = true)
-        }
+        return PushResult.Failed("the vehicle rejected the destination", retryable = true)
+    }
+
+    /**
+     * [label] as a postal address to hand the car, or null when it is not one.
+     *
+     * **This is the form that gets the destination right on the car's own
+     * screen**, and it is what a Tessie automation sends: the address, as text.
+     * The car resolves it through its own place lookup and ends up on the actual
+     * address or business — *"the correct address, correct business name, not
+     * just a nearby point"*. A coordinate cannot do that however precise it is:
+     * the car has no way to know which building or business it names, so it
+     * shows a point.
+     *
+     * The search results Shunt already carries are exactly this — Photon builds
+     * "132 Birch Street, Kingsford, Michigan" and "Central Library, Springfield,
+     * IL" — so nothing new has to be fetched. It was simply being thrown away in
+     * favour of the coordinate.
+     *
+     * **Only when it really looks like an address.** A favourite called "Home"
+     * or a long-pressed point named after the nearest hamlet would be a *worse*
+     * thing to search for than a coordinate: one is meaningless to the car and
+     * the other is ambiguous everywhere. Requiring a comma is a blunt test and
+     * the right kind of blunt — every address this app produces has one, and
+     * nothing that lacks one is specific enough to send.
+     *
+     * The coordinate remains the fallback, so a car that will not resolve the
+     * address is no worse off than before.
+     */
+    internal fun postalAddress(label: String?): String? {
+        val text = label?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (!text.contains(',')) return null
+        // Two sides of a comma, both with something on them.
+        if (text.split(',').count { it.isNotBlank() } < 2) return null
+        return text.take(MAX_SHARE_VALUE_CHARS)
     }
 
     /** What one `share` call did. [ValueRejected] means try a different format. */
@@ -187,6 +219,14 @@ class TessieVehicleNavClient(
      * [shareValue] stays as the fallback: it is the format that has been
      * observed to work, so a car that will not take the link is no worse off
      * than before.
+     */
+    /**
+     * The point as a map link, for when there is no address worth sending.
+     *
+     * Resolved rather than searched, so it lands on the coordinate instead of
+     * whatever the car's place lookup makes of a bare number pair — see the
+     * ambiguity that produced ("the car doesn't know what specific location is
+     * being referenced and will ask the user to select which location").
      */
     private fun shareMapUrl(point: GeoPoint, label: String? = null): String {
         val q = shareValue(point)
@@ -318,6 +358,9 @@ class TessieVehicleNavClient(
     private data class CommandResult(val result: Boolean = false, val reason: String = "")
 
     private companion object {
+        /** Longer than any address this app produces; a guard, not a policy. */
+        const val MAX_SHARE_VALUE_CHARS = 200
+
         /** Tessie's share command takes its parameters in the query string. */
         val EMPTY_BODY = "".toRequestBody(null)
 

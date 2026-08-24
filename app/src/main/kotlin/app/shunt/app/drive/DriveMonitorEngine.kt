@@ -599,11 +599,29 @@ class DriveMonitorEngine(
         val last = routePolyline.size - 2
         if (last < 0) return
         val from = progressSegment.coerceIn(0, last)
-        val limit = alongAt[from] + PROGRESS_WINDOW_METERS
+        // **Measured from where the car is, not from the start of the segment
+        // it is on**, and that distinction was a serious bug rather than a
+        // refinement. A route's segments are as long as the road is straight —
+        // on a motorway, kilometres — and anchoring the window at the segment's
+        // start meant the *next* segment began beyond the window and was never
+        // considered. Progress then saturated at the end of the current segment
+        // and stopped, permanently, for the rest of the drive.
+        //
+        // Everything measured along the route went wrong from there, in both
+        // directions at once: a pin ahead never got closer, so its advance never
+        // fired ("doesn't really get triggered sometimes"), while every pin whose
+        // own position was behind the frozen point read as already reached and
+        // fired at once ("premature waypoint triggering, waaay too far ahead").
+        // And the trigger marks on the map are drawn from the pins' fixed
+        // positions, so they stayed right while the behaviour drifted — "waypoint
+        // triggering overall just doesn't seem to line up with the map".
+        val here = alongOf(p)
+        val limit = here + PROGRESS_WINDOW_METERS
         var best = Double.MAX_VALUE
         var bestIndex = from
         var i = from
-        while (i <= last && alongAt[i] <= limit) {
+        // The segment the car is on is always a candidate, however long it is.
+        while (i <= last && (i == from || alongAt[i] <= limit)) {
             val d = pointToSegmentMeters(p, routePolyline[i], routePolyline[i + 1])
             if (d < best) { best = d; bestIndex = i }
             i++

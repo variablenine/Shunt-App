@@ -1263,11 +1263,20 @@ them, and add new observations as they come in. Detail lives in
    on the `share` fallback showed a coordinate or a place near it. §6, "The
    destination is a place, a pin is only a point".
 
-27. **A Supercharger destination never preconditioned.** *Fixed, unverified
-   on a vehicle.* While steering pin by pin the car's destination is a shaping
-   pin, so it is never told the trip ends at a charger — and preconditioning is
-   decided from the destination. The destination is now handed over 30 km out
-   when it is a charger. §6, "The car has to be told where the trip ends".
+27. **The destination reached the car as a point, not an address.** *Fixed,
+   unverified on a vehicle.* `share` hands the car a string, and a coordinate
+   tells it nothing about which building or business is meant — so it showed
+   somewhere nearby. The address Photon already gives us is sent instead. §6,
+   "The address is what the car resolves, not the point", and F-61.
+
+28. **Along-route progress froze on any long segment.** *Fixed, unconfirmed on
+   a drive.* The progress search window was measured from the start of the
+   current segment, so a segment longer than the window — every motorway — put
+   the next one out of reach and progress stopped for the rest of the drive.
+   Pins ahead never got closer and never fired; pins behind the frozen point
+   read as reached and fired at once; and the trigger marks stayed correct while
+   the behaviour drifted away from them. §7, "Progress has to be measured from
+   where the car is", and F-61.
 
 ### A watched destination is not a reason to give up
 
@@ -1650,54 +1659,80 @@ doomed pins from what is still ahead. Three things make it safe:
 This is the lead-boundary exemption in the roadmap, done for the trim. The
 handover truncation still does not use it. See F-55.
 
-### The car has to be told where the trip ends, in time to act on it
+### Progress has to be measured from where the car is
 
-A car that accepts one destination is aimed at a **shaping pin** for the whole
-trip. Its navigation target is never the place the driver is going, so anything
-the car would do *because of* the destination cannot happen. The case that makes
-this matter is battery preconditioning:
+`updateProgress` walks forward from the segment the car is on, bounded by
+`PROGRESS_WINDOW_METERS` so that progress can never teleport across a route that
+comes back near itself. The window was anchored at **`alongAt[from]` — the start
+of the current segment** — and that is wrong in a way that only shows up on the
+roads it matters most on.
 
-> When I'm routing to a Tesla supercharger, I want that last waypoint to be the
-> supercharger itself so the car starts preconditioning if I'm not going to any
-> interim waypoints before then. That's still not happening. Tesla app does it
-> somehow, Google maps does it somehow, we should too.
+A route's segments are as long as the road is straight. On a motorway they run
+to kilometres, so the *next* segment began beyond a window measured from the
+current one's start, was never considered, and `progressSegment` could not move.
+`alongOf` clamps its projection to the segment, so progress saturated at that
+segment's end and stayed there for the rest of the drive.
 
-They do it the easy way: they only ever send one destination and never shape the
-route at all. Shunt cannot copy that without giving up the whole point of the
-app — but it can give up the pins **at the end**, which is where they buy least.
+Everything measured along the route then failed, in both directions at once:
 
-`DriveMonitor.handoverMetersFor` decides how far from the end that happens, and
-it is two very different numbers because the car needs the time for two very
-different things:
+- A pin **ahead** never got closer, so its advance never fired — *"doesn't
+  really get triggered sometimes"*.
+- A pin whose own position was **behind** the frozen point read as already
+  reached, so it fired immediately — *"premature waypoint triggering, waaay too
+  far ahead"*, and the earlier report of the remaining pins all going to the car
+  at once.
+- The trigger marks are drawn from the pins' fixed positions, so they stayed
+  **right** while the behaviour drifted away from them — *"waypoint triggering
+  overall just doesn't seem to line up with the map visualization"*.
 
-- `DESTINATION_HANDOVER_METERS` (1.5 km) for an ordinary destination. This is
-  only about the last pin not shadowing the place the driver is going — a pin
-  can sit a few hundred metres short of it, and while the car aims at that pin
-  it is arriving somewhere beside the destination.
-- `PRECONDITION_HANDOVER_METERS` (30 km) when the destination is a charger. A
-  Tesla starts warming the pack on the order of fifteen to twenty minutes out, so
-  the window has to be that far in *road* distance.
+The window is now measured from the car's own projected position, and the
+segment it is on is always a candidate however long it is. Three separate
+symptoms, one arithmetic mistake, and the marks on the map were the honest
+witness that found it.
 
-Three things worth keeping:
+### The address is what the car resolves, not the point
 
-- **It happens before the fix's pins are looked at.** Inside the window a pin
-  buys nothing, and advancing to one first spends a command on a target about to
-  be replaced.
-- **Once handed over, pins stop being sent.** Re-sending the destination at
-  every pin would be a command a minute for no change.
-- **It resets whenever a new leg takes force** — a charging leg, a re-plan.
-  What was handed over belonged to the route that has been replaced.
+`share` hands the car a **string** and lets the car work out what it means. Given
+a coordinate — however precise, and in whatever wrapper — the car has no way to
+know which building or business it names, so it shows a point near it. Reported
+as: *"make sure that the final destination is actually picked up by the car
+correctly. The correct address, correct business name, not just a nearby point.
+On Tessie, I'm able to set an address for my car to be sent to on an
+automation."*
 
-**How a charging destination is recognised**: `Destination.charging`, set by
-`ChargeStopCoordinator` for a charger the car inserted, and by
-`PlanViewModel.chargingAware` when the driver's own destination sits within
-`CHARGER_AT_DESTINATION_METERS` of a charging site already fetched for the route.
-By position, not by name — a name test would be a guess in one language.
+That is exactly right, and the address was already in hand: Photon builds
+`"132 Birch Street, Kingsford, Michigan"` and `"Central Library, Springfield,
+IL"`, and `Destination.title` carries it the whole way. It was being thrown away
+in favour of the coordinate. `TessieVehicleNavClient.postalAddress` sends it
+instead, with the coordinate forms kept as fallbacks so a car that will not
+resolve the address is no worse off than before.
 
-**What is given up is real and bounded**: camera *shaping* stops for the final
-stretch and the car routes it itself. Camera warnings continue, because those
-never needed the car. On a charging run that trade is the driver's, and they
-asked for it.
+**Only when it really looks like an address.** A favourite called "Home", or a
+long-pressed point named after the nearest hamlet, would be a *worse* thing to
+search for than a coordinate — one means nothing to the car, the other is
+ambiguous everywhere. Requiring a comma with something on both sides is a blunt
+test, and the right kind of blunt: every address this app produces has one, and
+nothing that lacks one is specific enough to send.
+
+### The last pin must not shadow the destination
+
+`DriveMonitorBounds.DESTINATION_HANDOVER_METERS` (800 m) is where the car is
+given the trip's destination in place of the remaining pins. A pin can sit a few
+hundred metres short of the end, and while the car aims at that pin it is
+arriving *beside* where the driver is going.
+
+Most trips reach that point having already passed their last pin, so the car
+already holds the destination and the handover does nothing — it neither sends
+nor announces anything. It earns its place only where a pin really does sit on
+top of the destination.
+
+**It is deliberately short.** A thirty-kilometre version was tried, to give a
+Tesla time to precondition its battery on the way to a Supercharger, and that is
+the wrong trade — *"camera avoidance is the important thing here, not
+preconditioning."* Shaping the route is what this app is for, and twenty minutes
+of it is not something to spend on a convenience. Anything past a kilometre here
+is trading the point of the app away; the constant lives in `DriveMonitorBounds`
+so a test can hold it there.
 
 ### The destination is a place, a pin is only a point
 

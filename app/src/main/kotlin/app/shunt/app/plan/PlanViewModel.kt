@@ -674,7 +674,7 @@ class PlanViewModel(
     fun onGo() {
         val solved = _state.value.phase as? Phase.Solved ?: return
         val option = solved.chosen
-        val plan = drivePlanFor(option, chargingAware(solved.destination), solved.remaining)
+        val plan = drivePlanFor(option, solved.destination, solved.remaining)
         _state.update { it.copy(phase = Phase.Pushing(solved.destination, option)) }
         workScope.launch {
             // Let the range read land before deciding how to drive this trip.
@@ -829,30 +829,6 @@ class PlanViewModel(
     }
 
     /**
-     * [destination] marked as somewhere the car plugs in, when it is.
-     *
-     * **Why it is worth knowing.** A car that only accepts one destination is
-     * aimed at a shaping pin for the whole trip, so it is never told where the
-     * trip ends — and a Tesla decides to precondition its battery from the
-     * destination it is navigating to. Reported as a Supercharger run that never
-     * preconditioned. The monitor hands such a destination over early; see
-     * `DriveMonitor.handoverMetersFor`.
-     *
-     * Recognised from the charging sites already fetched for this route rather
-     * than from the name, which would be a guess in one language. The listing
-     * runs along the chosen route and a destination charger sits at the end of
-     * it, so it is normally there; where it is not, the trip behaves exactly as
-     * it did before.
-     */
-    private fun chargingAware(destination: Destination): Destination {
-        if (destination.charging) return destination
-        val known = _state.value.chargersOnRoute.any {
-            haversineMeters(it.location, destination.location) <= CHARGER_AT_DESTINATION_METERS
-        }
-        return if (known) destination.copy(charging = true) else destination
-    }
-
-    /**
      * The plan handed to the drive monitor. The chain is the chosen route's
      * intermediate pins (which hold the vehicle on the camera-aware path)
      * followed by the destination itself. Cameras are the ones this route
@@ -902,12 +878,6 @@ class PlanViewModel(
     )
 
     companion object {
-        /**
-         * How near a known charging site the destination has to be to count as
-         * one. Generous: a Supercharger's OSM node and whatever the driver
-         * searched for can easily be a car park apart.
-         */
-        const val CHARGER_AT_DESTINATION_METERS = 250.0
 
         /** Label for a map point we couldn't name. */
         const val DROPPED_PIN = "Dropped pin"

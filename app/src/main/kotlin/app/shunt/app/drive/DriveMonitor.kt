@@ -35,6 +35,20 @@ object DriveMonitorBounds {
      */
     const val ABANDONED_STRETCH_METERS = 4_000.0
     const val ABANDONED_SPACING_METERS = 100.0
+
+    /**
+     * How far from the destination the car is handed it directly, in place of
+     * the last shaping pins.
+     *
+     * Long enough that the car has the real destination before arriving
+     * matters, short enough that essentially all the camera shaping is still in
+     * force. **Public so a test can hold it there**: a thirty-kilometre version
+     * of this was tried to give a Tesla time to precondition, and that is the
+     * wrong trade — *"camera avoidance is the important thing here, not
+     * preconditioning."* Anything past a kilometre is trading the point of the
+     * app for a convenience.
+     */
+    const val DESTINATION_HANDOVER_METERS = 800.0
 }
 
 /**
@@ -208,28 +222,40 @@ class DriveMonitor(
                     val aimNow = engine.remainingChain().firstOrNull()
                     if (aimNow != null && aimNow != aimBefore) advance(engine.remainingChain())
                 }
-                // **Give the car the destination itself near the end**, before
-                // this fix's pins are looked at: inside the window there is
-                // nothing a pin can still buy, and advancing to one first would
-                // spend a command on a target about to be replaced.
-                //
-                // Only while steering — a car that takes the whole chain already
-                // holds the destination — and never on a partial leg, whose
-                // "end" is a boundary in open country rather than anywhere the
-                // driver is going.
+                // **This fix is read before anything acts on it.** The
+                // handover below needs the progress this call updates — asking
+                // first measures against where the car was on the *previous*
+                // fix, which on a sparse leg is a whole segment out — and the
+                // pins need to know whether the handover has happened, so that
+                // they are not sent to a car that is about to be given the
+                // destination instead.
+                val signals = engine.onLocation(update)
+                // **Give the car the destination itself near the end.** Only
+                // while steering — a car that takes the whole chain already
+                // holds it — and never on a partial leg, whose "end" is a
+                // boundary in open country rather than anywhere the driver is
+                // going.
                 if (steering && !stoodDown && !handedOver && !current.isPartial &&
-                    engine.metersToEnd(update.point) <= handoverMetersFor(current.destination)
+                    engine.metersToEnd(update.point) <= handoverMetersFor()
                 ) {
+                    // Most trips reach this having already passed their last
+                    // pin, so the car is holding the destination and there is
+                    // nothing to hand over. Say nothing and send nothing —
+                    // announcing a change that did not happen is noise, and the
+                    // command is one the car already has.
+                    // **What the car was last given**, not what the engine now
+                    // thinks. The signals above have already moved the target on,
+                    // so asking the engine would say the car holds a point it has
+                    // not been sent yet — and the push that would deliver it is
+                    // the one being suppressed.
+                    val alreadyHolding = lastAimSent == current.destination.location
                     handedOver = true
-                    advance(engine.remainingChain())
-                    alerter.alert(
-                        Alert.DestinationHandedOver(
-                            current.destination.title,
-                            charging = current.destination.charging,
-                        ),
-                    )
+                    if (!alreadyHolding) {
+                        advance(engine.remainingChain())
+                        alerter.alert(Alert.DestinationHandedOver(current.destination.title))
+                    }
                 }
-                for (signal in engine.onLocation(update)) {
+                for (signal in signals) {
                     when (signal) {
                         // Once the car holds the destination there is nothing
                         // to advance to: re-sending it at every pin would be a
@@ -551,34 +577,25 @@ class DriveMonitor(
      * Whether the car has been given the trip's destination in place of the
      * next pin, and how far out that happens.
      *
-     * **A car that only takes one destination is never told where the trip
-     * ends.** While Shunt steers it pin by pin, its navigation target is a
-     * shaping pin — so anything the car would do *because of* the destination
-     * cannot happen. The case that makes this matter is battery
-     * preconditioning: a Tesla warms the pack on the way to a charger, and it
-     * decides to do that from the destination it is navigating to. Reported as
-     * "when I'm routing to a Tesla supercharger, I want that last waypoint to be
-     * the supercharger itself so the car starts preconditioning… Tesla app does
-     * it somehow, Google maps does it somehow, we should too" — and they do it
-     * the easy way, by only ever sending one destination and never shaping the
-     * route at all.
+     * **Short on purpose.** This exists so the last shaping pin does not shadow
+     * the destination — a pin can sit a few hundred metres short of it, and
+     * while the car is aiming at that pin it is arriving somewhere beside where
+     * the driver is going. It is not a window for anything the car might decide
+     * to do on the way.
      *
-     * So the pins are given up at the end of the trip, and *how far* from the
-     * end depends on what the car needs the time for. Preconditioning wants
-     * something like a quarter of an hour; arriving at the right place wants
-     * only the last stretch, where a pin would otherwise shadow the destination
-     * and the car would still be aiming at a point beside it.
-     *
-     * The cost is honest and bounded: camera shaping stops for the final
-     * stretch, and the car drives its own way there. Camera *warnings* continue
-     * — those never needed the car. On a charging run that trade is the
-     * driver's, and they asked for it.
+     * It was briefly thirty kilometres for a charging destination, to give a
+     * Tesla time to precondition. That was the wrong trade and the maintainer
+     * said so plainly: *"camera avoidance is the important thing here, not
+     * preconditioning."* Shaping is what this app is for, and giving up twenty
+     * minutes of it buys something nobody asked for.
      */
-    private fun handoverMetersFor(destination: Destination): Double =
-        if (destination.charging) PRECONDITION_HANDOVER_METERS else DESTINATION_HANDOVER_METERS
+    private fun handoverMetersFor(): Double = DESTINATION_HANDOVER_METERS
 
     /** Set once the car has been handed the destination; see [handoverMetersFor]. */
     private var handedOver = false
+
+    /** The last point actually handed to the vehicle, whatever the outcome. */
+    private var lastAimSent: GeoPoint? = null
 
     /**
      * The name to send with [chain], when what is being sent is the trip's
@@ -653,6 +670,7 @@ class DriveMonitor(
     private suspend fun push(chain: List<GeoPoint>) {
         if (stoodDown) return
         val sending = aim(chain)
+        lastAimSent = sending.lastOrNull()
         lastAimAttemptAt = nowMillis()
         val pushed = runCatching { vehicle.pushRoute(sending, labelFor(chain)) }
             .getOrElse { e -> PushResult.Failed("push threw: ${e.message}", retryable = true) }
@@ -714,6 +732,7 @@ class DriveMonitor(
         // are behind them, out of how many there were.
         val number = totalPins - remaining.size + 1
         onActivity(DriveActivity.SendingWaypoint(number, totalPins))
+        lastAimSent = sending.lastOrNull()
         lastAimAttemptAt = nowMillis()
         val result = runCatching { vehicle.advanceTo(sending, labelFor(remaining)) }
             .getOrElse { e -> PushResult.Failed("advance threw: ${e.message}", retryable = true) }
@@ -819,25 +838,7 @@ class DriveMonitor(
          * highway speed — well inside the gap between pins, so a recovery is
          * never more than a fraction of a leg late.
          */
-        /**
-         * How far from an ordinary destination the car is given it directly.
-         *
-         * Short: this is only about the last pin not shadowing the destination.
-         * A pin can sit a few hundred metres from the end, and while the car is
-         * aiming at that pin it is not aiming at where the driver is going.
-         */
-        const val DESTINATION_HANDOVER_METERS = 1_500.0
-
-        /**
-         * ...and how far out when the destination is a charger.
-         *
-         * A Tesla starts warming the pack on the order of fifteen to twenty
-         * minutes from a Supercharger, so this has to be that far out in road
-         * distance — about twenty minutes at highway speed. Erring long costs
-         * some camera shaping at the end of a charging leg; erring short means
-         * the car arrives cold, which is the whole thing being asked for.
-         */
-        const val PRECONDITION_HANDOVER_METERS = 30_000.0
+        const val DESTINATION_HANDOVER_METERS = DriveMonitorBounds.DESTINATION_HANDOVER_METERS
 
         const val AIM_RETRY_INTERVAL_MILLIS = 10_000L
 

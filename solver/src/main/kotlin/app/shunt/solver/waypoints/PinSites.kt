@@ -205,23 +205,36 @@ class PinSites(
     }
 
     /**
-     * How far along the route [p] sits, by nearest vertex.
+     * How far along the route each of [points] sits, given in route order.
      *
-     * Coarse by design — its callers hand back points this class produced, so
-     * the answer is exact for those and near enough for anything else.
+     * **Walked forward with a cursor rather than searched globally**, for the
+     * same reason `DriveMonitorEngine` matches its pins that way: a nearest-
+     * vertex search over the whole line matches the *wrong passage* wherever a
+     * route comes back near itself — a cloverleaf, a switchback, two stretches
+     * of the same motorway a few tens of metres apart. Getting that wrong is not
+     * a rounding error. The answer feeds `pointAt`, so a pin nudged from a
+     * mis-matched position lands somewhere else on the route entirely, which is
+     * how a waypoint ends up nowhere near the road it was placed on.
+     *
+     * Route order is the caller's contract and holds by construction: pins are
+     * sorted along the route before they get here.
      */
-    fun alongOf(p: GeoPoint): Double {
-        if (chosen.isEmpty()) return 0.0
-        var best = 0
-        var bestDistance = Double.MAX_VALUE
-        for (i in chosen.indices) {
-            val d = haversineMeters(p, chosen[i])
-            if (d < bestDistance) {
-                bestDistance = d
-                best = i
+    fun alongOfInOrder(points: List<GeoPoint>): List<Double> {
+        if (chosen.isEmpty()) return points.map { 0.0 }
+        var cursor = 0
+        return points.map { p ->
+            var best = cursor
+            var bestDistance = Double.MAX_VALUE
+            for (i in cursor until chosen.size) {
+                val d = haversineMeters(p, chosen[i])
+                if (d < bestDistance) {
+                    bestDistance = d
+                    best = i
+                }
             }
+            cursor = best
+            alongAt[best]
         }
-        return alongAt[best]
     }
 
     /**

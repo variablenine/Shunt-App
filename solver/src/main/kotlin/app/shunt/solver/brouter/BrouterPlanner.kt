@@ -715,8 +715,12 @@ class BrouterPlanner(
         val sites = PinSites(chosen)
         val offsets = PIN_NUDGE_METERS
         // Candidate positions per pin, the wanted one first so it wins ties.
-        val candidates = pins.map { pin ->
-            val at = sites.alongOf(pin)
+        // In route order, with one forward cursor: a per-pin nearest-vertex
+        // search matches the wrong passage where a route runs near itself, and
+        // a pin nudged from there lands on a different road altogether.
+        val alongs = sites.alongOfInOrder(pins)
+        val candidates = pins.mapIndexed { index, _ ->
+            val at = alongs[index]
             (listOf(0.0) + offsets).mapNotNull { d -> sites.pointAt(at + d) }.distinct()
         }
         val askedAt = nowMillis()
