@@ -205,6 +205,26 @@ class PinSites(
     }
 
     /**
+     * How far along the route [p] sits, by nearest vertex.
+     *
+     * Coarse by design — its callers hand back points this class produced, so
+     * the answer is exact for those and near enough for anything else.
+     */
+    fun alongOf(p: GeoPoint): Double {
+        if (chosen.isEmpty()) return 0.0
+        var best = 0
+        var bestDistance = Double.MAX_VALUE
+        for (i in chosen.indices) {
+            val d = haversineMeters(p, chosen[i])
+            if (d < bestDistance) {
+                bestDistance = d
+                best = i
+            }
+        }
+        return alongAt[best]
+    }
+
+    /**
      * The point [at] metres along, by binary search over the cumulative
      * distances built here.
      *
@@ -323,6 +343,18 @@ class PinSites(
          * refused.
          */
         const val CAMERA_STANDOFF_METERS = 150.0
+
+        /**
+         * How near another road may be before which one the car snaps to is a
+         * coin toss, and the pin is worth more dropped than kept.
+         *
+         * Well below [AMBIGUITY_RADIUS_METERS], because that one is a
+         * *preference* — a divided highway's carriageways run twenty metres
+         * apart for their whole length, and refusing every pin there would
+         * leave a motorway with no steering at all, which is how a car takes an
+         * exit nobody planned.
+         */
+        const val MIN_OTHER_ROAD_METERS = 12.0
 
         /** How far a pin may be slid from where its maker wanted it. */
         const val SETTLE_REACH_METERS = 200.0

@@ -3030,3 +3030,58 @@ reached" on arrival, and "back on the way" when the car re-plans. The one change
 made was to the banner's body text, which was three lines explaining the
 mechanism — against the standing rule that a paragraph shown to someone driving
 is a weaker warning than a sentence, because it does not get read.
+
+---
+
+### F-58 · Asking the graph instead of guessing, and why it is not pass-or-fail
+
+*Closing the limitation F-53 recorded and a driver reported twice.*
+
+F-53 fixed pins landing on junctions and beside roads Shunt could see, and said
+plainly what it could not do: *"a parallel road that neither our route nor the
+fastest one uses is invisible here — there is no geometry for it."* That is
+precisely the far carriageway of a divided highway, and it is what the driver
+kept hitting.
+
+**The engine change is three lines of logic and worth understanding.**
+`WaypointMatcherImpl.checkSegment` records a candidate way only when it beats the
+best match so far — `if (radius <= mwp.radius)`. For "snap this point to a road"
+that is exactly right and beautifully cheap. For "what else is near this point"
+it is useless in a specific way: our pin sits *on* a road, so the first match is
+at distance nought and nothing can ever beat it. The list called `wayNearest`
+therefore contains our own road and nothing else, every time.
+
+The change computes the same distance the existing block computes — including
+the endpoint cases, so a way whose *extension* passes near does not count — and
+records it whether or not it wins. It is gated on
+`MatchedWaypoint.nearbyCollectRadius`, default zero, so ordinary routing never
+enters the new branch. That is a structural guarantee rather than a measurement,
+which matters: this is a vendored engine and the last thing anyone wants is a
+routing change smuggled in behind a diagnostic.
+
+**The interesting decision is what to do with the answer**, and the obvious
+version is wrong. "Refuse any pin with another road inside the snap radius"
+sounds right and would delete essentially every pin on a divided highway, since
+the two carriageways run twenty-odd metres apart for their whole length. A
+motorway with no pins at all is not a safe fallback — it is how the car takes an
+exit nobody planned, which is a worse version of the reported bug.
+
+So the rule is **best available**: each pin is offered a few positions along the
+route and takes the one where the nearest other road is furthest away. On open
+road that finds genuinely clear tarmac. On a divided highway every candidate is
+equally ambiguous and the pin stays where it was — no worse than before, and
+often slightly better, because the carriageways do drift apart at junctions and
+the nudge finds those. Only below `MIN_OTHER_ROAD_METERS`, where which road the
+car picks is a coin toss, is the pin dropped.
+
+**What has not been done: measuring it.** `roadsNear` loads tiles, once per
+option, for a hundred-odd points. The benchmark is the place to find out whether
+that is milliseconds or seconds, and it needs a machine that can reach the tile
+CDN. Until then this is a correctness change of unknown cost, and if long-route
+planning suddenly slows down, this is the first thing to suspect.
+
+**And what it still cannot tell you** is which road is which. The query returns
+distances, not ways, because that is all the decision needs. If a later question
+needs "is the near road one-way against us" — which would distinguish the far
+carriageway from a frontage road — the node pairs are right there in
+`MatchedWaypoint` and it is a small extension.

@@ -116,6 +116,28 @@ public final class WaypointMatcherImpl implements WaypointMatcher {
       double r22 = x2 * x2 + y2 * y2;
       double radius = Math.abs(r12 < r22 ? y1 * dx - x1 * dy : y2 * dx - x2 * dy) / d;
 
+      // SHUNT CHANGE begin -- record every way near the point, not only the
+      // ones that improve on the best match. See MatchedWaypoint.nearbyRadii.
+      // The same distance the block below works out, computed up front so it
+      // can be recorded whether or not it wins. Purely additive: nothing here
+      // touches mwp.radius or any other upstream state.
+      if (mwp.nearbyCollectRadius > 0.) {
+        double nearRadius = radius;
+        double ns1 = x1 * dx + y1 * dy;
+        double ns2 = x2 * dx + y2 * dy;
+        if (ns1 < 0.) {
+          ns1 = -ns1;
+          ns2 = -ns2;
+        }
+        if (ns2 > 0.) {
+          nearRadius = Math.sqrt(ns1 < ns2 ? r12 : r22);
+        }
+        if (nearRadius <= mwp.nearbyCollectRadius) {
+          mwp.recordNearby(nearRadius);
+        }
+      }
+      // SHUNT CHANGE end
+
       if (radius <= mwp.radius) {
         double s1 = x1 * dx + y1 * dy;
         double s2 = x2 * dx + y2 * dy;

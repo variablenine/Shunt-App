@@ -1222,6 +1222,27 @@ the charging detour — the car inserted that stop because it needs the charge.
 
 ---
 
+### B23 · A waypoint on a divided highway stays on your side of it
+
+*Never seen on a drive — 2026-08-24. See F-58.*
+
+**Provoke it.** Plan a route along a divided highway or past a frontage road and
+drive it, watching the point the car's own navigation names.
+
+**Expect:** the car aims at a point on the carriageway you are driving, and never
+plans a route that crosses over and comes back. The reported failure is
+unmistakable — the car wants to "go back around".
+
+**Also expect** pins to still exist along the motorway. If a long divided stretch
+comes back with no waypoints at all, the best-available rule has regressed into
+pass-or-fail, and the car is free to take an exit.
+
+**Worth timing.** This adds one tile-loading query per option. If planning a long
+trip is noticeably slower than the build before it, say so — the cost has never
+been measured on a real device.
+
+---
+
 ## Keeping this file honest
 
 When something here is confirmed working in a car, say so in the entry with the

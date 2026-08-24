@@ -211,6 +211,10 @@ class AppContainer(context: Context) {
         },
         missingTiles = { bbox -> tileSource.missingTiles(bbox) },
         camerasIn = { bbox -> camerasFor(bbox) },
+        // The only thing in the app that can see a road neither route uses —
+        // the far carriageway, a frontage road — which is what decides whether
+        // a pin is a coordinate the car can resolve unambiguously.
+        roadsNear = { points, radius -> brouterRouter.roadsNear(points, radius) },
         diagnostics = { routingDiagnostic() },
         lastPassTimings = { brouterRouter.lastPassTimings },
         cameraRangeScale = { cameraRangePercent / 100.0 },

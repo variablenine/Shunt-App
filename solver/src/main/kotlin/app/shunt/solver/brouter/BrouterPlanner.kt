@@ -7,6 +7,7 @@ import app.shunt.solver.geo.bearingDegrees
 import app.shunt.solver.geo.destinationPoint
 import app.shunt.solver.geo.haversineMeters
 import app.shunt.solver.waypoints.WaypointExtractor
+import app.shunt.solver.waypoints.PinSites
 import app.shunt.solver.waypoints.WaypointRefiner
 
 /** A chooseable route: BRouter's geometry plus the pins + cameras Shunt needs. */
@@ -160,6 +161,16 @@ class BrouterPlanner(
      * a trip needs — tiles are cheap and cameras are not.
      */
     private val corridorMeters: Double = CAMERA_CORRIDOR_METERS,
+    /**
+     * How far every road within a radius of each point is, from BRouter's own
+     * graph. A seam like [route], because this module holds no engine.
+     *
+     * The default answers "nothing near anything", which leaves pin placement
+     * exactly as the geometry decided it — the behaviour before the graph could
+     * be asked. See [onUnambiguousRoad].
+     */
+    private val roadsNear: (List<GeoPoint>, Double) -> List<List<Double>> =
+        { points, _ -> points.map { emptyList() } },
     /** Optional on-disk/engine state summary, appended to a no-route failure. */
     private val diagnostics: () -> String? = { null },
     /**
@@ -666,7 +677,65 @@ class BrouterPlanner(
                 outOfTime = { nowMillis() >= deadline },
                 carRoute = { from, to -> carPathBetween(from, to, carPaths, deadline) },
             )
-        }.getOrDefault(candidates)
+        }.getOrDefault(candidates).let { pins -> onUnambiguousRoad(chosen, pins) }
+    }
+
+    /**
+     * Move each pin to where the car's own map has the least to choose between.
+     *
+     * **The last gate, and the only one that can see a road neither route
+     * uses.** Everything in `PinSites` decides ambiguity from geometry over our
+     * line and the fastest one, which covers a frontage road we route onto and a
+     * cloverleaf coming back near itself — and misses the case a driver reported
+     * twice: the far carriageway of a divided highway, or a parallel road that
+     * carries no part of either route. `BrouterRouter.roadsNear` asks the graph
+     * instead of guessing.
+     *
+     * **Best available, not pass-or-drop**, and that distinction is the whole
+     * design. Requiring a clear `AMBIGUITY_RADIUS_METERS` would delete every pin
+     * on a divided highway, because its two carriageways run tens of metres
+     * apart for their whole length — and a motorway with no pins at all is how
+     * the car takes an exit we did not plan. So each pin is offered a handful of
+     * positions along the route and takes the one where the nearest *other* road
+     * is furthest away. Only where even the best is inside
+     * `MIN_OTHER_ROAD_METERS` — close enough that which road the car picks is a
+     * coin toss — is the pin dropped, on `PinSites`' own reasoning that a pin on
+     * the wrong road steers the car off the route while a missing one merely
+     * fails to hold it.
+     *
+     * One batched query per option: each call loads tiles, so asking per pin
+     * would put the tile reader back in the inner loop.
+     */
+    internal fun onUnambiguousRoad(chosen: List<GeoPoint>, pins: List<GeoPoint>): List<GeoPoint> {
+        if (pins.isEmpty() || chosen.size < 2) return pins
+        val sites = PinSites(chosen)
+        val offsets = PIN_NUDGE_METERS
+        // Candidate positions per pin, the wanted one first so it wins ties.
+        val candidates = pins.map { pin ->
+            val at = sites.alongOf(pin)
+            (listOf(0.0) + offsets).mapNotNull { d -> sites.pointAt(at + d) }.distinct()
+        }
+        val radii = roadsNear(candidates.flatten(), PinSites.AMBIGUITY_RADIUS_METERS)
+        if (radii.size != candidates.sumOf { it.size }) return pins
+        var cursor = 0
+        val out = mutableListOf<GeoPoint>()
+        for (choices in candidates) {
+            var best: GeoPoint? = null
+            var bestClearance = -1.0
+            for (choice in choices) {
+                // The road the pin sits on reads as nought; anything above
+                // SAME_ROAD_METERS is a different way.
+                val clearance = radii[cursor++]
+                    .firstOrNull { it > PinSites.SAME_ROAD_METERS }
+                    ?: Double.MAX_VALUE
+                if (clearance > bestClearance) {
+                    bestClearance = clearance
+                    best = choice
+                }
+            }
+            if (best != null && bestClearance >= PinSites.MIN_OTHER_ROAD_METERS) out += best
+        }
+        return out
     }
 
     /**
@@ -933,6 +1002,18 @@ class BrouterPlanner(
         passes.any { "out of time" in it.label || "over budget" in it.label }
 
     companion object {
+        /**
+         * How far along the route a pin may be nudged looking for a spot where
+         * the car's map has less to choose between. See [onUnambiguousRoad].
+         *
+         * Short, and in both directions: the pin was placed for a reason — a
+         * turn to commit, a camera to bracket — and moving it far enough to
+         * matter would undo that. Where a parallel road runs the length of the
+         * stretch none of these help, which is what the "best available" rule
+         * is for.
+         */
+        val PIN_NUDGE_METERS = listOf(-60.0, 60.0, -140.0, 140.0)
+
         /** Pad the origin→destination box so an avoidance detour stays covered. */
         /**
          * How far outside the straight origin→destination box to look.

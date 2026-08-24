@@ -32,6 +32,39 @@ public final class MatchedWaypoint {
   public List<MatchedWaypoint> wayNearest = new ArrayList<>();
   public boolean hasUpdate;
 
+  // SHUNT CHANGE begin -- see CLAUDE.md "Ask the road graph what is near a pin".
+  //
+  // Upstream records a way only when it beats the best match so far, which is
+  // exactly right for "snap this point to a road" and useless for "what else is
+  // near this point": once the nearest way is found at distance zero, nothing
+  // else is ever recorded. Shunt needs the second question — a waypoint handed
+  // to a car is snapped by the *car's* map, and a second road a few tens of
+  // metres away is one it may pick instead, which is how a pin on a divided
+  // highway ends up on the far carriageway.
+  //
+  // Off unless a caller sets a radius, so ordinary routing is untouched.
+
+  /** Collect the distance to every way within this many metres. 0 disables. */
+  public double nearbyCollectRadius = 0.;
+
+  /** Distances in metres to the ways found within that radius, nearest first. */
+  public final List<Double> nearbyRadii = new ArrayList<>();
+
+  /** How many distinct distances are worth keeping; a pin needs a handful. */
+  private static final int MAX_NEARBY = 32;
+
+  /** Distances closer together than this are the same road seen twice. */
+  private static final double NEARBY_SAME_METERS = 0.5;
+
+  public void recordNearby(double radius) {
+    if (nearbyRadii.size() >= MAX_NEARBY) return;
+    for (Double seen : nearbyRadii) {
+      if (Math.abs(seen - radius) < NEARBY_SAME_METERS) return;
+    }
+    nearbyRadii.add(radius);
+  }
+  // SHUNT CHANGE end
+
   public void writeToStream(DataOutput dos) throws IOException {
     dos.writeInt(node1.ilat);
     dos.writeInt(node1.ilon);

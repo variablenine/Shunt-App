@@ -254,7 +254,7 @@ rather than fail silently.
 | Module | Platform | Purpose |
 |---|---|---|
 | `:core` | Pure JVM | Shared value types (`GeoPoint`), zero dependencies |
-| `:brouter` | Pure JVM | Vendored BRouter engine (MIT). Upstream except `NogoIndex.java` and one loop in `RoutingContext.calcDistance` (§7); also republishes the shipped routing profile onto the JVM classpath |
+| `:brouter` | Pure JVM | Vendored BRouter engine (MIT). Upstream except `NogoIndex.java` and one loop in `RoutingContext.calcDistance` (§7), and the nearby-way collection in `WaypointMatcherImpl`/`MatchedWaypoint` (§6); also republishes the shipped routing profile onto the JVM classpath |
 | `:solver` | Pure JVM | Camera source, BRouter router/planner, waypoints, search, charging range |
 | `:tesla` | Pure JVM | Vehicle seam: `VehicleNavClient`, fake, Tessie client, capability probe |
 | `:app` | Android | Compose UI, drive-monitor foreground service, DI (`AppContainer`) |
@@ -622,6 +622,50 @@ behind the car regardless.
 **What it cannot see is a parallel road neither route uses.** There is no
 geometry for it here. Answering that properly means asking BRouter's graph which
 ways lie near a point, which is engine work — see the roadmap. See F-53.
+
+### Asking the road graph what is actually near a pin
+
+`PinSites` decides ambiguity from geometry over two lines: our route and the
+fastest one. That catches a frontage road we route onto, a cloverleaf coming
+back near itself, a switchback. It cannot catch a road **neither route uses** —
+and that is the one a driver reported twice:
+
+> When a waypoint is set on or near a highway it can sometimes go to the other
+> side of a road on Tesla's navigation, leading to routing wanting to go back
+> around. […] The car also has a resistance to navigating to the highway if
+> other parallel roads are nearby.
+
+The far carriageway of a divided highway carries no part of either route, so
+there is no geometry for it. `BrouterRouter.roadsNear` asks the graph instead:
+for each point, the distance to every routable way within a radius. **Distances
+only** — what the caller needs is whether *something else* is close, and the
+road the pin sits on is the one at nought.
+
+**This is the third divergence from upstream BRouter**, and the smallest.
+`WaypointMatcherImpl` records a way only when it beats the best match so far,
+which is exactly right for "snap this point to a road" and useless for "what
+else is near it": once a way is found at distance zero nothing else is ever
+recorded. The change computes the same distance the existing block computes, up
+front, and records it when the caller has asked for collection. It is **off
+unless `MatchedWaypoint.nearbyCollectRadius` is set**, so ordinary routing runs
+byte-identical code paths — that is a structural guarantee, not a measurement.
+Both edits are marked `SHUNT CHANGE`.
+
+**Best available, not pass-or-drop**, and that is the whole design.
+`BrouterPlanner.onUnambiguousRoad` offers each pin a handful of positions along
+the route (`PIN_NUDGE_METERS`) and takes the one where the nearest *other* road
+is furthest away. Requiring a clear `AMBIGUITY_RADIUS_METERS` would delete every
+pin on a divided highway, because its carriageways run tens of metres apart for
+their whole length — and a motorway with no pins at all is how a car takes an
+exit nobody planned. Only where even the best position is inside
+`MIN_OTHER_ROAD_METERS` — close enough that which road the car picks is a coin
+toss — is the pin dropped, on `PinSites`' own reasoning.
+
+One batched query per option: each call loads tiles, so asking per pin would put
+the tile reader in the inner loop. The seam is a lambda on `BrouterPlanner` like
+`route`, and its default answers "nothing near anything", which leaves placement
+exactly as the geometry decided — the behaviour before the graph could be asked,
+and what every test that does not care about this gets.
 
 ### Pins have to earn their place
 
@@ -1145,12 +1189,12 @@ them, and add new observations as they come in. Detail lives in
    coordinate string, which it geocodes — so it can land near rather than on the
    destination, and can come back ambiguous. §6, "Share is a search box".
 
-20. **A pin on or near a highway can snap to the far carriageway.** *Open.*
-   Reported twice: the car navigates to the other side of the road and wants to
-   go back around, and it prefers a parallel side road over the highway itself.
-   `PinSites` can only see roads that carry our route or the fastest one, so a
-   carriageway or frontage road neither uses is invisible to it. Needs the graph
-   query in the roadmap.
+20. **A pin on or near a highway can snap to the far carriageway.** *Fixed,
+   unconfirmed on a drive, and unmeasured for cost.* Reported twice: the car
+   navigates to the other side of the road and wants to go back around, and it
+   prefers a parallel side road over the highway itself. Geometry over our route
+   and the fastest one cannot see a road neither uses; BRouter's graph can. §6,
+   "Asking the road graph what is actually near a pin", and F-58.
 
 21. **A split trip's first leg was driven to the trip's destination.**
    *Fixed, unconfirmed on a drive.* `drivePlanFor` appended the final
@@ -2161,13 +2205,12 @@ Ordered roughly by what unblocks real use.
   a stop inside the leg window is now the boundary, and `split` orders stops
   along the spine and carries every one into the leg it falls in. §6, "A stop
   inside the leg window is the boundary", and F-43.
-- **[high] Ask the road graph what is near a pin.** `PinSites` rejects a pin
-  beside a road it can *see* — the fastest route, or our own line coming back
-  near itself. It cannot see a frontage road neither route uses, which is
-  exactly the case a driver reported. BRouter has the ways in its tiles; what is
-  missing is a "which ways are within N metres of this point" query over
-  `NodesCache`, which would turn the geometric proxy into the real answer. See
-  F-53.
+- ~~**[high] Ask the road graph what is near a pin.**~~ Done:
+  `BrouterRouter.roadsNear` answers it from BRouter's own tiles, and
+  `BrouterPlanner.onUnambiguousRoad` moves each pin to the position where the
+  car's map has least to choose between. §6, "Asking the road graph what is
+  actually near a pin", F-53 and F-58. **Wants confirming on a drive**, and
+  wants measuring: it is one extra tile-loading query per option.
 - **Surface BRouter's own `indexInTrack` and snap distance.** `runRoute` throws
   away `track.matchedWaypoints`, which gives the exact index of each waypoint in
   the returned line, how far it had to snap to reach a road, and whether BRouter

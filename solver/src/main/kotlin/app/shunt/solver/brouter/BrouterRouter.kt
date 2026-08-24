@@ -208,6 +208,59 @@ class BrouterRouter(
         }
     }
 
+    /**
+     * How far every road within [radiusMeters] of each point is, from BRouter's
+     * own graph.
+     *
+     * **This is the answer to the question `PinSites` could only guess at.** A
+     * pin is a coordinate the car snaps to *its* road graph, so a second road a
+     * few tens of metres away is one the car may pick instead — the far
+     * carriageway of a divided highway, a frontage road, a service road.
+     * Geometry over the routes we planned cannot see any road neither route
+     * uses, and those are exactly the ones that cause it. Reported twice from
+     * real drives: "when a waypoint is set on or near a highway it can sometimes
+     * go to the other side of a road on Tesla's navigation" and "the car has a
+     * resistance to navigating to the highway if other parallel roads are
+     * nearby".
+     *
+     * Distances only, deliberately: what a caller needs is whether *something
+     * else* is close, and the road the pin sits on is the one at nought.
+     * Identifying which way is which would mean carrying node pairs through the
+     * engine for no extra decision.
+     *
+     * Batched, because each call loads tiles. Ask about every candidate at once.
+     *
+     * Never throws — a pin that cannot be checked is left to the geometric
+     * rules, which is where it was before this existed.
+     */
+    fun roadsNear(points: List<GeoPoint>, radiusMeters: Double): List<List<Double>> {
+        if (points.isEmpty()) return emptyList()
+        return try {
+            val rc = RoutingContext()
+            rc.localFunction = File(profileDir, "$profileName.brf").absolutePath
+            rc.readGlobalConfig()
+            val matched = points.map { p ->
+                MatchedWaypoint().apply {
+                    waypoint = OsmNode(
+                        (p.lon * 1_000_000 + 180_000_000).toInt(),
+                        (p.lat * 1_000_000 + 90_000_000).toInt(),
+                    )
+                    name = "near"
+                    nearbyCollectRadius = radiusMeters
+                }
+            }
+            val cache = NodesCache(segmentDir, rc.expctxWay, rc.forceSecondaryData, rc.memoryclass * 1024L * 1024L, null, false)
+            // The match itself is not the point and may well fail — a point in a
+            // field has no road to snap to. The collection happens during the
+            // scan either way.
+            runCatching { cache.matchWaypointsToNodes(matched, radiusMeters, OsmNodePairSet(0)) }
+            matched.map { it.nearbyRadii.sorted() }
+        } catch (t: Throwable) {
+            note("roadsNear failed: ${t.message ?: t.toString()}")
+            points.map { emptyList() }
+        }
+    }
+
     fun route(request: RouteRequest): List<BrouterRoute> {
         val points = request.points
         val cameras = request.cameras
