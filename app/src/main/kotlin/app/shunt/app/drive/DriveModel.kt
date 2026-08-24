@@ -153,6 +153,21 @@ data class DriveMonitorConfig(
      * as a turn, narrow enough that a real junction does.
      */
     val turnMeasureSpanMeters: Double = 40.0,
+    /**
+     * How far **past** a turn the car must be before the waypoint beyond it may
+     * be advanced past.
+     *
+     * The commit gate used the bend's own position, so the aim was free to move
+     * on the moment the car reached the junction — which is the thing the gate
+     * exists to prevent, missed by exactly this distance. Reported from the map:
+     * *"trigger points need to be after turns not at them."*
+     *
+     * At the junction the car still has the choice the pin was placed to remove;
+     * a little past it, the turn is made and the next pin is the right thing to
+     * be aiming at. Roughly the arrival radius, which is the distance this app
+     * already treats as "there".
+     */
+    val turnCommitClearanceMeters: Double = 60.0,
     /** First (early) camera warning tier. */
     val cameraWarnMeters: Double = 400.0,
     /** Second (escalated) camera warning tier. */

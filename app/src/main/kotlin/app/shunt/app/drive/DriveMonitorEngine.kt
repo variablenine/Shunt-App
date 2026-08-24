@@ -125,7 +125,10 @@ class DriveMonitorEngine(
                 val segment = nearestSegmentTo(chain[i], from = cursor)
                 cursor = segment
                 pinAlong[i] = alongWithin(chain[i], segment)
-                commitAlong[i] = commitPointFor(segment)
+                // Never past the pin itself: a commit point beyond the thing it
+                // guards could only be reached by arriving, and the arrival
+                // valve already covers that case.
+                commitAlong[i] = minOf(commitPointFor(segment), pinAlong[i])
             }
         }
     }
@@ -171,7 +174,13 @@ class DriveMonitorEngine(
         val target = alongAt[waypointVertex]
         var j = waypointVertex
         while (j > 0 && target - alongAt[j] <= config.turnCommitLookbackMeters) {
-            if (bendDegreesAt(j) > config.turnCommitDegrees) return alongAt[j]
+            // **Past the bend, not at it.** Standing at the junction the car
+            // still has the choice the pin was placed to remove, so releasing
+            // the aim there is the failure this gate exists to prevent — missed
+            // by exactly this clearance.
+            if (bendDegreesAt(j) > config.turnCommitDegrees) {
+                return alongAt[j] + config.turnCommitClearanceMeters
+            }
             j--
         }
         return Double.NEGATIVE_INFINITY

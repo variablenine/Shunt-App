@@ -3367,3 +3367,16 @@ shortly after" is a *cascade*, and a cascade means two things share a position.
 there is moving a pin by a measured amount (a nudge, a settle, a fork distance),
 and rounding a sixty-metre nudge to the end of a kilometre segment does not
 misplace the pin slightly, it puts it somewhere else.
+
+**A postscript, from a screenshot of the map:** *"trigger points need to be after
+turns not at them."* The ring in that picture sat exactly on a bend — and once
+the marks were being drawn where the advance really happens, that was no longer a
+drawing fault, it was the gate itself. `commitPointFor` returned the bend's own
+along-position, so the aim was released the moment the car reached the junction.
+The whole purpose of the gate is that the car should not be handed a new target
+while the turn the pin exists to force is still ahead of it, and being at the
+junction is exactly that state. Sixty metres past, the turn is made.
+
+Worth noting that this only became visible *because* the marks had been fixed to
+tell the truth. A drawing that was already wrong by the length of a segment would
+have hidden it.

@@ -1291,6 +1291,12 @@ them, and add new observations as they come in. Detail lives in
    waypoint fired well before the driver reached the ring. §6, "The mark and the
    trigger must be the same arithmetic", and F-62.
 
+31. **The aim was released at a turn rather than past it.** *Fixed,
+   unconfirmed on a drive.* The turn-commit gate used the bend's own position,
+   so the next waypoint could be sent while the car was still in the junction —
+   with the choice the pin existed to remove still open. §6, "A turn is
+   committed once it is behind you", and F-62.
+
 ### A watched destination is not a reason to give up
 
 BRouter refuses a route that begins or ends inside a zone it has been told is
@@ -1671,6 +1677,23 @@ doomed pins from what is still ahead. Three things make it safe:
 
 This is the lead-boundary exemption in the roadmap, done for the trim. The
 handover truncation still does not use it. See F-55.
+
+### A turn is committed once it is behind you, not once you reach it
+
+`commitPointFor` finds the last bend before a waypoint and refuses to advance
+past that waypoint until the car is beyond it. It returned **the bend's own
+position**, so the aim was released the instant the car reached the junction —
+which is the thing the gate exists to prevent, missed by exactly the width of the
+junction. Reported from a screenshot of the map: *"trigger points need to be
+after turns not at them."*
+
+`turnCommitClearanceMeters` (60 m, about the arrival radius) puts it past. At the
+junction the car still has the choice the pin was placed to remove; a little
+beyond it, the turn is made and the next pin is the right thing to be aiming at.
+
+Clamped to the pin's own position, because a commit point past the thing it
+guards could only ever be reached by arriving — and the arrival valve already
+covers that.
 
 ### The mark and the trigger must be the same arithmetic
 

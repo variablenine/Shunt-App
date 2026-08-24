@@ -1330,6 +1330,17 @@ a time and in step with passing the rings.
 
 ---
 
+### C14 · No ring sits on a junction
+
+*Never seen on a drive — 2026-08-24. See F-62.*
+
+**Provoke it.** Plan a route through a town and look at the rings near turns.
+
+**Expect:** every ring sits a little way *past* its turn, on the straight after
+it — never on the bend itself. A ring on a junction means the aim would be
+released while the car is still in it, with the turn the pin exists to force
+still ahead.
+
 ### C13 · The ring is where the waypoint fires
 
 *Never seen on a drive — 2026-08-24. See F-62.*

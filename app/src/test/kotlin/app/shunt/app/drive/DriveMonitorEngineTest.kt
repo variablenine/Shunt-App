@@ -624,4 +624,34 @@ class DriveMonitorEngineTest {
             "the two pins are 4 km apart but fired ${firedAt[1] - firedAt[0]} m apart: $firedAt",
         )
     }
+
+    @Test
+    fun `a trigger sits past its turn, never on it`() {
+        // Reported from the map: "trigger points need to be after turns not at
+        // them." At the junction the car still has the choice the pin was placed
+        // to remove.
+        val corner = east(origin, 3_000.0)
+        val eastLimb = (0..29).map { east(origin, it * 100.0) }
+        val line = eastLimb + (1..30).map { north(corner, it * 100.0) }
+        // A pin well past the corner, so the commit point is what binds.
+        val pin = north(corner, 800.0)
+        val engine = DriveMonitorEngine(
+            chain = listOf(pin, line.last()),
+            routePolyline = line,
+            cameras = emptyList(),
+        )
+        engine.onLocation(update(line[2]))
+
+        val trigger = engine.triggerPoints().first()
+        // Past the corner means north of it, by a clear margin.
+        val northOfCorner = haversineMeters(corner, trigger)
+        assertTrue(
+            trigger.lat > corner.lat,
+            "the trigger is at or before the turn, not past it",
+        )
+        assertTrue(
+            northOfCorner >= DriveMonitorConfig().turnCommitClearanceMeters - 1.0,
+            "the trigger is only $northOfCorner m past the turn",
+        )
+    }
 }
